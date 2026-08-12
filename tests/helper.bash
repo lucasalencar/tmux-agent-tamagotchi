@@ -13,8 +13,15 @@ PLUGIN_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PLUGIN_ROOT
 
 # Names a socket for this test without booting anything on it.
+#
+# The random tail is what makes the name unique, and it has to be: a pid and a test
+# number repeat across runs — macOS recycles pids freely — and a server still alive
+# on that name is *adopted* rather than replaced, since `tmux -L` connects to
+# whatever is listening. The symptom is not a connection error but a test failing
+# somewhere else entirely, on a window index or a session name the leftover already
+# has. Kept short because a socket path has a length limit.
 tama_reserve_socket() {
-  TAMA_SOCKET="$1-$$-${BATS_TEST_NUMBER:-0}"
+  TAMA_SOCKET="$1-$$-${BATS_TEST_NUMBER:-0}-${RANDOM}"
   export TAMA_SOCKET
 }
 
@@ -28,7 +35,13 @@ tama_start_server() {
   # this early: a tmux client that sees it believes it is nested.
   export TAMA_TMUX=tmux
   export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
-  test_tmux -f /dev/null new-session -d -s t
+  # Loudly, because everything a test then arranges is built on this session being
+  # this test's own. A `duplicate session` here would mean the socket is somebody
+  # else's server, and every assertion after it would be about their windows.
+  test_tmux -f /dev/null new-session -d -s t || {
+    printf 'could not boot a tmux server on %s\n' "$TAMA_SOCKET" >&2
+    return 1
+  }
   tama_point_at_server
 }
 
