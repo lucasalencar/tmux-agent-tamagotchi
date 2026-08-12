@@ -206,6 +206,220 @@ report() {
   assert_equal "$(tama_render_icons "$WINDOW")" ' ●'
 }
 
+#
+# Configuration. Every option is a global user option, read on every invocation,
+# so what these set is what the next call to the CLI draws.
+#
+
+@test "each state's glyph can be replaced on its own" {
+  test_tmux set -g @tama_icon_running 'R'
+  test_tmux set -g @tama_icon_waiting 'W'
+  test_tmux set -g @tama_icon_idle 'I'
+  test_tmux set -g @tama_icon_error 'E'
+  test_tmux set -g @tama_icon_background 'B'
+
+  report "$PANE" running
+  assert_equal "$(tama_icons "$WINDOW")" ' R'
+
+  report "$PANE" waiting
+  assert_equal "$(tama_icons "$WINDOW")" ' W'
+
+  report "$PANE" error
+  assert_equal "$(tama_icons "$WINDOW")" ' E'
+
+  report "$PANE" idle
+  assert_equal "$(tama_icons "$WINDOW")" ' I'
+
+  report "$PANE" subagent-start sub-1
+  assert_equal "$(tama_icons "$WINDOW")" ' B'
+}
+
+@test "one state's override leaves the others alone" {
+  test_tmux set -g @tama_icon_waiting '!!'
+
+  report "$PANE" running
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
+
+  report "$PANE" waiting
+  assert_equal "$(tama_icons "$WINDOW")" ' !!'
+}
+
+@test "an icon set to nothing draws nothing for that state" {
+  test_tmux set -g @tama_icon_running ''
+
+  report "$PANE" running
+  # Not the default glyph: an option set to the empty string is a configuration,
+  # not an option that was never set.
+  assert_equal "$(tama_icons "$WINDOW")" ''
+}
+
+@test "the ascii preset replaces the whole set" {
+  # For terminals with no wide-glyph support: every one of these is a single
+  # column of ASCII.
+  test_tmux set -g @tama_icon_set ascii
+
+  report "$PANE" running
+  assert_equal "$(tama_icons "$WINDOW")" ' *'
+
+  report "$PANE" waiting
+  assert_equal "$(tama_icons "$WINDOW")" ' ?'
+
+  report "$PANE" error
+  assert_equal "$(tama_icons "$WINDOW")" ' !'
+
+  report "$PANE" idle
+  assert_equal "$(tama_icons "$WINDOW")" ' .'
+
+  report "$PANE" subagent-start sub-1
+  assert_equal "$(tama_icons "$WINDOW")" ' +'
+}
+
+@test "the pets preset replaces the whole set" {
+  test_tmux set -g @tama_icon_set pets
+
+  report "$PANE" running
+  assert_equal "$(tama_icons "$WINDOW")" ' 🐥'
+
+  report "$PANE" waiting
+  assert_equal "$(tama_icons "$WINDOW")" ' 🍼'
+
+  report "$PANE" error
+  assert_equal "$(tama_icons "$WINDOW")" ' 💀'
+
+  report "$PANE" idle
+  assert_equal "$(tama_icons "$WINDOW")" ' 😴'
+
+  report "$PANE" subagent-start sub-1
+  assert_equal "$(tama_icons "$WINDOW")" ' 🥚'
+}
+
+@test "an individual icon wins over the preset" {
+  test_tmux set -g @tama_icon_set ascii
+  test_tmux set -g @tama_icon_running '●'
+
+  report "$PANE" running
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
+
+  # And only that one: the rest of the preset still stands.
+  report "$PANE" waiting
+  assert_equal "$(tama_icons "$WINDOW")" ' ?'
+}
+
+@test "a preset nobody recognises draws the default set" {
+  # A typo in an option must not empty the status line it was meant to decorate.
+  test_tmux set -g @tama_icon_set 'asci'
+
+  report "$PANE" running
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
+}
+
+@test "turning idle off takes those icons away and leaves the others" {
+  test_tmux set -g @tama_icon_set ascii
+  test_tmux set -g @tama_show_idle off
+  test_tmux split-window -d -t t
+  local first second
+  first="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
+  second="$(test_tmux list-panes -t t -F '#{pane_id}' | tail -1)"
+
+  report "$first" idle
+  report "$second" running
+  assert_equal "$(tama_icons "$WINDOW")" ' *'
+}
+
+@test "a window whose only agent pane is idle contributes nothing when idle is off" {
+  test_tmux set -g @tama_show_idle off
+
+  report "$PANE" idle
+  # Not a bare prefix: the prefix exists to separate icons from the window name,
+  # and there are no icons.
+  assert_equal "$(tama_icons "$WINDOW")" ''
+  assert_equal "$("$PLUGIN_ROOT/bin/tama" icons "$WINDOW" | wc -c | tr -d ' ')" '0'
+}
+
+@test "turning background off draws those panes as running, not as nothing" {
+  test_tmux set -g @tama_show_background off
+  report "$PANE" subagent-start sub-1
+  report "$PANE" idle
+
+  # The option means "do not distinguish": the agent is still working, so it
+  # draws as working.
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
+}
+
+@test "background falls back to whatever running was configured to be" {
+  test_tmux set -g @tama_show_background off
+  test_tmux set -g @tama_icon_running 'R'
+  test_tmux set -g @tama_icon_background 'B'
+  report "$PANE" subagent-start sub-1
+  report "$PANE" idle
+
+  assert_equal "$(tama_icons "$WINDOW")" ' R'
+}
+
+@test "the prefix, separator and suffix are the user's" {
+  test_tmux set -g @tama_icon_prefix ' ['
+  test_tmux set -g @tama_icon_separator '|'
+  test_tmux set -g @tama_icon_suffix ']'
+  test_tmux split-window -d -t t
+  local first second
+  first="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
+  second="$(test_tmux list-panes -t t -F '#{pane_id}' | tail -1)"
+
+  report "$first" running
+  report "$second" waiting
+  assert_equal "$(tama_icons "$WINDOW")" ' [●|◐]'
+}
+
+@test "the separator only ever comes between two icons" {
+  test_tmux set -g @tama_icon_separator '|'
+
+  report "$PANE" running
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
+}
+
+@test "an empty prefix means no prefix" {
+  # The distinction the option reader exists for: never set means the default
+  # space, set to empty means the user put the icons somewhere that does not
+  # want one.
+  test_tmux set -g @tama_icon_prefix ''
+  report "$PANE" running
+
+  assert_equal "$(tama_icons "$WINDOW")" '●'
+}
+
+@test "the prefix and suffix are absent when nothing is drawn" {
+  test_tmux set -g @tama_icon_prefix '['
+  test_tmux set -g @tama_icon_suffix ']'
+
+  assert_equal "$(tama_icons "$WINDOW")" ''
+}
+
+@test "an option takes effect on source-file, with no server restart" {
+  report "$PANE" running
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
+
+  local conf="$BATS_TEST_TMPDIR/icons.conf"
+  cat >"$conf" <<'CONF'
+set -g @tama_icon_set ascii
+set -g @tama_icon_prefix '<'
+CONF
+  test_tmux source-file "$conf"
+
+  assert_equal "$(tama_icons "$WINDOW")" '<*'
+}
+
+@test "a hash in an option cannot become a format" {
+  # A status line expands what this prints — a job's output is expanded again as
+  # a format — so a `#` has to arrive doubled, which is how a format spells one.
+  # Otherwise an icon of `#{...}` would be a format the user did not write, and
+  # one of `#(...)` a command run once per window per status interval.
+  test_tmux set -g @tama_icon_running '#{host}'
+  test_tmux set -g @tama_icon_prefix ' #'
+  report "$PANE" running
+
+  assert_equal "$(tama_icons "$WINDOW")" ' ####{host}'
+}
+
 @test "the icons render under the bash macOS ships" {
   # bash 3.2 is /bin/bash on every macOS, and tmux runs this command in a shell of
   # its own — so an incompatibility here is invisible until the status line is

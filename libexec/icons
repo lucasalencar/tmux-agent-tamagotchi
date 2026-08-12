@@ -1,29 +1,37 @@
 #!/usr/bin/env bash
 #
-# icons — one glyph per agent pane of a window, in pane order.
+# icons — one glyph per agent pane of a window, in pane order, as the user
+# configured them.
 #
 #   tama icons <window_id>
 #
 # The hottest read path in the plugin: tmux runs this in a shell of its own, once
 # per window per status-interval, for every window on the server. So it makes
-# exactly one tmux call and forks nothing.
+# exactly one tmux call — the configuration and the panes come back together —
+# and forks nothing beyond the one command substitution that reads them.
 #
 # The derived state is worked out here rather than read from an option of its own,
 # because storing it needed two writers who could disagree — see lib/pane.sh. It
 # costs nothing: the one call already read a pane option per pane, and now reads
 # two.
 #
+# Everything the user can configure is read on every invocation and never cached,
+# so `tmux source-file` takes effect on the very next status redraw with no server
+# restart.
+#
 # What this prints is expanded again as a tmux format by the status line that ran
-# it, so it may only ever be glyphs from the table below. A value that reached
-# stdout from an option would be a format the user did not write.
+# it — verified on tmux 3.7b with a real attached client: a job printing
+# `#{host}` draws the hostname, and `##` draws a single `#`. Every byte here now
+# comes from an option the user set, so a `#` is doubled on the way out; without
+# that, an icon of `#{...}` would be a format nobody wrote, and one of `#(...)`
+# a command. `%` is left alone: the same test showed window-status-format is not
+# passed through strftime, so a `%%` would draw as two characters. A user who
+# interpolates the icons into status-left — which *is* strftime-expanded — should
+# keep `%` out of their glyphs.
 #
 # The window is named by `#{window_id}`, never by index: an index moves under
 # renumber-windows, and this command is invoked from a format that was expanded
 # some moments earlier.
-#
-# v0.1 ships the default glyph set only. Making the glyphs, the disabled states
-# and the spacing configurable is a separate change, and this is the file that
-# grows those option reads when it lands.
 
 set -o nounset
 
@@ -31,45 +39,244 @@ set -o nounset
 # shellcheck source=../lib/common.sh
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
+# The configuration, in the order it is read. One global user option each, all
+# prefixed `@tama_`, all read at invocation time.
+#
+# lib/options.sh reads one option per tmux round trip, which is right for a
+# command that runs when an agent reports something and wrong here: a round trip
+# costs a few milliseconds and this runs once per window per status interval, so
+# eleven of them would cost more than everything else this command does together.
+# Hence the batch below, and hence this list rather than eleven `tama_opt` calls.
+TAMA_ICON_OPTIONS='icon_set
+icon_running
+icon_waiting
+icon_background
+icon_idle
+icon_error
+show_idle
+show_background
+icon_prefix
+icon_separator
+icon_suffix'
+TAMA_ICON_OPTION_COUNT=11
+
+# Reads the configuration and the panes in a single tmux invocation, and prints
+# it for the parser below: a marker line, then for every option in the list above
+# either its value followed by a marker or a bare marker when the option is not
+# set at all, then one line per pane.
+#
+# Two things about tmux force this shape. An option that was never set is not the
+# same as one set to the empty string — `set -g @tama_icon_prefix ''` means "no
+# prefix", not "give me the space back" — and `show -gqv` is the only batchable
+# read that keeps them apart: it prints an empty line for the one and no line at
+# all for the other. Reading the values through a format instead would collapse
+# the two, and `show -gv`, which fails on an unset option, cannot be batched at
+# all: tmux abandons the rest of a command sequence after a failure.
+#
+# So the marker is what keeps the lines aligned, and it is the window's own id
+# because that is a value no glyph, prefix or separator will be. Setting one of
+# them to the literal id of the window being drawn — `@7` — would shift that
+# window's remaining options; nothing else in-band can be made proof against a
+# value that impersonates the delimiter, and this is the value least likely to.
+tama_icons_query() { # <window>
+  local target="$1" option
+
+  set -- display-message -p -t "$target" '#{window_id}'
+  while IFS= read -r option; do
+    set -- "$@" ';' show -gqv "@tama_$option" \
+      ';' display-message -p -t "$target" '#{window_id}'
+  done <<EOF
+$TAMA_ICON_OPTIONS
+EOF
+  set -- "$@" ';' list-panes -t "$target" -F "$TAMA_PANE_RENDER_FORMAT"
+
+  tmux_run "$@" 2>/dev/null
+}
+
+# The defaults, before anything is read. A value of its own for the options where
+# the empty string is a configuration in its own right, and a `_HAS_` flag for the
+# ones where it differs from the default: an icon set to empty draws nothing for
+# that state, and an empty prefix is no prefix.
+tama_icons_defaults() {
+  TAMA_ICON_SET=''
+  TAMA_ICON_RUNNING='' TAMA_ICON_HAS_RUNNING=0
+  TAMA_ICON_WAITING='' TAMA_ICON_HAS_WAITING=0
+  TAMA_ICON_BACKGROUND='' TAMA_ICON_HAS_BACKGROUND=0
+  TAMA_ICON_IDLE='' TAMA_ICON_HAS_IDLE=0
+  TAMA_ICON_ERROR='' TAMA_ICON_HAS_ERROR=0
+  TAMA_SHOW_IDLE=''
+  TAMA_SHOW_BACKGROUND=''
+  TAMA_ICON_PREFIX='' TAMA_ICON_HAS_PREFIX=0
+  TAMA_ICON_SEPARATOR=''
+  TAMA_ICON_SUFFIX=''
+}
+
+# Where each option's value lands, by the position it was read in. Deliberately
+# next to the list above: a name added to one and not the other would leave every
+# window drawing the defaults with nothing to say why.
+tama_icons_take() { # <index> <found: 0|1> <value>
+  case "$1" in
+    0) TAMA_ICON_SET="$3" ;;
+    1) TAMA_ICON_RUNNING="$3" TAMA_ICON_HAS_RUNNING="$2" ;;
+    2) TAMA_ICON_WAITING="$3" TAMA_ICON_HAS_WAITING="$2" ;;
+    3) TAMA_ICON_BACKGROUND="$3" TAMA_ICON_HAS_BACKGROUND="$2" ;;
+    4) TAMA_ICON_IDLE="$3" TAMA_ICON_HAS_IDLE="$2" ;;
+    5) TAMA_ICON_ERROR="$3" TAMA_ICON_HAS_ERROR="$2" ;;
+    6) TAMA_SHOW_IDLE="$3" ;;
+    7) TAMA_SHOW_BACKGROUND="$3" ;;
+    8) TAMA_ICON_PREFIX="$3" TAMA_ICON_HAS_PREFIX="$2" ;;
+    9) TAMA_ICON_SEPARATOR="$3" ;;
+    10) TAMA_ICON_SUFFIX="$3" ;;
+  esac
+}
+
+# The presets, and then the per-state overrides on top of them: an override wins,
+# whichever set it was written against, because it is the more specific thing the
+# user said.
+#
+# `glyphs` is the default and stays it: the geometric shapes are single-width
+# everywhere. `ascii` is for terminals with no wide-glyph support at all, and
+# avoids `#` and `%`, which a status line would have to escape. `pets` is the
+# joke the plugin is named for, and its emoji are double-width — tmux measures
+# them differently across terminals, so a status line full of them can be a
+# column or two wider than tmux thinks.
+#
+# A preset name nobody recognises draws the default set rather than nothing: a
+# typo in an option should not empty the status line it was meant to decorate.
+tama_icons_resolve() {
+  case "$TAMA_ICON_SET" in
+    pets)
+      TAMA_GLYPH_RUNNING='🐥' TAMA_GLYPH_WAITING='🍼' TAMA_GLYPH_BACKGROUND='🥚'
+      TAMA_GLYPH_IDLE='😴' TAMA_GLYPH_ERROR='💀'
+      ;;
+    ascii)
+      TAMA_GLYPH_RUNNING='*' TAMA_GLYPH_WAITING='?' TAMA_GLYPH_BACKGROUND='+'
+      TAMA_GLYPH_IDLE='.' TAMA_GLYPH_ERROR='!'
+      ;;
+    *)
+      TAMA_GLYPH_RUNNING='●' TAMA_GLYPH_WAITING='◐' TAMA_GLYPH_BACKGROUND='⚙'
+      TAMA_GLYPH_IDLE='○' TAMA_GLYPH_ERROR='✕'
+      ;;
+  esac
+
+  [ "$TAMA_ICON_HAS_RUNNING" = 0 ] || TAMA_GLYPH_RUNNING="$TAMA_ICON_RUNNING"
+  [ "$TAMA_ICON_HAS_WAITING" = 0 ] || TAMA_GLYPH_WAITING="$TAMA_ICON_WAITING"
+  [ "$TAMA_ICON_HAS_BACKGROUND" = 0 ] || TAMA_GLYPH_BACKGROUND="$TAMA_ICON_BACKGROUND"
+  [ "$TAMA_ICON_HAS_IDLE" = 0 ] || TAMA_GLYPH_IDLE="$TAMA_ICON_IDLE"
+  [ "$TAMA_ICON_HAS_ERROR" = 0 ] || TAMA_GLYPH_ERROR="$TAMA_ICON_ERROR"
+
+  # The prefix separates the icons from the window name; the space is only a
+  # default, and an empty one is a user who put the icons somewhere else.
+  [ "$TAMA_ICON_HAS_PREFIX" = 1 ] || TAMA_ICON_PREFIX=' '
+}
+
+# tmux's own vocabulary for a flag option. Anything else is `on`: a typo that
+# quietly took an icon away is harder to notice than one that was ignored.
+tama_icons_off() { # <value>
+  case "$1" in
+    off | no | 0 | false) return 0 ;;
+  esac
+  return 1
+}
+
+# The glyph one pane contributes, in TAMA_ICON_GLYPH — empty when it contributes
+# nothing.
+#
+# Turning `background` off means "do not distinguish", not "hide": those panes
+# draw as `running`, which is what they were before the plugin could tell the
+# difference. Turning `idle` off does hide them, which is the point — an idle
+# agent is the state a user is least likely to act on.
+# shellcheck disable=SC2034  # read by the caller
+tama_icons_glyph() { # <derived state>
+  case "$1" in
+    running) TAMA_ICON_GLYPH="$TAMA_GLYPH_RUNNING" ;;
+    waiting) TAMA_ICON_GLYPH="$TAMA_GLYPH_WAITING" ;;
+    background)
+      if tama_icons_off "$TAMA_SHOW_BACKGROUND"; then
+        TAMA_ICON_GLYPH="$TAMA_GLYPH_RUNNING"
+      else
+        TAMA_ICON_GLYPH="$TAMA_GLYPH_BACKGROUND"
+      fi
+      ;;
+    idle)
+      if tama_icons_off "$TAMA_SHOW_IDLE"; then
+        TAMA_ICON_GLYPH=''
+      else
+        TAMA_ICON_GLYPH="$TAMA_GLYPH_IDLE"
+      fi
+      ;;
+    error) TAMA_ICON_GLYPH="$TAMA_GLYPH_ERROR" ;;
+    # No state at all, or one from a newer version of the plugin, or somebody
+    # else's option of the same name: not ours to draw.
+    *) TAMA_ICON_GLYPH='' ;;
+  esac
+}
+
 main() {
   [ "$#" -eq 1 ] || die_usage 'icons needs exactly one window id'
   # An empty target is a status line that failed to expand its format, not a
   # request for whichever window tmux would pick.
   [ -n "$1" ] || die_usage 'icons needs a window id'
 
-  local panes icons='' record
-  # One line per pane, in pane order, holding what the pane last said about itself
-  # and its live subagents. A pane that is not an agent pane says nothing. A window
-  # that is gone — closed between the format expanding and this running — is not an
-  # error worth a word on stdout.
-  panes="$(tmux_run list-panes -t "$1" -F "$TAMA_PANE_RENDER_FORMAT" 2>/dev/null)" || exit 0
+  local raw
+  # A window that is gone — closed between the format expanding and this running —
+  # is not an error worth a word on stdout.
+  raw="$(tama_icons_query "$1")" || exit 0
 
+  tama_icons_defaults
+
+  local line mark='' index=0 found=0 pending='' icons=''
   # A here-document rather than a pipe: a pipe would put this loop in a subshell,
-  # and this command exists to run without forking. Taking a record apart is the
-  # library's job, so the field order is stated in one place.
-  while IFS= read -r record; do
-    tama_pane_derive_record "$record"
-    case "$TAMA_PANE_DERIVED" in
-      # The braces are not decoration: bash reads the bytes of a multibyte glyph
-      # as part of the name in `$icons●`, and dies under `nounset`.
-      running) icons="${icons}●" ;;
-      waiting) icons="${icons}◐" ;;
-      background) icons="${icons}⚙" ;;
-      idle) icons="${icons}○" ;;
-      error) icons="${icons}✕" ;;
-      # A state from a newer version of the plugin, or from somebody else's
-      # option of the same name: not ours to draw.
-    esac
+  # and this command exists to run without forking. Taking a pane's record apart
+  # is the library's job, so the field order is stated in one place.
+  #
+  # A configuration value with a newline in it arrives as several lines and the
+  # last one wins; the markers mean it cannot shift anything else.
+  while IFS= read -r line; do
+    if [ "$index" -ge "$TAMA_ICON_OPTION_COUNT" ]; then
+      tama_pane_derive_record "$line"
+      tama_icons_glyph "$TAMA_PANE_DERIVED"
+      # A pane with nothing to draw contributes no separator either.
+      [ -n "$TAMA_ICON_GLYPH" ] || continue
+      icons="${icons:+$icons$TAMA_ICON_SEPARATOR}$TAMA_ICON_GLYPH"
+      continue
+    fi
+
+    if [ -z "$mark" ]; then
+      # An empty marker is a window that is gone: tmux says so by expanding
+      # #{window_id} to nothing rather than by failing.
+      mark="$line"
+      [ -n "$mark" ] || exit 0
+      continue
+    fi
+
+    if [ "$line" = "$mark" ]; then
+      tama_icons_take "$index" "$found" "$pending"
+      index=$((index + 1))
+      found=0
+      pending=''
+      # Everything after the last option is a pane, so the glyphs have to be
+      # settled before the next line arrives.
+      [ "$index" -lt "$TAMA_ICON_OPTION_COUNT" ] || tama_icons_resolve
+      continue
+    fi
+
+    pending="$line"
+    found=1
   done <<EOF
-$panes
+$raw
 EOF
 
-  # The prefix separates the icons from the window name, and exists only when
-  # there is something to separate: a window with no agent pane must contribute
-  # nothing at all to the status line, not even the stray space that padding
-  # would leave. No trailing newline for the same reason.
+  # The prefix exists only when there is something to separate from the window
+  # name: a window with no agent pane must contribute nothing at all to the
+  # status line, not even the stray space that padding would leave. Nor may a
+  # window whose every pane is in a state the user turned off. No trailing
+  # newline for the same reason.
   [ -n "$icons" ] || return 0
-  printf ' %s' "$icons"
+  icons="$TAMA_ICON_PREFIX$icons$TAMA_ICON_SUFFIX"
+  # Doubled, not stripped: `##` is how a tmux format spells one `#`, so a user
+  # who wants a `#` in their status line gets one, and nobody gets a format.
+  printf '%s' "${icons//\#/##}"
 }
 
 main "$@"
