@@ -1,25 +1,20 @@
 # shellcheck shell=bash
 #
-# Configuration reader. Every option lives in a server-scoped tmux user option
-# and is read at invocation time, never cached, so `tmux source-file` takes
-# effect on the very next command with no server restart.
+# Configuration reader. Every option lives in a global tmux user option, set with
+# `set -g @tama_…` the way every tmux plugin is configured, and is read at
+# invocation time, never cached, so `tmux source-file` takes effect on the very
+# next command with no server restart.
 
 # tama_opt <option-name-without-@> <default>
 tama_opt() {
   local value
-  value="$(tmux_run show -gqv "@$1" 2>/dev/null)" || value=''
-  if [ -z "$value" ]; then
-    printf '%s' "$2"
-  else
+  # `show -gv` without -q fails on an option that was never set, which is the
+  # only way to tell it apart from one deliberately set to the empty string.
+  # Emptying an option is a real configuration act: `set -g @tama_icon_prefix ''`
+  # means "no prefix", not "give me the default back".
+  if value="$(tmux_run show -gv "@$1" 2>/dev/null)"; then
     printf '%s' "$value"
+  else
+    printf '%s' "$2"
   fi
-}
-
-# tama_opt_enabled <option-name-without-@> <default>
-# True when the option reads as on/true/yes/1.
-tama_opt_enabled() {
-  case "$(tama_opt "$1" "$2")" in
-    on | true | yes | 1) return 0 ;;
-    *) return 1 ;;
-  esac
 }

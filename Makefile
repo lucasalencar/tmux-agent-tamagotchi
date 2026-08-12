@@ -1,7 +1,7 @@
 # Development entry points. CI runs exactly these targets.
 
 SHELL_DIRS := $(wildcard bin lib libexec backends integrations tests/fixtures)
-SHELL_FILES := tamagotchi.tmux \
+SHELL_FILES := tamagotchi.tmux tests/helper.bash \
 	$(shell find $(SHELL_DIRS) -type f \( -perm -u+x -o -name '*.sh' \) | sort)
 
 .PHONY: all lint test
@@ -14,4 +14,4 @@ lint:
 	shellcheck -x $(SHELL_FILES)
 
 test:
-	bats tests
+	bats -r tests

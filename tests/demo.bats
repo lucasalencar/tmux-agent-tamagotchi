@@ -5,8 +5,9 @@ bats_require_minimum_version 1.5.0
 load helper
 
 setup() {
-  TAMA_SOCKET="tamademo-$$-${BATS_TEST_NUMBER:-0}"
-  export TAMA_SOCKET
+  # This suite boots its server through the demo config rather than through the
+  # helper, so it only reserves the socket name.
+  tama_reserve_socket tamademo
 }
 
 teardown() {
@@ -30,7 +31,7 @@ teardown() {
     run test_tmux -f examples/demo.tmux.conf new-session -d -s demo
   assert_success
 
-  [ -n "$(test_tmux show -gqv @tama_bin)" ]
+  assert_equal "$(test_tmux show -gqv @tama_bin)" "$PLUGIN_ROOT/bin/tama"
 }
 
 @test "the demo config puts the exported formats in the window status line" {

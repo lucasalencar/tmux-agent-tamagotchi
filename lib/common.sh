@@ -2,10 +2,10 @@
 #
 # Shared helpers, sourced by bin/tama and by every script under libexec/.
 #
-# Failure policy (see docs/plans and the CLI contract): usage errors exit 2 with
-# a message on stderr, because a wrong hook is the user's fault and must be
-# visible while they are editing it. Everything else exits 0 silently — a
-# notification that did not appear must never fail an agent's turn.
+# Failure policy (see the CLI contract in bin/tama): usage errors exit 2 with a
+# message on stderr, because a wrong hook is the user's fault and must be visible
+# while they are editing it. Everything else exits 0 silently — a notification
+# that did not appear must never fail an agent's turn.
 
 set -o nounset
 
@@ -18,10 +18,11 @@ tmux_run() {
   "${TAMA_TMUX_ARGV[@]}" "$@"
 }
 
-# Usage error: loud, on stderr, exit 2.
+# Usage error: loud, on stderr, exit 2. The hint carries an absolute path
+# because nothing is installed onto PATH — `tama` alone is not runnable.
 die_usage() {
   printf 'tama: %s\n' "$1" >&2
-  printf "Try 'tama --help'.\\n" >&2
+  printf "Try '%s --help'.\\n" "${TAMA_BIN:-tama}" >&2
   exit 2
 }
 

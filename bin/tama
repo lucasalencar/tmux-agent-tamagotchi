@@ -6,25 +6,45 @@
 # and nothing else. Everything under libexec/ and lib/ is internal and free to
 # move. Each subcommand is a file in libexec/ with the same name; the dispatcher
 # routes by file name and holds no list of its own.
+#
+# What a libexec/ script may assume, and nothing more:
+#   * it is an executable file, run with the subcommand name already shifted off
+#   * $TMUX is non-empty (the dispatcher has already made an absent tmux a no-op)
+#   * $TAMA_PLUGIN_DIR and $TAMA_BIN are exported; it must source lib/common.sh
+#     itself, since it runs as its own process
+#   * exit 2 is reserved for usage errors; every other failure exits 0 silently
 
 set -o nounset
 
 TAMA_VERSION='0.1.0-dev'
 
-TAMA_BIN_DIR="$(
-  src="${BASH_SOURCE[0]}"
+# Where we are, following symlinks: a user may well symlink this file even though
+# the plugin never installs itself anywhere (ADR-0003). Must run in a subshell —
+# it ends on a cd. Note that `case` inside a command substitution does not parse
+# on bash 3.2, which is the /bin/bash every macOS ships, so this stays a function.
+tama_resolve_plugin_dir() {
+  local src="$1" dir
   while [ -L "$src" ]; do
-    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    case "$src" in
+      */*) dir="$(cd -P "${src%/*}" && pwd)" ;;
+      *) dir="$PWD" ;;
+    esac
     src="$(readlink "$src")"
     case "$src" in
       /*) ;;
       *) src="$dir/$src" ;;
     esac
   done
-  cd -P "$(dirname "$src")" && pwd
-)"
-TAMA_PLUGIN_DIR="$(cd -P "$TAMA_BIN_DIR/.." && pwd)"
-export TAMA_PLUGIN_DIR
+  case "$src" in
+    */*) dir="${src%/*}" ;;
+    *) dir='.' ;;
+  esac
+  cd -P "$dir/.." && pwd
+}
+
+TAMA_PLUGIN_DIR="$(tama_resolve_plugin_dir "${BASH_SOURCE[0]}")"
+TAMA_BIN="$TAMA_PLUGIN_DIR/bin/tama"
+export TAMA_PLUGIN_DIR TAMA_BIN
 
 # shellcheck source=lib/common.sh
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
@@ -59,10 +79,13 @@ Behaviour agent hooks rely on:
   * No subcommand reads stdin. All input is arguments; jq is not a dependency.
 
 Nothing is installed onto \$PATH. Hooks find this file by asking tmux, which is
-also how they keep working if you move the plugin:
+also how they keep working if you move the plugin, and how they stay quiet on a
+machine where the plugin is not installed:
 
   [ -n "\$TMUX" ] || exit 0
-  "\$(tmux show -gv @tama_bin)" version
+  tama="\$(tmux show -gqv @tama_bin)"
+  [ -n "\$tama" ] || exit 0
+  "\$tama" version
 
 Plugin directory: $TAMA_PLUGIN_DIR
 EOF
@@ -86,13 +109,16 @@ main() {
     -*)
       die_usage "unknown option: $subcommand"
       ;;
+    # A subcommand is a plain file name: never a path, a dotfile, or nothing.
+    '' | */* | .*)
+      die_usage "unknown subcommand: $subcommand"
+      ;;
   esac
 
+  # -x alone is true for a directory, and dispatching to one exits 126 with a
+  # bash diagnostic instead of the usage error the contract promises.
   local command_file="$TAMA_PLUGIN_DIR/libexec/$subcommand"
-  case "$subcommand" in
-    */* | .*) command_file='' ;;
-  esac
-  [ -n "$command_file" ] && [ -x "$command_file" ] ||
+  [ -f "$command_file" ] && [ -x "$command_file" ] ||
     die_usage "unknown subcommand: $subcommand"
 
   # From here on the command acts on tmux, so an absent server is a no-op.

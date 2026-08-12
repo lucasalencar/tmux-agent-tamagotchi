@@ -8,7 +8,9 @@ on:
 jobs:
   lint:
     name: shellcheck
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest: the suite needs bats >= 1.5, and which
+    # bats `apt` has is a property of the image.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install shellcheck
@@ -19,7 +21,9 @@ jobs:
 
   test:
     name: bats
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest: the suite needs bats >= 1.5, and which
+    # bats `apt` has is a property of the image.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install tmux and bats
