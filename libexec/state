@@ -128,17 +128,22 @@ clear_pane() {
 # Two directions are accepted for the same reason. A leaked id makes the pane look
 # busier than it is and is healed by the next `state clear` or sweep; a retried
 # start can resurrect an id a concurrent stop had just removed, which lands in the
-# same benign direction. All of it is bookkeeping without a compare-and-swap: a lock
+# same benign direction. What must never be resurrected is a pane a `state clear`
+# has taken away, because clear is what the healing story rests on — see the
+# read-back. All of it is bookkeeping without a compare-and-swap: a lock
 # in a shell script invoked on every subagent event would cost more, on every event,
 # than a wrong glyph on a few.
 subagent() {
-  local target="$1" verb="$2" id="$3" attempt=1 wanted was refresh
+  local target="$1" verb="$2" id="$3" attempt=1 wanted was refresh was_agent_pane
   while :; do
     tama_pane_read "$target" || exit 0
     # From here on the pane is addressed by its own id: a target given by index
     # could come to mean another pane while this loop is still running.
     target="$TAMA_PANE_ID"
     was="$TAMA_PANE_DISPLAY"
+    # Whether this was an agent pane at all when the attempt started, which is how
+    # the read-back below tells a `state clear` from a lost race.
+    was_agent_pane="$TAMA_PANE_STATE_MAIN"
 
     case "$verb" in
       subagent-start) tama_subagents_add "$TAMA_PANE_SUBAGENTS" "$id" ;;
@@ -156,6 +161,30 @@ subagent() {
     tama_batch_flush "$refresh" || return 0
 
     tama_pane_read "$target" || return 0
+
+    # A `state clear` that landed under this write wins, and has to: the whole
+    # promise of clearing is that the pane becomes indistinguishable from one that
+    # never ran an agent, and only `clear` ever takes the main state away. Without
+    # this the loop reads the clear as a lost race — from here the two look the same,
+    # the id it needed is not in the list — and puts the id back, on a pane nothing
+    # draws, where nothing heals it: `clear` was named as the cure. The next agent in
+    # that pane then reports `idle` and renders `background` forever.
+    #
+    # The mirror interleaving lands here too, with the id present rather than gone:
+    # a write that arrived after `clear` read the pane and before its batch, whose
+    # residue is this call's own list. Either way the pane is not an agent pane, so
+    # there is nothing for a subagent list to qualify — it goes.
+    if [ -n "$was_agent_pane" ] && [ -z "$TAMA_PANE_STATE_MAIN" ]; then
+      if [ -n "$TAMA_PANE_SUBAGENTS" ]; then
+        tama_batch_reset
+        tama_pane_stage "$target" subagents '' "$TAMA_PANE_SUBAGENTS"
+        # No refresh: a pane with no main state draws nothing either way, and the
+        # clear that got here first already asked for the redraw its icon needed.
+        tama_batch_flush 'no' || true
+      fi
+      return 0
+    fi
+
     if subagent_settled "$verb" "$TAMA_PANE_SUBAGENTS" "$id"; then
       # The read-back is also the one chance to notice that the other half of the
       # pane moved underneath this write. A state report and a subagent event each

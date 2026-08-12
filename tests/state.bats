@@ -383,6 +383,78 @@ teardown() {
   assert_contains "$list" sub-b 'the subagent list'
 }
 
+@test "a subagent start whose write loses to a clear does not put the state back" {
+  # The retry loop cannot tell a `state clear` from a lost race by looking at the
+  # list — either way its id is gone — and retrying past a clear is the one direction
+  # that is not benign: it leaves an option on a pane that has to be
+  # indistinguishable from one that never ran an agent, and no later clear cleans it
+  # up, because clear is what lost.
+  #
+  # Driven by events, in this order: the start reads, the start writes, the clear
+  # reads, the clear writes, the start reads back and finds its id gone.
+  tama_log_tmux_calls
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start sub-a --pane "$PANE"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
+  assert_success
+
+  local started="$BATS_TEST_TMPDIR/started" cleared="$BATS_TEST_TMPDIR/cleared"
+
+  TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-start" \
+    TAMA_FAKE_TMUX_TOUCH_AFTER=2 TAMA_FAKE_TMUX_TOUCH="$started" \
+    TAMA_FAKE_TMUX_WAIT_BEFORE=3 TAMA_FAKE_TMUX_WAIT_FOR="$cleared" \
+    "$PLUGIN_ROOT/bin/tama" state subagent-start sub-b --pane "$PANE" &
+  TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-clear" \
+    TAMA_FAKE_TMUX_WAIT_BEFORE=1 TAMA_FAKE_TMUX_WAIT_FOR="$started" \
+    TAMA_FAKE_TMUX_TOUCH_AFTER=2 TAMA_FAKE_TMUX_TOUCH="$cleared" \
+    "$PLUGIN_ROOT/bin/tama" state clear --pane "$PANE" &
+  wait
+
+  # The interleaving really happened: without both writes this asserts nothing.
+  [ -e "$started" ]
+  [ -e "$cleared" ]
+
+  local remaining
+  remaining="$(test_tmux show -p -t "$PANE" | grep -c '^@tama_' || true)"
+  assert_equal "$remaining" 0
+
+  # And the consequence a user would have seen: the next agent in this pane
+  # reporting `idle` draws the finished glyph, not `background` from a dead id.
+  run "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
+  assert_success
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
+}
+
+@test "a subagent start that lands after a clear takes its own residue back off" {
+  # The same hole without the retry loop: the write arrives after `clear` read the
+  # pane, so clear does not know to unset it and the start's own read-back is the
+  # only thing left that can see the pane is no longer an agent pane.
+  #
+  # In this order: the start reads, the clear reads, the clear writes, the start
+  # writes, the start reads back and finds its id there but the pane cleared.
+  tama_log_tmux_calls
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start sub-a --pane "$PANE"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
+  assert_success
+
+  local cleared="$BATS_TEST_TMPDIR/cleared"
+
+  TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-start" \
+    TAMA_FAKE_TMUX_WAIT_BEFORE=2 TAMA_FAKE_TMUX_WAIT_FOR="$cleared" \
+    "$PLUGIN_ROOT/bin/tama" state subagent-start sub-b --pane "$PANE" &
+  TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-clear" \
+    TAMA_FAKE_TMUX_TOUCH_AFTER=2 TAMA_FAKE_TMUX_TOUCH="$cleared" \
+    "$PLUGIN_ROOT/bin/tama" state clear --pane "$PANE" &
+  wait
+
+  [ -e "$cleared" ]
+
+  local remaining
+  remaining="$(test_tmux show -p -t "$PANE" | grep -c '^@tama_' || true)"
+  assert_equal "$remaining" 0
+}
+
 @test "an id that begins with a dash can be given after --" {
   # Ids are opaque and the agent chooses them, so some of them will look like
   # options; without a way to say "this is a value" they would be unusable.
