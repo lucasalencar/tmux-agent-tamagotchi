@@ -105,6 +105,29 @@ markers, but without the space it pads with, since the icons bring their own:
 @tama_flag draws @tama_flag_text — " *" unless you set it — on the windows that
 want you. Set it to something with #[fg=red] in it if you would rather see colour.
 
+The icons are yours. Every option below is read on every redraw, so tmux
+source-file is enough to see a change; the values shown are the defaults:
+
+  set -g @tama_icon_set glyphs     # or 'pets' (emoji) or 'ascii'
+  set -g @tama_icon_running '●'    # one per state; an individual icon always
+  set -g @tama_icon_waiting '◐'    # wins over the set it came from
+  set -g @tama_icon_background '⚙'
+  set -g @tama_icon_idle '○'
+  set -g @tama_icon_error '✕'
+  set -g @tama_show_idle on        # 'off' leaves idle panes without an icon
+  set -g @tama_show_background on  # 'off' draws them as running instead: the
+                                   # agent is working either way, you just stop
+                                   # being told it is its subagents working
+  set -g @tama_icon_prefix ' '     # drawn only when there is an icon to draw
+  set -g @tama_icon_separator ''   # between two agent panes of one window
+  set -g @tama_icon_suffix ''
+
+An option set to the empty string is a configuration and not an absent one, so
+@tama_icon_prefix '' really means no prefix. The 'pets' emoji are double width:
+they cost a column each, so a status line full of windows truncates sooner, and
+terminals do not all measure them the way tmux does. 'ascii' is single-column and
+free of the characters a status line would have to escape.
+
 Common options:
   --pane <pane_id>      Act on this pane instead of \$TMUX_PANE (on the
                         subcommands that act on a pane).
