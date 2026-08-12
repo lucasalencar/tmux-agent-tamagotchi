@@ -19,7 +19,9 @@
 #   PostToolUseFailure, PostToolBatch  state running
 #   PermissionRequest                  state waiting  — blocked on the user
 #   Notification (the types that mean the user is wanted)
-#                                      state waiting  + notify, carrying `message`
+#                                      state waiting  + notify, carrying `message` —
+#                                                       except idle_prompt, which is
+#                                                       the state and no banner
 #   Stop                               state idle     + notify, carrying
 #                                                       `last_assistant_message`
 #   StopFailure                        state error    + notify — the turn died on an
@@ -55,6 +57,22 @@
 # looking at their terminal. And the `Notification` event does not depend on the
 # user's own Claude Code notification settings — verified with
 # `preferredNotifChannel: notifications_disabled`, where it still fires.
+#
+# The `idle_prompt` notification is the same decision reached the same way, at the
+# other end of a turn: it moves the state and never banners. Claude Code raises it
+# **60 seconds after every turn ends** — measured at exactly +60s on three
+# consecutive turns of a 2.1.228 session — and its message is the fixed sentence
+# `Claude is waiting for your input`. `Stop` has already bannered by then, carrying
+# what the agent actually said. Wiring both means two interruptions for one finished
+# turn, and because the core groups banners per window the second one *replaces* the
+# first: a minute after being told what the agent said, the user would be told again
+# in words that say nothing. The vaguer message wins simply by arriving second,
+# which is the same trap the `PermissionRequest` pair sets in the other direction.
+#
+# So the shape to keep is: one interruption per thing that happens, carried by
+# whichever of the events has the agent's own words in it. The state still moves on
+# `idle_prompt`, because a session that has gone quiet waiting for the user really is
+# `waiting`, and that is the event which says so if `Stop` was never wired.
 #
 # The cost of that decision, and the thing to check when somebody reports a
 # permission prompt that moves the icon and never banners: `Notification` has to be
@@ -411,6 +429,9 @@ cc_message() { # <field> <fallback>
 # something routine happened. An opt-in list: a type this version has not seen is
 # treated as routine, because a pane wrongly stuck in `waiting` outlives the event
 # that caused it, while a missed one is corrected by the next thing the agent does.
+#
+# Passing this gate means the pane wants the user, which is a question about the icon.
+# Whether it is also worth an interruption is decided after it, per type.
 cc_notification_wants_user() { # <type>
   case "$1" in
     permission_prompt | idle_prompt | agent_needs_input) return 0 ;;
@@ -448,6 +469,16 @@ main() {
       # guessing wrong leaves a pane asking for the user forever.
       cc_field notification_type || exit 0
       cc_notification_wants_user "$TAMA_CC_FIELD" || exit 0
+      # The icon and the window mark, and no banner — the same trade as
+      # `PermissionRequest` above, at the other end of the turn: this one arrives 60s
+      # after `Stop` has already bannered what the agent said, and would replace it
+      # with a sentence that says nothing. See the note at the top of this file.
+      #
+      # The state is still worth moving, and moving it ends the hook, because
+      # `cc_state` execs.
+      if [ "$TAMA_CC_FIELD" = 'idle_prompt' ]; then
+        cc_state waiting "$@"
+      fi
       if cc_is_delegated; then
         cc_state waiting "$@"
       fi

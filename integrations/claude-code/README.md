@@ -62,7 +62,7 @@ machine. No absolute path to the plugin appears anywhere in your settings (ADR-0
 | `SessionStart` | idle — the pane has an agent in it now, and says so before you type | |
 | `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure` | running | |
 | `PermissionRequest` | waiting, and the window is flagged if you are looking elsewhere | no — the `Notification` below is the banner for it |
-| `Notification` | waiting, for the types that mean you are wanted | yes, carrying the message Claude Code wrote |
+| `Notification` | waiting, for the types that mean you are wanted | yes, carrying the message Claude Code wrote — except the idle prompt, below |
 | `Stop` | idle | yes, carrying the agent's last message |
 | `StopFailure` | error — the turn ended on an API error | yes |
 | `SubagentStart`, `SubagentStop` | the pane's subagent count, which is what renders an idle agent with live subagents as working in the background | never |
@@ -89,6 +89,16 @@ delay is not a cost either: a prompt you answer straight away never interrupts y
 while the icon and the window mark are there the instant the prompt appears. And the
 `Notification` event does not depend on your own Claude Code notification settings — it
 still fires with `preferredNotifChannel: notifications_disabled`.
+
+**The idle prompt deliberately does not banner either**, for the same reason at the other end
+of the turn. Sixty seconds after every turn ends — measured at exactly +60s on three
+consecutive turns of a 2.1.228 session — Claude Code raises a `Notification` of type
+`idle_prompt` whose message is always `Claude is waiting for your input`. `Stop` has already
+bannered by then, carrying what the agent actually said. Wiring both would mean being
+interrupted twice for one finished turn, and because banners are grouped per window the
+second one would *replace* the first: a minute after being told what the agent said, you
+would be told again in words that say nothing. So the idle prompt moves the icon to `waiting`
+and stops there.
 
 **Nothing a delegated run is attributed to raises a banner.** A subagent finishing is not
 your session finishing, and a payload carrying `agent_id` is Claude Code telling the adapter

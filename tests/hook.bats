@@ -619,6 +619,43 @@ PAYLOAD
   refute_backend_called notify
 }
 
+@test "the idle prompt moves the icon without interrupting the user" {
+  # The same parting of the state half and the banner half as `PermissionRequest`
+  # above, at the other end of the turn. Claude Code raises this one 60s after every
+  # turn ends — measured at exactly +60s on three consecutive turns of a 2.1.228
+  # session — and its message is always the same sentence, which says nothing.
+  #
+  # The state is asserted as well as the silence, on purpose: the wrong way to keep
+  # this quiet is to drop `idle_prompt` out of the types that mean the user is
+  # wanted, and this test is what says so.
+  hook SessionStart
+  hook Notification \
+    <<<"$(payload Notification ',"notification_type":"idle_prompt","message":"Claude is waiting for your input"')"
+  assert_success
+
+  assert_pane_option "$PANE" state_main waiting
+  refute_backend_called notify
+}
+
+@test "the idle prompt does not replace what the agent said with a sentence that says nothing" {
+  # The regression, with a name. `Stop` banners the agent's own words; a minute later
+  # the idle prompt arrives, and because banners are grouped per window a second one
+  # would replace the first — leaving the user with `Claude is waiting for your
+  # input` where they had been told what happened.
+  hook SessionStart
+  hook Stop <<<"$(payload Stop ',"last_assistant_message":"I have finished the migration"')"
+  assert_success
+  assert_backend_value notify argv2 'I have finished the migration'
+
+  hook Notification \
+    <<<"$(payload Notification ',"notification_type":"idle_prompt","message":"Claude is waiting for your input"')"
+  assert_success
+
+  # One banner for one finished turn, and it still says what the agent said.
+  assert_equal "$(tama_backend_calls notify)" 1
+  assert_backend_value notify argv2 'I have finished the migration'
+}
+
 @test "a banner leaves the window marked, so the user finds it later" {
   # Asked for the way a status line asks — through the format the entrypoint
   # exports — because the mark is what is still there minutes after the banner has
@@ -737,7 +774,9 @@ PAYLOAD
   [ -z "$stderr" ]
   assert_backend_value notify argv2 'finished its turn'
 
-  hook Notification <<<"$(payload Notification ',"notification_type":"idle_prompt"')"
+  # And the same for the other message field, on a type that does banner — the idle
+  # prompt no longer does, so it cannot stand in for one here.
+  hook Notification <<<"$(payload Notification ',"notification_type":"permission_prompt"')"
   assert_success
   assert_backend_value notify argv2 'needs your attention'
 }
