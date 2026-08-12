@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+#
+# tama — the single public entry point of tmux-agent-tamagotchi.
+#
+# This file is the compatibility promise: agent hooks call `tama <subcommand>`
+# and nothing else. Everything under libexec/ and lib/ is internal and free to
+# move. Each subcommand is a file in libexec/ with the same name; the dispatcher
+# routes by file name and holds no list of its own.
+
+set -o nounset
+
+TAMA_VERSION='0.1.0-dev'
+
+TAMA_BIN_DIR="$(
+  src="${BASH_SOURCE[0]}"
+  while [ -L "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    case "$src" in
+      /*) ;;
+      *) src="$dir/$src" ;;
+    esac
+  done
+  cd -P "$(dirname "$src")" && pwd
+)"
+TAMA_PLUGIN_DIR="$(cd -P "$TAMA_BIN_DIR/.." && pwd)"
+export TAMA_PLUGIN_DIR
+
+# shellcheck source=lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+# shellcheck source=lib/options.sh
+. "$TAMA_PLUGIN_DIR/lib/options.sh"
+
+usage() {
+  cat <<EOF
+tama — tmux-agent-tamagotchi
+
+Shows what the AI agents running in your tmux panes are doing: an icon per agent
+pane in the window name, a flag on windows that want your attention, and a
+desktop notification that clicks back to the pane that spoke. Agents report
+their own lifecycle by calling this command from their hook system; the plugin
+never talks to an agent.
+
+Usage: tama <subcommand> [args]
+
+Subcommands:
+  version               Print the plugin version.
+  --help, -h, help      Print this message.
+
+Common options:
+  --pane <pane_id>      Act on this pane instead of \$TMUX_PANE (on the
+                        subcommands that act on a pane).
+
+Behaviour agent hooks rely on:
+  * Outside tmux (no \$TMUX) every command is a silent no-op, exit 0, so one
+    hook configuration works in both contexts.
+  * A usage error exits 2 with a message on stderr, so a wrong hook fails
+    loudly while you are editing it.
+  * Anything else that goes wrong — no such pane, missing notifier, a banner
+    that would not appear — exits 0 silently and never fails an agent's turn.
+  * No subcommand reads stdin. All input is arguments; jq is not a dependency.
+
+Nothing is installed onto \$PATH. Hooks find this file by asking tmux, which is
+also how they keep working if you move the plugin:
+
+  [ -n "\$TMUX" ] || exit 0
+  "\$(tmux show -gv @tama_bin)" version
+
+Plugin directory: $TAMA_PLUGIN_DIR
+EOF
+}
+
+main() {
+  [ "$#" -gt 0 ] || die_usage 'no subcommand given'
+
+  local subcommand="$1"
+  shift
+
+  case "$subcommand" in
+    version | --version)
+      printf 'tama %s\n' "$TAMA_VERSION"
+      return 0
+      ;;
+    --help | -h | help)
+      usage
+      return 0
+      ;;
+    -*)
+      die_usage "unknown option: $subcommand"
+      ;;
+  esac
+
+  local command_file="$TAMA_PLUGIN_DIR/libexec/$subcommand"
+  case "$subcommand" in
+    */* | .*) command_file='' ;;
+  esac
+  [ -n "$command_file" ] && [ -x "$command_file" ] ||
+    die_usage "unknown subcommand: $subcommand"
+
+  # From here on the command acts on tmux, so an absent server is a no-op.
+  require_tmux
+
+  exec "$command_file" "$@"
+}
+
+main "$@"
