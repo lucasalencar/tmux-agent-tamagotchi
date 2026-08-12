@@ -2,11 +2,26 @@
 #
 # on-select — the user just looked at a window.
 #
-#   tama on-select [--window <window_id>] [--pane <pane_id>]
+#   tama on-select [--all] [--window <window_id>] [--pane <pane_id>]
 #
 # Wired to tmux's `after-select-window` hook by the entrypoint, which is what makes
 # clearing a flag free of any manual step: the user selects the window, the mark
 # goes. It is the only thing that clears one.
+#
+# Also wired to `client-focus-in`, with `--all`: the user's terminal coming back to
+# the front means they are about to read the whole status line, so every window's
+# state is swept and not only this one's — see libexec/gc for why that scope hangs
+# off this event and no other. The flag still only comes off the one window they are
+# looking at. Clearing the flag of every window some attached session happens to be
+# showing would take marks off windows nobody has looked at, and a mark that never
+# arrived costs an agent sitting blocked, while a stale one costs a glance.
+#
+# That hook is also what closes the one gap the flag had: a flag raised on the
+# active window of a detached session was waiting for a `select-window` that
+# attaching never produces, because the user is already on that window. Focus
+# arriving is the event that says they are looking at it now. It needs tmux's
+# `focus-events on` to be reported at all, which is the user's setting to make —
+# without it the mark waits for the next window selection, as before.
 #
 # The hook passes `--window` because $TMUX_PANE cannot be trusted here. tmux sets it,
 # in a hook's `run-shell`, to a pane id that does not exist — `%101` on the tmux this
@@ -19,10 +34,9 @@
 # The $TMUX_PANE fallback stays for a user calling this from a key binding, where the
 # variable does name a real pane.
 #
-# In v0.1 this only unflags. It is the seam for everything else that becomes true
-# when the user arrives at a window — dismissing that window's pending notification,
-# sweeping the state of panes whose agent is gone — so those land here rather than
-# growing another hook.
+# In v0.1 this unflags and sweeps stale state. It is the seam for everything else
+# that becomes true when the user arrives at a window — dismissing that window's
+# pending notification — so that lands here rather than growing another hook.
 #
 # Never fails: this runs from a tmux hook, where a non-zero exit is noise in the
 # server log and nothing a user can act on.
@@ -34,10 +48,14 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 main() {
-  local window='' pane=''
+  local window='' pane='' all='no'
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
+      --all)
+        all='yes'
+        shift
+        ;;
       --window)
         if [ "$#" -lt 2 ] || [ -z "$2" ]; then
           die_usage '--window needs a window id'
@@ -58,11 +76,19 @@ main() {
   done
 
   # The window the hook named, else the pane it was asked about, else the pane a key
-  # binding is running in. Having none of them is a quiet no-op.
+  # binding is running in. Having none of them leaves nothing to unflag — but a
+  # `--all` sweep is about the server and does not need a target at all.
   local target="${window:-${pane:-${TMUX_PANE:-}}}"
-  [ -n "$target" ] || exit 0
 
-  tama_flag_clear "$target"
+  [ -z "$target" ] || tama_flag_clear "$target"
+
+  # After the flag, not before: taking the mark off is what the user is waiting for,
+  # and the sweep is housekeeping that may read every pane on the server.
+  if [ "$all" = 'yes' ]; then
+    tama_stale_sweep_server
+  elif [ -n "$target" ]; then
+    tama_stale_sweep_window "$target"
+  fi
 }
 
 main "$@"

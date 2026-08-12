@@ -223,6 +223,16 @@ tama_pane_value_is_storable() { # <value>
   return 0
 }
 
+# Every pane option the plugin owns, in one list, because two things take a pane
+# apart again: `state clear` and the stale-state sweep. An option added to the
+# record above and not here would survive both of them, and a pane that keeps one
+# is a pane a later read can still tell from one that never ran an agent.
+TAMA_PANE_OPTIONS='state_main
+subagents
+cmd
+agent
+cwd'
+
 # Writes are batched into a single tmux invocation, because the alternative is
 # one round trip per option on the hottest write path in the plugin.
 
@@ -261,6 +271,20 @@ tama_pane_stage() { # <pane_id> <option> <new> <stored>
   else
     tama_batch_add set -puq -t "$1" "@tama_pane_$2"
   fi
+}
+
+# Stages the removal of every trace of an agent from <pane_id>. Unconditional,
+# unlike tama_pane_stage: `set -puq` on an option nobody set is free and cannot
+# fail, and asking first would cost a read per option — which the sweep, judging a
+# whole server from one list-panes, deliberately does not have. The caller decides
+# whether there was anything to remove at all.
+tama_pane_stage_clear() { # <pane_id>
+  local option
+  while IFS= read -r option; do
+    tama_batch_add set -puq -t "$1" "@tama_pane_$option"
+  done <<EOF
+$TAMA_PANE_OPTIONS
+EOF
 }
 
 # Sends what was staged. Nothing staged sends nothing and returns non-zero — the

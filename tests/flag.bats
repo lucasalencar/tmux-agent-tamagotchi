@@ -28,21 +28,6 @@ arrange_two_sessions() {
   test_tmux new-window -t other: -d
 }
 
-# Waits for a hook to have run. The entrypoint wires `run-shell -b`, which is
-# deliberately asynchronous, so the assertion has to be "eventually" or it is timing
-# noise. Polled on the fact the test is about.
-wait_until_not_flagged() {
-  local waited=0
-  while [ -n "$(test_tmux display-message -p -t "$1" '#{E:@tama_flag}')" ]; do
-    waited=$((waited + 1))
-    if [ "$waited" -gt 200 ]; then
-      printf 'window %s was still flagged after 10s\n' "$1" >&2
-      return 1
-    fi
-    sleep 0.05
-  done
-}
-
 @test "waiting raises the flag on a window nobody is looking at" {
   local window pane
   window="$(tama_window_id t:0)"

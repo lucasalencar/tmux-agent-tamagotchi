@@ -88,23 +88,27 @@ report() {
 # is the whole point: a cleared pane must be indistinguishable from a pane that
 # never ran an agent, and it is also what heals a subagent id that leaked.
 #
-# The options are listed out because each needs the value already read for it,
-# which is what keeps clearing a pane that was never an agent pane free. The test
-# asks the pane whether anything of ours is left rather than checking these names,
-# so an option added later and forgotten here fails there.
+# Which options those are belongs to the record itself — see TAMA_PANE_OPTIONS in
+# lib/pane.sh — because the stale-state sweep takes a pane apart the same way, and
+# an option only one of them knew about would survive the other. The test asks the
+# pane whether anything of ours is left rather than checking a list of names, so an
+# option added to the record and forgotten there fails it.
 clear_pane() {
   local pane="$1" refresh='no'
   tama_pane_read "$pane" || exit 0
+
+  # Nothing of ours is on this pane, so there is nothing to unset — which is what
+  # keeps clearing a pane that never ran an agent free of a write and of the read
+  # per option that asking one at a time would cost.
+  local trace="$TAMA_PANE_STATE_MAIN$TAMA_PANE_SUBAGENTS$TAMA_PANE_CMD"
+  trace="$trace$TAMA_PANE_AGENT$TAMA_PANE_CWD"
+  [ -n "$trace" ] || return 0
 
   # Clearing an agent pane takes an icon away, which is a change a user sees.
   tama_pane_display_changed "$TAMA_PANE_DISPLAY" '' && refresh='yes'
 
   tama_batch_reset
-  tama_pane_stage "$TAMA_PANE_ID" state_main '' "$TAMA_PANE_STATE_MAIN"
-  tama_pane_stage "$TAMA_PANE_ID" subagents '' "$TAMA_PANE_SUBAGENTS"
-  tama_pane_stage "$TAMA_PANE_ID" cmd '' "$TAMA_PANE_CMD"
-  tama_pane_stage "$TAMA_PANE_ID" agent '' "$TAMA_PANE_AGENT"
-  tama_pane_stage "$TAMA_PANE_ID" cwd '' "$TAMA_PANE_CWD"
+  tama_pane_stage_clear "$TAMA_PANE_ID"
   # As in report(): nothing staged is not a failure, and this is the exit status.
   tama_batch_flush "$refresh" || true
 }

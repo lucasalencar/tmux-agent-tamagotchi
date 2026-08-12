@@ -51,7 +51,8 @@ require_tmux() {
 
 # The configuration reader needs tmux_run, and everything that reads tmux reads
 # configuration; the state model needs both, and every command that does anything
-# at all acts on a pane — or on the window around it. So the four travel together.
+# at all acts on a pane — or on the window around it, or on every pane the server
+# has when the sweep goes looking. So they travel together.
 # Stripping the last path component leaves the name untouched when there is none,
 # so a caller that sourced us by a bare relative name still finds them.
 _tama_lib_dir="${BASH_SOURCE[0]%/*}"
@@ -80,6 +81,11 @@ _tama_require_lib "$_tama_lib_dir/window.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=window.sh
 . "$_tama_lib_dir/window.sh"
+
+_tama_require_lib "$_tama_lib_dir/stale.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=stale.sh
+. "$_tama_lib_dir/stale.sh"
 
 unset _tama_lib_dir
 unset -f _tama_require_lib

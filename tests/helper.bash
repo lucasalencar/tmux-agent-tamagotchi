@@ -237,6 +237,21 @@ assert_not_flagged() {
   fi
 }
 
+# Waits for a flag a tmux hook was supposed to clear. The entrypoint wires
+# `run-shell -b`, which is deliberately asynchronous, so the assertion has to be
+# "eventually" or it is timing noise. Polled on the fact the test is about.
+wait_until_not_flagged() {
+  local waited=0
+  while [ -n "$(test_tmux display-message -p -t "$1" '#{E:@tama_flag}')" ]; do
+    waited=$((waited + 1))
+    if [ "$waited" -gt 200 ]; then
+      printf 'window %s was still flagged after 10s\n' "$1" >&2
+      return 1
+    fi
+    sleep 0.05
+  done
+}
+
 # The flag as tmux stores it, for the claims that are about the option itself:
 # clearing must *unset* it, not write an empty string.
 assert_window_option_unset() {

@@ -89,8 +89,13 @@ Subcommands:
   unflag [target]       Take the mark off. Nothing an agent does clears a flag —
                         it records that something happened while you were away,
                         so only you clear it, by selecting the window.
-  on-select             What the after-select-window hook runs: you arrived at a
-                        window, so its flag goes.
+  gc [--all]            Clear the state of panes whose agent is gone, so a dead
+                        agent stops looking busy. One window by default; --all
+                        sweeps every pane on the server.
+  on-select [--all]     What the after-select-window hook runs: you arrived at a
+                        window, so its flag goes and its panes are swept. With
+                        --all the sweep covers the whole server, which is what
+                        the client-focus-in hook asks for.
   version               Print the plugin version.
   --help, -h, help      Print this message.
 
@@ -127,6 +132,29 @@ An option set to the empty string is a configuration and not an absent one, so
 they cost a column each, so a status line full of windows truncates sooner, and
 terminals do not all measure them the way tmux does. 'ascii' is single-column and
 free of the characters a status line would have to escape.
+
+An agent that exits without saying so would otherwise leave its icon behind
+forever, so the state is swept: a pane is stale when it is running a different
+command from the one recorded when its state was written, and a pane with no
+recorded command is stale when what it is running now is a shell.
+
+  set -g @tama_gc_shells 'sh bash zsh fish dash ksh mksh ash csh tcsh'
+
+The sweep runs on window selection and pane selection for the window you are
+looking at, and over the whole server when your terminal regains focus — which
+needs tmux's own 'set -g focus-events on' to be reported at all. Everything the
+sweep clears is unset rather than emptied, including a subagent id a crashed
+delegated run leaked, so a swept pane is indistinguishable from one that never
+ran an agent.
+
+The plugin appends its hooks with 'set-hook -ga' and never assigns them, so your
+own lines on those events keep working. Load order is yours to get right,
+though: a plain 'set-hook' of your own after the plugin loads replaces the whole
+array, the plugin's line included, and the next reload puts it back. Put your
+own assignments before the TPM line, or append them too. Mouse bindings cannot
+be appended at all, which is why the plugin installs none.
+
+  set -g @tama_manage_hooks off   # wire the hooks yourself, from your own config
 
 Common options:
   --pane <pane_id>      Act on this pane instead of \$TMUX_PANE (on the
