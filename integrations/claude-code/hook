@@ -7,9 +7,9 @@
 # Wired once from the user's `settings.json` — see README.md next to this file for
 # the block to paste. Nothing about Claude Code appears in that block beyond the
 # names of its own events, and nothing about Claude Code appears anywhere else in
-# the plugin: which events matter, what a delegated run means, and how to find the
-# one field the payload has to give up all live here (ADR-0002). A fix reaches the
-# user by pulling the plugin.
+# the plugin: which events matter, which of them are worth interrupting the user
+# about, what a delegated run means, and how to get the four fields the payload has
+# to give up all live here (ADR-0002). A fix reaches the user by pulling the plugin.
 #
 # Events, and what the user sees because of them:
 #
@@ -19,9 +19,11 @@
 #   PostToolUseFailure, PostToolBatch  state running
 #   PermissionRequest                  state waiting  — blocked on the user
 #   Notification (the types that mean the user is wanted)
-#                                      state waiting
-#   Stop                               state idle
-#   StopFailure                        state error    — the turn died on an API error
+#                                      state waiting  + notify, carrying `message`
+#   Stop                               state idle     + notify, carrying
+#                                                       `last_assistant_message`
+#   StopFailure                        state error    + notify — the turn died on an
+#                                                       API error
 #   SubagentStart / SubagentStop       state subagent-start|stop <agent_id>
 #   SessionEnd                         state clear    — no trace left in tmux
 #
@@ -37,14 +39,44 @@
 # at — auth_success and the elicitation results are routine noise and must not
 # turn a pane into one that wants the user.
 #
+# Which events raise a banner, and which only move the icon:
+#
+# `Notification`, `Stop` and `StopFailure` notify. `PermissionRequest` deliberately
+# does not, even though it is the event that turns the pane `waiting`, because
+# Claude Code raises `Notification` for the same interruption a few seconds later —
+# observed at 6s on 2.1.228 — and that one carries the sentence the agent wrote.
+# Wiring both would mean two banners per interruption, collapsing into one only
+# because the core groups them per window, with the vaguer of the two messages
+# arriving first. One event, one banner, always carrying the agent's own words.
+#
+# That delay is a feature, not a cost: a prompt answered in two seconds never
+# interrupts the user at all, while the icon and the window mark are already there
+# the instant `PermissionRequest` fires, which is the signal for a user who *is*
+# looking at their terminal. And the `Notification` event does not depend on the
+# user's own Claude Code notification settings — verified with
+# `preferredNotifChannel: notifications_disabled`, where it still fires.
+#
+# The cost of that decision, and the thing to check when somebody reports a
+# permission prompt that moves the icon and never banners: `Notification` has to be
+# in their `settings.json`. It is in the README's block, and a hand-merged `hooks`
+# key that dropped it leaves every other event working. Anything that diagnoses this
+# plugin's setup should say so.
+#
 # What a delegated run means here: a subagent's own end is SubagentStop, never
 # Stop — Claude Code converts it — so `state idle` cannot be reported by a
 # delegated run in the first place. Subagent events therefore only ever move the
 # subagent counter, which is what makes an agent whose own turn has finished while
 # its subagents work render as working in the background rather than as finished.
 # A subagent's tool calls do report `running`, which is true: something is working
-# in that pane. Keeping a delegated run's *notification* quiet is a separate
-# decision and belongs with the notification half.
+# in that pane.
+#
+# And no event a delegated run is attributed to ever raises a banner: `agent_id`
+# in the payload means a subagent, and the banner is skipped while the state still
+# moves. Nothing is lost by that, which is the part worth knowing — a permission
+# prompt raised *inside* a subagent arrives twice, as a `PermissionRequest`
+# carrying that subagent's `agent_id` and as a session-level `Notification` with no
+# `agent_id` at all. So the user still gets the banner, from the event that has the
+# message in it, and what stays quiet is only the delegated run's own bookkeeping.
 #
 # Failure policy, inherited from the CLI: a wrong invocation exits 2 on stderr;
 # everything else exits 0 in silence. This runs inside an agent's turn, so it must
@@ -63,28 +95,32 @@ TAMA_CC_AGENT='claude-code'
 # The payload
 #
 # Claude Code delivers its hook input as JSON on stdin, and there is no other way
-# to get at it: as of 2.1.227 a command hook substitutes only ${CLAUDE_PROJECT_DIR}
+# to get at it: as of 2.1.228 a command hook substitutes only ${CLAUDE_PROJECT_DIR}
 # and its two siblings into `command`/`args`, so no field of the payload can be
-# handed over as an argument. `agent_id` is the id the plugin counts subagents by,
-# and the notification type is what separates a question for the user from
-# routine noise, so those two are read here — and nothing else is.
+# handed over as an argument. Four fields are read here, and nothing else is:
+# `agent_id`, the id the plugin counts subagents by and the mark of a delegated
+# run; `notification_type`, which separates a question for the user from routine
+# noise; and `message` / `last_assistant_message`, the sentence a banner carries.
 #
 # This is the residue ADR-0001 predicted and put in `integrations/`: the *core*
 # CLI takes arguments and never reads stdin, and `jq` is not a dependency of the
-# plugin. So the extraction below is deliberately not a JSON parser — it is two
-# string matches with no subprocess, on two fields whose values are opaque tokens
-# with no escaping in them. A field it cannot find is a field the adapter does
-# without, quietly, which is the whole of its error handling.
+# plugin. So the extraction below is deliberately not a JSON parser. It comes in
+# two halves, because the fields come in two kinds: `cc_field` for the opaque
+# tokens, which needs no idea of escaping at all, and `cc_text_field` for the two
+# free-text fields, which does. A field either cannot find is a field the adapter
+# does without, quietly, which is the whole of its error handling.
 #
-# Three rules hold this to something that cannot damage a turn, because a hook
-# that misbehaves here degrades the agent rather than the plugin: one bounded
-# read that cannot hang, a bounded amount of it kept, and a value that is not the
-# opaque token it should be is treated as no value at all.
+# Four rules hold this to something that cannot damage a turn, because a hook that
+# misbehaves here degrades the agent rather than the plugin: one bounded read that
+# cannot hang, a bounded amount of it kept, a bounded amount of work done on it,
+# and a value that is not the shape it should be is treated as no value at all.
 # ---------------------------------------------------------------------------
 
 TAMA_CC_PAYLOAD=''
 TAMA_CC_PAYLOAD_READ='no'
 TAMA_CC_FIELD=''
+TAMA_CC_TEXT=''
+TAMA_CC_REST=''
 
 # How much of the payload is worth keeping, and how long it is worth waiting for.
 # 64 KiB is far more than the events that need a field ever carry, and small
@@ -117,27 +153,24 @@ cc_read_payload() {
   return 0
 }
 
-# The value of a top-level JSON string field, in TAMA_CC_FIELD. Non-zero, and the
-# field left empty, when the payload does not carry it.
+# Positions TAMA_CC_REST at the first character of a top-level string field's
+# value — just past its opening quote — and returns non-zero when the payload does
+# not carry that field as a string at all.
 #
-# Scoped to the two opaque-token fields this adapter reads, so it does not have to
-# understand escapes, numbers, or nesting: it finds the name, steps over the colon
-# and the space Claude Code may or may not print, and takes what is between the
-# next two quotes — and then refuses anything that is not a bare token. That last
-# step is what makes not being a JSON parser safe: an escaped quote, a brace, a
-# truncated payload or a value someone hoped would be read as shell all come out
-# of the naive scan as something that is not [A-Za-z0-9_-]+, and a value this
-# cannot vouch for is treated as no value at all.
+# The one thing in here that knows how a field is *found*, so that the token half
+# and the text half cannot come to disagree about it. It finds the quoted name,
+# steps over the colon and the space Claude Code may or may not print, and requires
+# a quote: anything else — `null` for an absent id, a number, an object — is not a
+# string, and neither caller has a use for a value that is not one.
 #
-# So it looks general and is not: this reads *identifiers*, and free text is not
-# one. Anything a human wrote — `message`, `last_assistant_message`, a tool name
-# with a slash in it, a path — either fails the token check outright or, worse,
-# comes back cut short at the first quote or escape it contains, silently. Do not
-# reach for this to pull a notification's text out for the notification half: that
-# needs its own extraction, one that knows about JSON escapes, and it must hand
-# whatever it gets to the CLI as a single argument that nothing interprets.
-cc_field() { # <name>
-  TAMA_CC_FIELD=''
+# It is looking for `"<name>"`, quotes included, which is what keeps a search for
+# `message` from stopping inside `last_assistant_message`. What it cannot do is
+# tell a top-level field from one nested inside `tool_input`: the first match in the
+# payload wins. Claude Code puts the fields read here at the top level and puts them
+# there once, and the cost of being wrong is a banner quoting the wrong string, so
+# this stays a scan rather than becoming a parser.
+cc_locate_string() { # <name>
+  TAMA_CC_REST=''
   cc_read_payload
 
   local rest="$TAMA_CC_PAYLOAD"
@@ -156,14 +189,33 @@ cc_field() { # <name>
     esac
   done
 
-  # Anything but a string here — null for an absent id, a number, an object — is
-  # not a value this adapter can use.
   case "$rest" in
-    '"'*) rest="${rest#\"}" ;;
+    '"'*) TAMA_CC_REST="${rest#\"}" ;;
     *) return 1 ;;
   esac
+}
 
-  TAMA_CC_FIELD="${rest%%\"*}"
+# The value of a top-level JSON string field, in TAMA_CC_FIELD. Non-zero, and the
+# field left empty, when the payload does not carry it.
+#
+# Scoped to the opaque-token fields this adapter reads, so it does not have to
+# understand escapes: it takes what is between the value's opening quote and the
+# next quote, and then refuses anything that is not a bare token. That last step is
+# what makes not being a JSON parser safe: an escaped quote, a brace, a truncated
+# payload or a value someone hoped would be read as shell all come out of the naive
+# scan as something that is not [A-Za-z0-9_-]+, and a value this cannot vouch for is
+# treated as no value at all.
+#
+# So it looks general and is not: this reads *identifiers*, and free text is not
+# one. Anything a human wrote — `message`, `last_assistant_message`, a tool name
+# with a slash in it, a path — either fails the token check outright or, worse,
+# comes back cut short at the first quote or escape it contains, silently. That is
+# what cc_text_field below exists for; this one is for ids and enums.
+cc_field() { # <name>
+  TAMA_CC_FIELD=''
+  cc_locate_string "$1" || return 1
+
+  TAMA_CC_FIELD="${TAMA_CC_REST%%\"*}"
   [ -n "$TAMA_CC_FIELD" ] || return 1
 
   # A bare token, and not one that would arrive at the CLI looking like an option.
@@ -172,6 +224,140 @@ cc_field() { # <name>
       TAMA_CC_FIELD=''
       return 1
       ;;
+  esac
+}
+
+# What a banner is worth carrying at most, in characters of decoded text, and how
+# many escapes are worth decoding on the way there. Both bound the work as much as
+# the output: the scan below costs one pass over what is left of the value for every
+# escape it decodes, so a message full of quotes is the shape that has to stay cheap.
+# A desktop banner draws two or three lines; a value longer than this was never going
+# to be read off the screen.
+TAMA_CC_TEXT_MAX=500
+TAMA_CC_ESCAPES_MAX=256
+
+# The two characters worth putting back, spelled once. bash 3.2 has $'…'.
+TAMA_CC_NL=$'\n'
+TAMA_CC_TAB=$'\t'
+
+# The value of a top-level JSON string field that holds free text, decoded, in
+# TAMA_CC_TEXT. Non-zero, and the text left empty, when the payload does not carry
+# it, when the value is empty or whitespace, or when the read was cut short in the
+# middle of it.
+#
+# This is the one place in the plugin that has to understand JSON escaping, because
+# it is the one value a *human* — or a model — wrote: a message with a quote in it is
+# ordinary, and `cc_field` above would silently hand back the fragment before that
+# quote. Nothing downstream can repair that, since the result becomes one argument to
+# `tama notify` that nothing interprets, so a wrong read is a wrong banner.
+#
+# It walks the value in chunks rather than character by character, because character
+# by character over a payload this size is quadratic in bash: the next quote and the
+# next backslash are both found by prefix removal, at C speed, and whichever comes
+# first decides. So the loop runs once per escape in the value and not once per
+# character of it — and both are capped, because the size of a payload is Claude
+# Code's decision and not this plugin's.
+#
+# What it does *not* do is decode `\uXXXX`. A JSON writer leaves printable UTF-8 as
+# itself, so the ones that reach here are control characters, and they are dropped
+# with the escape.
+cc_text_field() { # <name>
+  TAMA_CC_TEXT=''
+  cc_locate_string "$1" || return 1
+
+  local rest="$TAMA_CC_REST" out='' before_quote before_escape char escapes=0
+
+  while :; do
+    # No quote left anywhere means the value has no end in what was read: the
+    # payload was truncated mid-string, and half a sentence claimed as the whole of
+    # one is worse than no message at all.
+    case "$rest" in
+      *'"'*) ;;
+      *)
+        TAMA_CC_TEXT=''
+        return 1
+        ;;
+    esac
+    before_quote="${rest%%\"*}"
+
+    # Where the next backslash is, if it is anywhere. With none at all — or none
+    # before the closing quote — this is the whole of what is left, and the
+    # comparison below lands on the quote.
+    case "$rest" in
+      *\\*) before_escape="${rest%%\\*}" ;;
+      *) before_escape="$before_quote" ;;
+    esac
+
+    if [ "${#before_escape}" -ge "${#before_quote}" ]; then
+      out="$out$before_quote"
+      break
+    fi
+
+    out="$out$before_escape"
+    rest="${rest#*\\}"
+    char="${rest:0:1}"
+    rest="${rest#?}"
+
+    case "$char" in
+      n) out="$out$TAMA_CC_NL" ;;
+      t) out="$out$TAMA_CC_TAB" ;;
+      # A carriage return, a backspace, a form feed: typography for a terminal, and
+      # nothing a banner can do with them.
+      r | b | f) ;;
+      u) rest="${rest#[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]}" ;;
+      # `\"`, `\\`, `\/`, and whatever a future writer escapes that this has not
+      # heard of: the character itself, which is what JSON means by all of them.
+      *) out="$out$char" ;;
+    esac
+
+    escapes=$((escapes + 1))
+    [ "$escapes" -lt "$TAMA_CC_ESCAPES_MAX" ] || break
+    [ "${#out}" -lt "$TAMA_CC_TEXT_MAX" ] || break
+  done
+
+  if [ "${#out}" -gt "$TAMA_CC_TEXT_MAX" ]; then
+    out="${out:0:$TAMA_CC_TEXT_MAX}"
+    # Back to the last space, so a cut message ends on a word — and, where the
+    # locale makes these bytes rather than characters, not in the middle of a
+    # multi-byte one, which the desktop would draw as a replacement glyph.
+    case "$out" in
+      *' '*) out="${out% *}" ;;
+    esac
+  fi
+
+  # An assistant's last message routinely ends on a newline, and a banner would draw
+  # that as a blank line. Bounded by the cap above, so this cannot be made expensive.
+  while :; do
+    case "$out" in
+      *[[:space:]]) out="${out%?}" ;;
+      [[:space:]]*) out="${out#?}" ;;
+      *) break ;;
+    esac
+  done
+
+  TAMA_CC_TEXT="$out"
+  # Whitespace, or nothing at all, is not a message. The caller has a fallback, and
+  # `tama notify` refuses an empty message on purpose — it is what a hook that failed
+  # to interpolate its variable looks like.
+  [ -n "$TAMA_CC_TEXT" ] || return 1
+}
+
+# Whether the payload says this event belongs to a delegated run.
+#
+# `agent_id` is present, and a non-empty string, on every event Claude Code
+# attributes to a subagent — observed on SubagentStart and SubagentStop, and on a
+# subagent's own PreToolUse and PermissionRequest — and absent from the session's
+# own events.
+#
+# Deliberately laxer than `cc_field`: any string value counts, token or not, because
+# every way of being unsure here has to fall towards staying quiet. The cost of a
+# false yes is one banner the session's own next event will raise anyway; the cost of
+# a false no is a subagent's bookkeeping interrupting the user.
+cc_is_delegated() {
+  cc_locate_string agent_id || return 1
+  # Present and empty, which is what `agent_type` really is on a real payload.
+  case "$TAMA_CC_REST" in
+    '"'*) return 1 ;;
   esac
 }
 
@@ -185,6 +371,40 @@ cc_field() { # <name>
 # name — it is removing the one that is there.
 cc_state() { # <state> [args…]
   exec "$TAMA_BIN" state "$1" "$TAMA_CC_AGENT" "${@:2}"
+}
+
+# The state, and then the banner, in that order and as two separate calls to the
+# public CLI — the same two calls a hand-wired agent would make (ADR-0001).
+#
+# The order is not arbitrary: `state` is what records the agent's name and the pane's
+# directory, and the notification's title is a tmux format expanded against that
+# record. Reversed, the first banner of a session would be titled by a pane that has
+# not said what is in it yet.
+#
+# The state call cannot be allowed to end the hook, whatever it returns, because the
+# banner has to follow it — and `notify` itself exits 0 on everything except a wrong
+# invocation, so the turn is safe either way (user story 52).
+cc_state_and_notify() { # <state> <message> [args…]
+  local state="$1" message="$2"
+  shift 2
+
+  "$TAMA_BIN" state "$state" "$TAMA_CC_AGENT" "$@" || true
+
+  # After `--` everything is a value, so a message that begins with a dash — which a
+  # sentence quite reasonably does — arrives as a message and not as an unknown
+  # option. Passthrough arguments go in front of it, where an option belongs.
+  exec "$TAMA_BIN" notify "$@" -- "$TAMA_CC_AGENT" "$message"
+}
+
+# The sentence a banner carries, in TAMA_CC_TEXT: what the payload put in <field>, or
+# <fallback> when it carried nothing usable there.
+#
+# There is always a fallback, for two reasons. `tama notify` refuses an empty message
+# on purpose — an empty one is a hook that failed to interpolate its variable — and an
+# event worth interrupting the user about is worth interrupting them about even when
+# the adapter could not read what the agent said.
+cc_message() { # <field> <fallback>
+  cc_text_field "$1" || TAMA_CC_TEXT="$2"
 }
 
 # A notification that means the user is wanted, rather than one that means
@@ -218,6 +438,9 @@ main() {
       cc_state running "$@"
       ;;
     PermissionRequest)
+      # The icon and the window mark, and no banner: see the note at the top of this
+      # file. Claude Code raises `Notification` for the same interruption a few
+      # seconds later, carrying the sentence this event does not have.
       cc_state waiting "$@"
       ;;
     Notification)
@@ -225,19 +448,39 @@ main() {
       # guessing wrong leaves a pane asking for the user forever.
       cc_field notification_type || exit 0
       cc_notification_wants_user "$TAMA_CC_FIELD" || exit 0
-      cc_state waiting "$@"
+      if cc_is_delegated; then
+        cc_state waiting "$@"
+      fi
+      cc_message message 'needs your attention'
+      cc_state_and_notify waiting "$TAMA_CC_TEXT" "$@"
       ;;
     Stop)
-      cc_state idle "$@"
+      # The turn is over, and what the agent last said is what the user missed. A
+      # delegated run cannot reach here — Claude Code converts its end into
+      # SubagentStop — but the check costs nothing on a payload already read, and it
+      # is the one that would have to be right if that ever changed.
+      if cc_is_delegated; then
+        cc_state idle "$@"
+      fi
+      cc_message last_assistant_message 'finished its turn'
+      cc_state_and_notify idle "$TAMA_CC_TEXT" "$@"
       ;;
     StopFailure)
-      cc_state error "$@"
+      if cc_is_delegated; then
+        cc_state error "$@"
+      fi
+      cc_message last_assistant_message 'stopped on an error'
+      cc_state_and_notify error "$TAMA_CC_TEXT" "$@"
       ;;
     SubagentStart | SubagentStop)
       # The counter is keyed by the id Claude Code gives the delegated run, so a
       # payload without one leaves nothing to count. Ignoring that is safe in the
       # direction that matters: no subagent is tracked, rather than a pane pinned
       # to `background` by an id nothing will ever stop.
+      #
+      # Neither of these ever raises a banner, which is the whole of "a delegated
+      # run stays quiet": a subagent finishing moves the icon from `background` back
+      # to whatever the session's own turn is doing, and nothing else.
       cc_field agent_id || exit 0
       case "$event" in
         SubagentStart) exec "$TAMA_BIN" state subagent-start "$TAMA_CC_FIELD" "$@" ;;

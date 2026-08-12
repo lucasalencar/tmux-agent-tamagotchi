@@ -10,7 +10,14 @@ bats_require_minimum_version 1.7.0
 load helper
 
 setup() {
+  # The recording fake, for the whole file rather than only the notification tests:
+  # half of what this adapter does is decide *not* to interrupt the user, and a
+  # suite with no backend configured would pass every one of those claims for the
+  # wrong reason. Nothing is attached to this server, so a banner is never
+  # suppressed and a test that raises one always sees it.
+  tama_fake_backend_env
   tama_start_server
+  tama_use_fake_backend
   PANE="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
   WINDOW="$(test_tmux display-message -p -t "$PANE" '#{window_id}')"
 }
@@ -539,6 +546,235 @@ PAYLOAD
 }
 
 # --------------------------------------------------------------------------
+# The Claude Code adapter: the banners
+#
+# Every payload here is the shape a real Claude Code 2.1.228 sends, taken from
+# payloads captured out of a live session: `Notification` carries `message` and
+# `notification_type`, `Stop` carries `last_assistant_message`, and an event
+# belonging to a delegated run carries `agent_id`.
+# --------------------------------------------------------------------------
+
+@test "a notification that means the user is wanted banners, carrying the agent's words" {
+  hook SessionStart
+  hook Notification \
+    <<<"$(payload Notification ',"notification_type":"permission_prompt","message":"Claude needs your permission"')"
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+
+  assert_pane_option "$PANE" state_main waiting
+  assert_backend_called notify
+  # The sentence the agent wrote, and nothing the plugin made up.
+  assert_backend_value notify argv2 'Claude needs your permission'
+  # Two arguments, ever: a title the user's format produced and the agent's message.
+  assert_backend_value notify argc 2
+  assert_contains "$(tama_backend_value notify argv1)" 'claude-code - ' 'the title'
+}
+
+@test "a turn that ends banners with what the agent last said" {
+  hook SessionStart
+  hook Stop <<<"$(payload Stop ',"stop_hook_active":false,"last_assistant_message":"I have finished the migration"')"
+  assert_success
+
+  assert_pane_option "$PANE" state_main idle
+  assert_backend_value notify argv2 'I have finished the migration'
+}
+
+@test "a turn that died on an error banners as well" {
+  hook SessionStart
+  hook StopFailure <<<"$(payload StopFailure)"
+  assert_success
+
+  assert_pane_option "$PANE" state_main error
+  assert_backend_value notify argv2 'stopped on an error'
+}
+
+@test "signing in is not worth interrupting the user" {
+  hook SessionStart
+
+  # The routine noise the whole `notification_type` read exists for — including a
+  # type from a version that does not exist yet, which is treated as routine.
+  local type
+  for type in auth_success elicitation_complete elicitation_response agent_completed \
+    something_new; do
+    hook Notification \
+      <<<"$(payload Notification ",\"notification_type\":\"$type\",\"message\":\"Signed in as someone\"")"
+    assert_success
+    refute_backend_called notify
+  done
+
+  assert_pane_option "$PANE" state_main idle
+}
+
+@test "a permission request moves the icon without interrupting the user" {
+  # Deliberate, and the one event where the state half and the banner half part
+  # company: Claude Code raises `Notification` for the same interruption a few
+  # seconds later — 6s, measured on 2.1.228 — and that one carries the sentence this
+  # event has no field for. Notifying here as well would mean two banners per
+  # question, collapsing into one only because the core groups them per window.
+  hook PermissionRequest <<<"$(payload PermissionRequest ',"tool_name":"Write"')"
+  assert_success
+
+  assert_pane_option "$PANE" state_main waiting
+  refute_backend_called notify
+}
+
+@test "a banner leaves the window marked, so the user finds it later" {
+  # Asked for the way a status line asks — through the format the entrypoint
+  # exports — because the mark is what is still there minutes after the banner has
+  # gone from the desktop.
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+
+  hook SessionStart
+  hook Stop <<<"$(payload Stop ',"last_assistant_message":"the tests pass"')"
+  assert_success
+
+  assert_backend_called notify
+  assert_flagged "$WINDOW"
+}
+
+@test "a delegated run finishing is not the user's session finishing" {
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"agt_01","agent_type":"Explore"')"
+  assert_success
+
+  # A real SubagentStop carries `last_assistant_message` exactly as `Stop` does, so
+  # staying quiet here is a decision and not something the payload made for us.
+  hook SubagentStop \
+    <<<"$(payload SubagentStop ',"agent_id":"agt_01","last_assistant_message":"I read every file"')"
+  assert_success
+  refute_backend_called notify
+}
+
+@test "an event a delegated run is attributed to stays quiet, and still moves the icon" {
+  hook SessionStart
+
+  # A subagent's own permission prompt: `PermissionRequest` and `Notification` both
+  # fire, but only the first carries the subagent's `agent_id` — the second is
+  # session-level, with no id at all. So suppressing everything marked as delegated
+  # loses no question: the user still gets the banner from the event that has the
+  # message in it.
+  hook Notification \
+    <<<"$(payload Notification ',"agent_id":"agt_01","agent_type":"Explore","notification_type":"permission_prompt","message":"Claude needs your permission"')"
+  assert_success
+  assert_pane_option "$PANE" state_main waiting
+  refute_backend_called notify
+
+  hook Notification \
+    <<<"$(payload Notification ',"notification_type":"permission_prompt","message":"Claude needs your permission"')"
+  assert_success
+  assert_backend_called notify
+}
+
+@test "the message arrives as one argument, whatever the agent wrote in it" {
+  hook SessionStart
+
+  # Everything that has to survive being extracted from JSON and handed to a CLI:
+  # an escaped quote, a real newline, a `$(…)`, a backtick, a tmux format, a percent
+  # sign, and text past the first quote — which is where a scan that did not know
+  # about escapes would stop.
+  hook Notification <<PAYLOAD
+{"hook_event_name":"Notification","notification_type":"agent_needs_input",
+ "message":"He said \"no\" — first line\nsecond line \$(touch $BATS_TEST_TMPDIR/pwned) \`id\` #{window_id} 100%"}
+PAYLOAD
+  assert_success
+
+  local expected
+  expected="$(printf 'He said "no" — first line\nsecond line $(touch %s/pwned) `id` #{window_id} 100%%' \
+    "$BATS_TEST_TMPDIR")"
+  assert_backend_value notify argv2 "$expected"
+  assert_backend_value notify argc 2
+
+  [ ! -e "$BATS_TEST_TMPDIR/pwned" ] || {
+    printf 'a message ran a command\n' >&2
+    return 1
+  }
+}
+
+@test "a message that begins with a dash is a message and not an option" {
+  hook SessionStart
+  hook Stop <<'PAYLOAD'
+{"hook_event_name":"Stop","last_assistant_message":"--force is what you asked for"}
+PAYLOAD
+  assert_success
+  [ -z "$stderr" ]
+
+  assert_backend_value notify argv2 '--force is what you asked for'
+}
+
+@test "the escapes in a message are put back rather than passed on" {
+  hook SessionStart
+  # A tab, a backslash, an escaped solidus, and a `\u` sequence — which is not
+  # decoded, because the only ones a JSON writer emits are control characters.
+  hook Stop <<'PAYLOAD'
+{"hook_event_name":"Stop","last_assistant_message":"a\tb \\ c \/ d \u0007e\n\n"}
+PAYLOAD
+  assert_success
+
+  assert_backend_value notify argv2 "$(printf 'a\tb \\ c / d e')"
+}
+
+@test "an event with nothing to quote still says something" {
+  hook SessionStart
+
+  # No field, a payload cut off in the middle of the value, and no payload at all.
+  # `tama notify` refuses an empty message — it is what a hook that failed to
+  # interpolate its variable looks like — so an unreadable payload must not be
+  # allowed to turn into a usage error inside somebody's turn.
+  hook Stop <<<"$(payload Stop)"
+  assert_success
+  [ -z "$stderr" ]
+  assert_backend_value notify argv2 'finished its turn'
+
+  hook Stop <<<'{"last_assistant_message":"cut off in the mid'
+  assert_success
+  [ -z "$stderr" ]
+  assert_backend_value notify argv2 'finished its turn'
+
+  hook Stop </dev/null
+  assert_success
+  [ -z "$stderr" ]
+  assert_backend_value notify argv2 'finished its turn'
+
+  hook Notification <<<"$(payload Notification ',"notification_type":"idle_prompt"')"
+  assert_success
+  assert_backend_value notify argv2 'needs your attention'
+}
+
+@test "a message longer than a banner can carry is cut, not dropped" {
+  hook SessionStart
+
+  local long='the agent said' i=0
+  while [ "$i" -lt 200 ]; do
+    long="$long word$i"
+    i=$((i + 1))
+  done
+
+  hook Stop <<<"{\"last_assistant_message\":\"$long\"}"
+  assert_success
+
+  local got
+  got="$(tama_backend_value notify argv2)"
+  [ "${#got}" -le 500 ] || {
+    printf 'the banner carried %s characters\n' "${#got}" >&2
+    return 1
+  }
+  [ "${#got}" -gt 100 ] || {
+    printf 'the banner carried almost nothing: %s\n' "$got" >&2
+    return 1
+  }
+  # What arrived is the beginning of what was said, and not a mangled version of it.
+  case "$long" in
+    "$got"*) ;;
+    *)
+      printf 'the banner was not a prefix of the message: %s\n' "$got" >&2
+      return 1
+      ;;
+  esac
+}
+
+# --------------------------------------------------------------------------
 # The configuration a user pastes
 # --------------------------------------------------------------------------
 
@@ -582,6 +818,24 @@ readme_command() { # <event>
   assert_equal "$(tama_icons "$WINDOW")" ' ○'
 }
 
+@test "the command the README tells a user to paste raises a banner" {
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+  tama_shim_tmux_on_path
+
+  local command
+  command="$(readme_command Notification)"
+  [ -n "$command" ]
+
+  TMUX_PANE="$PANE" run --separate-stderr sh -c "$command" \
+    <<<"$(payload Notification ',"notification_type":"permission_prompt","message":"Claude needs your permission"')"
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+
+  assert_backend_value notify argv2 'Claude needs your permission'
+}
+
 @test "the pasted command stays quiet where the plugin is not installed" {
   # The same settings.json is read on every machine the user has, including the
   # ones without this plugin and the ones whose tmux is too old for it to have
@@ -600,12 +854,23 @@ readme_command() { # <event>
 
 @test "the adapter runs under the bash macOS ships" {
   # /bin/bash is 3.2 there, and the adapter picks a payload apart with parameter
-  # expansion, which is exactly where a bash 5 idiom would go unnoticed.
+  # expansion, which is exactly where a bash 5 idiom would go unnoticed. Note that
+  # this test asserts nothing on Linux, where there is no 3.2 to point at — the
+  # claims above are the ones that hold on both.
   tama_use_bash_32_or_skip
 
   hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"agt_32"')"
   assert_success
-  hook Stop
+  hook Stop </dev/null
   assert_success
   assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+
+  # The escape-aware half too, which is the part that uses substring expansion and a
+  # nested expansion in a pattern.
+  hook Notification <<'PAYLOAD'
+{"hook_event_name":"Notification","notification_type":"permission_prompt",
+ "message":"He said \"no\"\nand \\ meant it"}
+PAYLOAD
+  assert_success
+  assert_backend_value notify argv2 "$(printf 'He said "no"\nand \\ meant it')"
 }

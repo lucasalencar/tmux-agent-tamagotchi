@@ -58,6 +58,9 @@ Two things to know if your adapter raises banners:
 Deciding that a delegated run should stay quiet is the adapter's own call, and only the
 adapter can make it: nothing in the core knows what a delegated run is (ADR-0002). The core
 does make a double call harmless, though — banners are grouped per window, so an agent that
-fires two events for one question replaces its own banner rather than raising two.
+fires two events for one question replaces its own banner rather than raising two. The
+Claude Code adapter still picks one of its two: which event of a pair is the one worth
+interrupting somebody about is also knowledge only an adapter has, and its README says which
+it chose and why.
 
 See `tama --help` for the full command surface.
