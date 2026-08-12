@@ -31,17 +31,8 @@ require_tmux() {
   [ -n "${TMUX:-}" ] || exit 0
 }
 
-# Absolute directory of a script, following symlinks so the plugin works from a
-# TPM clone, a submodule or a symlinked worktree alike.
-tama_script_dir() {
-  local src="$1" dir
-  while [ -L "$src" ]; do
-    dir="$(cd -P "$(dirname "$src")" && pwd)"
-    src="$(readlink "$src")"
-    case "$src" in
-      /*) ;;
-      *) src="$dir/$src" ;;
-    esac
-  done
-  (cd -P "$(dirname "$src")" && pwd)
-}
+# The configuration reader needs tmux_run, and everything that reads tmux reads
+# configuration, so the two libraries travel together.
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=options.sh
+. "${BASH_SOURCE[0]%/*}/options.sh"

@@ -24,8 +24,6 @@ PLUGIN_DIR="$(
 
 # shellcheck source=lib/common.sh
 . "$PLUGIN_DIR/lib/common.sh"
-# shellcheck source=lib/options.sh
-. "$PLUGIN_DIR/lib/options.sh"
 
 TAMA_MIN_TMUX_VERSION='3.1a'
 

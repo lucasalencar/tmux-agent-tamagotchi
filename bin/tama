@@ -28,8 +28,6 @@ export TAMA_PLUGIN_DIR
 
 # shellcheck source=lib/common.sh
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
-# shellcheck source=lib/options.sh
-. "$TAMA_PLUGIN_DIR/lib/options.sh"
 
 usage() {
   cat <<EOF
