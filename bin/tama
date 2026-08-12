@@ -22,7 +22,7 @@
 
 set -o nounset
 
-TAMA_VERSION='0.1.0-dev'
+TAMA_VERSION='0.1.0'
 
 # Where we are, following symlinks: a user may well symlink this file even though
 # the plugin never installs itself anywhere (ADR-0003). Must run in a subshell —

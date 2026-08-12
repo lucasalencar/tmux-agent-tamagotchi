@@ -26,6 +26,27 @@ plugin_with_stub() {
   [[ "$output" =~ ^tama\ [0-9] ]]
 }
 
+@test "a tag on this commit is the version the plugin announces" {
+  # The release failure this catches is tagging v0.1.0 on a tree that still says
+  # 0.1.0-dev, which nobody notices until a bug report carries the wrong version.
+  #
+  # It is deliberately conditional, and it is worth knowing where it does and does not
+  # fire. A working tree between releases *should* say -dev, so there is nothing to assert
+  # until a tag points at HEAD — which is exactly the moment a release runs the suite
+  # again before pushing the tag. On CI it skips, since the checkout carries no tags, and
+  # from a tarball it skips for want of git. So this is a check on the person cutting the
+  # release, not a check CI performs for them.
+  local tag version
+  command -v git >/dev/null 2>&1 || skip 'no git'
+  tag="$(git -C "$PLUGIN_ROOT" tag --points-at HEAD 2>/dev/null | grep '^v' | head -n 1)"
+  [ -n "$tag" ] || skip 'no release tag points at this commit'
+
+  run "$PLUGIN_ROOT/bin/tama" version
+  assert_success
+  version="${tag#v}"
+  assert_equal "$output" "tama $version"
+}
+
 @test "--version is the same as version" {
   run "$PLUGIN_ROOT/bin/tama" version
   assert_success
