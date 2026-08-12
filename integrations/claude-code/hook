@@ -128,6 +128,14 @@ cc_read_payload() {
 # truncated payload or a value someone hoped would be read as shell all come out
 # of the naive scan as something that is not [A-Za-z0-9_-]+, and a value this
 # cannot vouch for is treated as no value at all.
+#
+# So it looks general and is not: this reads *identifiers*, and free text is not
+# one. Anything a human wrote — `message`, `last_assistant_message`, a tool name
+# with a slash in it, a path — either fails the token check outright or, worse,
+# comes back cut short at the first quote or escape it contains, silently. Do not
+# reach for this to pull a notification's text out for the notification half: that
+# needs its own extraction, one that knows about JSON escapes, and it must hand
+# whatever it gets to the CLI as a single argument that nothing interprets.
 cc_field() { # <name>
   TAMA_CC_FIELD=''
   cc_read_payload
