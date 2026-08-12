@@ -157,11 +157,15 @@ icons and the window mark carry on without them.
                                  # name is one shipped here, an absolute path is
                                  # your own and needs no fork of this plugin
 
-'auto' means 'macos' on a Mac with terminal-notifier installed and 'none' — silence,
-no errors — anywhere else, so a machine with no notifier needs no configuration to be
-quiet. The macOS backend recognises the terminal window showing a session by its
-title, which is worth setting up, because it is what stops you being notified about a
-window you are looking at:
+'auto' means 'macos' on a Mac with terminal-notifier installed, 'libnotify' anywhere
+else with notify-send installed, and 'none' — silence, no errors — where there is
+neither, so a machine with no notifier needs no configuration to be quiet. It only
+ever picks a backend whose binary is really there; 'tama doctor' says which one and
+why. What each of them can do, and what libnotify cannot, is in backends/README.md.
+
+The macOS backend recognises the terminal window showing a session by its title,
+which is worth setting up, because it is what stops you being notified about a window
+you are looking at:
 
   set -g set-titles on
   set -g set-titles-string '#S'
@@ -203,6 +207,8 @@ thing this plugin could do to you.
                                        # \$TERMINAL_BUNDLE_ID say otherwise
   set -g @tama_terminal_notifier ''    # the macOS notifier, if PATH and the two
                                        # Homebrew prefixes are not where yours is
+  set -g @tama_notify_send ''          # likewise notify-send, if PATH, /usr/bin
+                                       # and /usr/local/bin are not where yours is
 
 An agent that exits without saying so would otherwise leave its icon behind
 forever, so the state is swept: a pane is stale when it is running a different

@@ -1,0 +1,51 @@
+#!/bin/sh
+#
+# Stands in for `notify-send`, so that the libnotify backend can be tested on a machine
+# with no freedesktop desktop at all — every runner this suite is run on, and every Mac
+# — and so that what the backend put on the command line can be read back exactly as it
+# arrived.
+#
+# Pointed at by `@tama_notify_send`, which is a user option and not a testing seam: a
+# user whose `notify-send` is somewhere unusual configures it the same way.
+#
+# Records into $TAMA_NOTIFY_SEND_DIR:
+#
+#   calls          one line per invocation, holding its argument count
+#   argv           every argument of the last invocation, one per line
+#   hint.<name>    the value of `--hint=<type>:<name>:<value>`, from the last invocation
+#   title          the first value after `--`, exactly
+#   message        the second value after `--`, exactly
+#
+# One file per value because the interesting ones cannot survive a line-based log: a
+# message is arbitrary text an agent wrote and may hold a newline. The `--` is what the
+# backend puts in front of the two positional values, so finding it is how this fixture
+# knows which arguments are values rather than flags — the same rule notify-send's own
+# option parser follows.
+
+tama_positional=0
+tama_values=0
+for tama_argument in "$@"; do
+  if [ "$tama_values" -eq 1 ]; then
+    tama_positional=$((tama_positional + 1))
+    case "$tama_positional" in
+      1) printf '%s' "$tama_argument" >"$TAMA_NOTIFY_SEND_DIR/title" ;;
+      2) printf '%s' "$tama_argument" >"$TAMA_NOTIFY_SEND_DIR/message" ;;
+    esac
+  else
+    case "$tama_argument" in
+      --) tama_values=1 ;;
+      --hint=*)
+        # type:name:value, of which the name is the middle field and the value is
+        # everything after it — a group id can hold a colon.
+        tama_hint="${tama_argument#--hint=}"
+        tama_hint="${tama_hint#*:}"
+        printf '%s' "${tama_hint#*:}" \
+          >"$TAMA_NOTIFY_SEND_DIR/hint.${tama_hint%%:*}"
+        ;;
+    esac
+  fi
+done
+
+printf '%s\n' "$@" >"$TAMA_NOTIFY_SEND_DIR/argv"
+printf '%s\n' "$#" >>"$TAMA_NOTIFY_SEND_DIR/calls"
+exit 0

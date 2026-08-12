@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+#
+# The libnotify backend's notify: a real banner, through `notify-send`.
+#
+#   notify <title> <message>
+#
+# One banner per window, replacing rather than stacking, by way of the
+# `x-canonical-private-synchronous` hint: a daemon that sees a second notification
+# carrying a hint it already has on screen replaces it in place. The group the core
+# composed is what that hint carries, so "one banner per window" means the same thing
+# here as it does on a Mac, and for the same reason — a chatty agent must not bury the
+# screen.
+#
+# Which daemons honour it: dunst, mako, swaync and notify-osd do. GNOME Shell does not,
+# and there a talkative agent's banners can still stack. There is no portable way to do
+# better without keeping the notification id a daemon hands back — which would mean a
+# record of pending banners per window, a second copy of what the desktop already knows
+# — and `@tama_notify_command` is how a user whose desktop needs something else replaces
+# this capability wholesale.
+#
+# Backgrounded, deliberately. This runs inside an agent's hook, on the turn the user is
+# waiting for, and there is no timeout to save them: `notify-send` speaks D-Bus, and a
+# daemon that is slow, D-Bus-activated, or not running at all is a wait nobody set a
+# bound on. The banner is worth nothing if it costs the turn, and nothing here has an
+# answer anybody waits for — the exit status of `notify` is discarded by the contract.
+#
+# It needs a session bus to talk to: `notify-send` finds one through
+# `$DBUS_SESSION_BUS_ADDRESS`, which an agent's hook inherits from the agent, which
+# inherits it from the desktop session that started the terminal. Where that variable
+# does not reach — a systemd unit, a detached tmux server started before the session,
+# `ssh` without it forwarded — `notify-send` fails and this backend is silent. That is
+# the same failure as having no notifier at all, it costs nothing but a banner, and
+# `tama doctor` is where it gets explained.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+# The hint that makes a second banner replace the first. A string hint, whose value is
+# the group: two notifications with the same one are the same banner, which is exactly
+# what the core means by a group.
+TAMA_LIBNOTIFY_REPLACE_HINT='x-canonical-private-synchronous'
+
+main() {
+  local title="${1-}" message="${2-}"
+
+  # A banner with nothing to say would only be a process started to say it. The core
+  # does not send one; a user's own caller might.
+  [ -n "$message" ] || exit 0
+
+  # No notify-send, no banner, and no complaint: this is the same machine state that
+  # makes `auto` pick the no-op backend, reached here only because the user named
+  # `libnotify` explicitly or removed the binary since.
+  tama_libnotify_send || exit 0
+
+  set --
+  # Optional because the contract says a backend reads what it needs and ignores the
+  # rest — a caller that sends no group is asking for an ungrouped banner, not for an
+  # error, and an empty hint value would be a group every window shared.
+  [ -z "${TAMA_GROUP:-}" ] ||
+    set -- "$@" "--hint=string:$TAMA_LIBNOTIFY_REPLACE_HINT:$TAMA_GROUP"
+
+  # `--` first, then the two values: a message is arbitrary text an agent wrote and may
+  # perfectly well begin with a dash, which without this would be read as a flag of
+  # notify-send's own.
+  "$TAMA_LIBNOTIFY_SEND" "$@" -- "$title" "$message" >/dev/null 2>&1 &
+}
+
+main "$@"

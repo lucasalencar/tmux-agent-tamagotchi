@@ -38,8 +38,11 @@
 # A missing capability is not an error, it is "unsupported", and every caller
 # degrades: no `focused` means nothing is ever suppressed, no `dismiss` means a banner
 # stays until the desktop retires it, no `notify` means the whole feature is off. That
-# is what makes `backends/none` a directory with two files in it and what lets a
-# backend ship the capabilities its platform can actually do.
+# is what makes `backends/none` a directory with two files in it and `backends/libnotify`
+# one with a single file, and what lets a backend ship the capabilities its platform can
+# actually do. A capability a platform cannot honestly answer is *absent*, never present
+# and empty — backends/README.md argues each absence where it can be read next to the
+# directory it is about.
 
 # The bare name whose directory is inside the plugin, and the one `auto` resolves to
 # when nothing better will work here.
@@ -58,6 +61,19 @@ TAMA_MACOS_NOTIFIER_NAME='terminal-notifier'
 # and a click arrives in a process the desktop started with barely any environment at
 # all. Neither is a login shell, so neither reliably has Homebrew's bin on `PATH`.
 TAMA_MACOS_NOTIFIER_DIRS='/opt/homebrew/bin /usr/local/bin'
+
+# The platform backend for a freedesktop desktop, and the binary it is nothing without.
+# `notify-send` is libnotify's own command-line client and is what every Linux desktop
+# has: it speaks the org.freedesktop.Notifications D-Bus interface that GNOME, KDE,
+# dunst, mako and swaync all implement.
+TAMA_BACKEND_LIBNOTIFY='libnotify'
+TAMA_LIBNOTIFY_SEND_NAME='notify-send'
+
+# Where a package manager puts `notify-send`. `/usr/bin` is where every distribution's
+# libnotify package lands and is on every sane `PATH` already; it is searched anyway for
+# the same reason the Homebrew prefixes are — a hook inherits an agent's environment,
+# not a login shell's, and a `PATH` somebody trimmed is not a reason to go silent.
+TAMA_LIBNOTIFY_SEND_DIRS='/usr/bin /usr/local/bin'
 
 # The status for "this capability does not exist here". 127 is what a shell reports
 # for a command it could not find, which is exactly what happened.
@@ -94,20 +110,38 @@ tama_backend_dir() {
 
 # Which backend `auto` means on this machine.
 #
-# Darwin with a notifier installed picks `macos`; anything else falls through to the
-# no-op one. `libnotify` joins the list when it exists and this stays the only place
-# that changes — as another `<platform> && <its dependency is installed>` pair, and
-# checked as cheaply as this one is, because this function runs on every capability
-# invocation: a `case` on `$OSTYPE` and a `command -v`, no `uname` if it can be helped.
+# A Mac with `terminal-notifier` picks `macos`; anything else with `notify-send` picks
+# `libnotify`; everything left picks the no-op one. This is the only place that resolves
+# a platform to a backend, and a third platform belongs here rather than anywhere else.
 #
 # It resolves only to a backend whose dependency is *actually installed*, which is the
 # difference between a plugin that degrades quietly on a headless box and one that
 # fails on every notification an agent reports. A Mac with no `terminal-notifier`
 # therefore lands on `none` and `doctor` is what explains why — never on `macos`,
 # whose every capability would be a process started to fail.
+#
+# **A Mac is never a `libnotify` machine**, which is why the Darwin branch returns
+# rather than falling through: `notify-send` can be installed on a Mac — Homebrew's
+# glib carries one — and there is no notification daemon there for it to talk to, so
+# picking it would be a banner that never appears with nothing anywhere to say why.
+# Anything that is *not* a Mac is asked about `notify-send` and nothing else, so a BSD
+# or a WSL with a freedesktop daemon gets its banners without this function having to
+# hold a list of which operating systems have one.
+#
+# Kept cheap on purpose: this runs on every capability invocation, so it costs a `case`
+# on `$OSTYPE` — bash's own answer, no `uname` process — and at most one `command -v`.
 tama_backend_auto() {
-  if tama_backend_is_darwin && tama_macos_notifier; then
-    printf '%s' "$TAMA_BACKEND_MACOS"
+  if tama_backend_is_darwin; then
+    if tama_macos_notifier; then
+      printf '%s' "$TAMA_BACKEND_MACOS"
+      return 0
+    fi
+    printf '%s' "$TAMA_BACKEND_NONE"
+    return 0
+  fi
+
+  if tama_libnotify_send; then
+    printf '%s' "$TAMA_BACKEND_LIBNOTIFY"
     return 0
   fi
   printf '%s' "$TAMA_BACKEND_NONE"
@@ -124,53 +158,83 @@ tama_backend_is_darwin() {
   esac
 }
 
-# The `terminal-notifier` to use, in TAMA_MACOS_NOTIFIER; non-zero when there is none,
-# which is what stops `auto` picking the macOS backend on a Mac without one.
+# The binary a platform backend depends on, in TAMA_BINARY; non-zero when this machine
+# has none, which is what stops `auto` picking a backend that could only fail.
+#
+#   tama_resolve_binary <option> <default name> <directories to search>
 #
 # Resolved rather than hardcoded — the system this replaces had
 # `/opt/homebrew/bin/terminal-notifier` written into two scripts, which is wrong on an
-# Intel Mac, wrong on a MacPorts install and wrong for anyone who keeps their own
-# build. `@tama_terminal_notifier` overrides the name or gives an absolute path, then
-# `PATH`, then the Homebrew prefixes.
+# Intel Mac, wrong on a MacPorts install and wrong for anyone who keeps their own build.
+# The option overrides the name or gives an absolute path, then `PATH`, then the
+# directories the caller named.
 #
-# Read here, in the core, rather than in backends/macos, because `auto` and the backend
-# must never disagree about which binary the backend is going to run: `auto` promising a
-# notifier the backend then cannot find would be silence with no explanation anywhere.
-# backends/macos calls this function.
-# shellcheck disable=SC2034  # TAMA_MACOS_NOTIFIER is read by the caller
-tama_macos_notifier() {
-  local name resolved dir
-  TAMA_MACOS_NOTIFIER=''
+# Read here, in the core, rather than in the backend that runs it, because `auto` and
+# the backend must never disagree about which binary the backend is going to run:
+# `auto` promising a notifier the backend then cannot find would be silence with no
+# explanation anywhere. Each backend calls its own wrapper below.
+# shellcheck disable=SC2034  # TAMA_BINARY is read by the caller
+tama_resolve_binary() { # <option> <name> <dirs>
+  local name resolved dir dirs="$3"
+  TAMA_BINARY=''
 
-  name="$(tama_opt tama_terminal_notifier '')"
+  name="$(tama_opt "$1" '')"
   case "$name" in
-    '') name="$TAMA_MACOS_NOTIFIER_NAME" ;;
+    '') name="$2" ;;
     # A path the user gave is used as it is, or not at all: searching for the basename
     # of a path somebody spelled out would run a different program than they named.
     */*)
       if [ ! -f "$name" ] || [ ! -x "$name" ]; then
         return 1
       fi
-      TAMA_MACOS_NOTIFIER="$name"
+      TAMA_BINARY="$name"
       return 0
       ;;
   esac
 
   resolved="$(command -v "$name" 2>/dev/null)" || resolved=''
   if [ -n "$resolved" ] && [ -x "$resolved" ]; then
-    TAMA_MACOS_NOTIFIER="$resolved"
+    TAMA_BINARY="$resolved"
     return 0
   fi
 
   # A fixed list of literal paths, so the splitting has nothing to be surprised by.
   # shellcheck disable=SC2086  # deliberate: one word per directory
-  for dir in $TAMA_MACOS_NOTIFIER_DIRS; do
+  for dir in $dirs; do
     if [ -f "$dir/$name" ] && [ -x "$dir/$name" ]; then
-      TAMA_MACOS_NOTIFIER="$dir/$name"
+      TAMA_BINARY="$dir/$name"
       return 0
     fi
   done
   return 1
+}
+
+# The `terminal-notifier` to use, in TAMA_MACOS_NOTIFIER; non-zero when there is none,
+# which is what stops `auto` picking the macOS backend on a Mac without one.
+# `@tama_terminal_notifier` is a name or an absolute path. backends/macos calls this.
+# shellcheck disable=SC2034  # TAMA_MACOS_NOTIFIER is read by the caller
+tama_macos_notifier() {
+  TAMA_MACOS_NOTIFIER=''
+  tama_resolve_binary tama_terminal_notifier "$TAMA_MACOS_NOTIFIER_NAME" \
+    "$TAMA_MACOS_NOTIFIER_DIRS" || return 1
+  TAMA_MACOS_NOTIFIER="$TAMA_BINARY"
+}
+
+# The `notify-send` to use, in TAMA_LIBNOTIFY_SEND; non-zero when there is none, which
+# is what stops `auto` picking the libnotify backend on a machine — a CI runner, a
+# headless server, a container — with no way to draw a banner. `@tama_notify_send` is a
+# name or an absolute path. backends/libnotify calls this.
+#
+# Note for anyone reading the options as a list: `@tama_notify_send` names the *binary*
+# this backend runs, while `@tama_notify_command` replaces the notify *capability*
+# wholesale, backend and all. They are one letter apart in the wrong way, and the second
+# one is the extension point — a click action, a different notifier, a log file.
+# shellcheck disable=SC2034  # TAMA_LIBNOTIFY_SEND is read by the caller
+tama_libnotify_send() {
+  TAMA_LIBNOTIFY_SEND=''
+  tama_resolve_binary tama_notify_send "$TAMA_LIBNOTIFY_SEND_NAME" \
+    "$TAMA_LIBNOTIFY_SEND_DIRS" || return 1
+  TAMA_LIBNOTIFY_SEND="$TAMA_BINARY"
 }
 
 # Runs <capability>, with the caller's arguments, and returns its exit status —

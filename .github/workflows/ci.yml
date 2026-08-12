@@ -54,10 +54,21 @@ jobs:
         # one — `focused` saying the terminal is in front, `focus` bringing a window
         # forward — are only exercised in the direction that needs no GUI. The other
         # direction is verified by hand; see tests/macos.bats.
+        #
+        # The Linux leg has the same shape of gap and one less way to close it: there is
+        # no notification daemon on a runner and no Linux desktop on this project's
+        # development machine, so `backends/libnotify` is asserted against a fake
+        # `notify-send` — the command line it is handed, never a banner. It is the only
+        # leg that can decide what `auto` resolves to off a Mac. See tests/linux.bats.
         os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@v4
       - name: Install tmux and bats (Linux)
+        # No libnotify-bin, for the reason there is no terminal-notifier below: a real
+        # `notify-send` would give any test that reaches the notify path a live D-Bus call
+        # to make. Nothing depends on whether the image happens to carry one — every test
+        # that resolves `auto` names its own `notify-send`, present or absent, through
+        # `@tama_notify_send` or a fixture on PATH.
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update

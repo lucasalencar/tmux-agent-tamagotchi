@@ -302,6 +302,11 @@ FOCUS
 @test "auto never picks the macOS backend off a Mac" {
   refute_darwin
   use_no_configuration
+  # Off a Mac `auto` goes on to ask about `notify-send`, and this test's machine is a
+  # Linux runner that may well have one. Pointed at nothing, so that what runs here is
+  # the resolution and not somebody's notification daemon: `auto` landing on `libnotify`
+  # is tests/linux.bats's claim to make, and it makes it against a fixture.
+  test_tmux set -g @tama_notify_send /nonexistent/notify-send
   local bin="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$bin"
   cp "$PLUGIN_ROOT/tests/fixtures/fake-notifier" "$bin/terminal-notifier"
