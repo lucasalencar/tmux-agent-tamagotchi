@@ -47,6 +47,6 @@ boot_demo() {
   # stray space that padding would leave.
   local rendered plain
   rendered="$(test_tmux display-message -p '#{E:window-status-format}')"
-  plain="$(test_tmux display-message -p '#I:#W')"
+  plain="$(test_tmux display-message -p '#I:#W#{?window_flags,#{window_flags}, }')"
   assert_equal "$rendered" "$plain"
 }

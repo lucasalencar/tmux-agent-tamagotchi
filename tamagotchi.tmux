@@ -11,22 +11,30 @@
 
 set -o nounset
 
-# The directory this file lives in, symlinked directories resolved.
+# The directory this file lives in, symlinked directories resolved. Same name as
+# bin/tama exports, so anything under lib/ has one name to read.
 case "${BASH_SOURCE[0]}" in
-  */*) PLUGIN_DIR="$(cd -P "${BASH_SOURCE[0]%/*}" && pwd)" ;;
-  *) PLUGIN_DIR="$PWD" ;;
+  */*) TAMA_PLUGIN_DIR="$(cd -P "${BASH_SOURCE[0]%/*}" && pwd)" ;;
+  *) TAMA_PLUGIN_DIR="$PWD" ;;
 esac
+export TAMA_PLUGIN_DIR
 
 # A failed `.` does not stop a script, and carrying on from here produces a
 # cascade of bash diagnostics instead of one sentence naming the real problem.
-if [ ! -r "$PLUGIN_DIR/lib/common.sh" ] || [ ! -r "$PLUGIN_DIR/lib/version.sh" ]; then
-  printf 'tamagotchi: no lib/ under %s; the plugin was not loaded\n' "$PLUGIN_DIR" >&2
+# bin/tama is checked for the same reason one step removed: it is what gets
+# published, and a path that cannot be run would fail inside an agent's hooks
+# on every event, where the recipe can only see whether the option is empty.
+if [ ! -r "$TAMA_PLUGIN_DIR/lib/common.sh" ] ||
+  [ ! -r "$TAMA_PLUGIN_DIR/lib/version.sh" ] ||
+  [ ! -x "$TAMA_PLUGIN_DIR/bin/tama" ]; then
+  printf 'tamagotchi: %s is not a complete plugin directory; nothing was loaded\n' \
+    "$TAMA_PLUGIN_DIR" >&2
   exit 1
 fi
 # shellcheck source=lib/common.sh
-. "$PLUGIN_DIR/lib/common.sh"
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
 # shellcheck source=lib/version.sh
-. "$PLUGIN_DIR/lib/version.sh"
+. "$TAMA_PLUGIN_DIR/lib/version.sh"
 
 main() {
   local version warning
@@ -50,9 +58,10 @@ main() {
   # `set -g` is a global user option, which is how every tmux plugin is
   # configured and what both `show -gv` and `#{@tama_bin}` read. Whoever
   # interpolates this path into a `#()` format later owns quoting it and
-  # escaping any `#` in it.
-  tmux_run set -g @tama_bin "$PLUGIN_DIR/bin/tama"
-  tmux_run set -g @tama_bin_dir "$PLUGIN_DIR/bin"
+  # escaping what tmux would otherwise read: `#` starts a format, and `%` is
+  # consumed by strftime.
+  tmux_run set -g @tama_bin "$TAMA_PLUGIN_DIR/bin/tama"
+  tmux_run set -g @tama_bin_dir "$TAMA_PLUGIN_DIR/bin"
 
   # A failed write is not worth failing a config reload over.
   return 0

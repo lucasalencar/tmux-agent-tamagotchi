@@ -96,14 +96,27 @@ teardown() {
   assert_plugin_wired "$plugin"
 }
 
-@test "a plugin directory without its libraries says so and wires nothing" {
+@test "an incomplete plugin directory says so and wires nothing" {
   local broken="$BATS_TEST_TMPDIR/broken"
   mkdir -p "$broken"
   cp "$PLUGIN_ROOT/tamagotchi.tmux" "$broken/"
 
   run --separate-stderr "$broken/tamagotchi.tmux"
   [ "$status" -ne 0 ]
-  assert_stderr_contains 'lib/'
+  assert_stderr_contains 'not a complete plugin directory'
+  assert_plugin_not_wired
+}
+
+@test "a clone whose bin/tama cannot be run wires nothing" {
+  # Otherwise every hook on the machine would fail on a path that is published
+  # but not runnable — an archive download or a lost mode bit.
+  local plugin="$BATS_TEST_TMPDIR/no-exec"
+  tama_copy_plugin "$plugin"
+  chmod -x "$plugin/bin/tama"
+
+  run --separate-stderr "$plugin/tamagotchi.tmux"
+  [ "$status" -ne 0 ]
+  [ -n "$stderr" ]
   assert_plugin_not_wired
 }
 
@@ -117,8 +130,21 @@ teardown() {
   # goes to stderr as well as to tmux.
   assert_stderr_contains '2.9'
   assert_stderr_contains '3.1a'
-  run grep -q 'display-message' "$TAMA_FAKE_TMUX_LOG"
+  run grep -q 'too old' "$TAMA_FAKE_TMUX_LOG"
   assert_success
+}
+
+@test "the warning cannot smuggle a tmux format out of the version string" {
+  # display-message expands its argument as a format, and a format can run a
+  # command, so nothing derived from `tmux -V` may keep its `#`.
+  tama_use_fake_tmux 'tmux 2.9#(touch "$TAMA_FAKE_TMUX_LOG.pwned")'
+
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+
+  [ ! -e "$TAMA_FAKE_TMUX_LOG.pwned" ]
+  run grep -q '#' "$TAMA_FAKE_TMUX_LOG"
+  assert_status 1
 }
 
 @test "below the minimum tmux version it wires nothing at all" {

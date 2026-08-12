@@ -42,12 +42,9 @@ plugin_with_stub() {
   assert_output_contains "Usage: tama"
 }
 
-@test "--help stands on its own: what the plugin does and how hooks call it" {
+@test "--help stands on its own: what a hook author cannot find out elsewhere" {
   run "$PLUGIN_ROOT/bin/tama" --help
   assert_success
-  assert_output_contains "tmux"
-  assert_output_contains "agent"
-  # The three things a hook author cannot find out anywhere else.
   assert_output_contains "exit"
   assert_output_contains "TMUX"
   assert_output_contains "@tama_bin"
@@ -65,24 +62,32 @@ plugin_with_stub() {
   assert_equal "$output" "$expected"
 }
 
-@test "the hook recipe --help prints stays quiet when the plugin is not loaded" {
-  run "$PLUGIN_ROOT/bin/tama" --help
+# The hook recipe as --help prints it, so what gets tested is the text users
+# paste rather than a paraphrase of it.
+extract_hook_recipe() {
+  "$PLUGIN_ROOT/bin/tama" --help |
+    sed -n '/^  \[ -n "\$TMUX" \]/,/^$/p'
+}
+
+@test "the hook recipe --help prints runs the plugin when it is loaded" {
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
+  tama_shim_tmux_on_path
 
-  # A hook runs on machines where the plugin is absent, or on a tmux too old for
-  # it to have wired anything, so the recipe must read the option with -gqv and
-  # bail when it is empty instead of trying to run an empty path.
-  assert_output_contains 'show -gqv @tama_bin'
-  assert_output_contains '[ -n "$tama" ] || exit 0'
+  run --separate-stderr sh -c "$(extract_hook_recipe)"
+  assert_success
+  [[ "$output" =~ ^tama\ [0-9] ]]
+  [ -z "$stderr" ]
+}
 
-  # And the shape it prescribes has to actually behave that way.
+@test "the hook recipe --help prints stays quiet when the plugin is not loaded" {
+  # A hook runs on machines where the plugin is absent, and on a tmux too old for
+  # the entrypoint to have wired anything, so the recipe must not fail the
+  # agent's turn there.
   test_tmux set -gu @tama_bin
-  run --separate-stderr sh -c '
-    [ -n "$TMUX" ] || exit 0
-    tama="$(tmux $TAMA_TMUX_ARGS show -gqv @tama_bin)"
-    [ -n "$tama" ] || exit 0
-    "$tama" version
-  '
+  tama_shim_tmux_on_path
+
+  run --separate-stderr sh -c "$(extract_hook_recipe)"
   assert_success
   [ -z "$output" ]
   [ -z "$stderr" ]
@@ -169,6 +174,13 @@ plugin_with_stub() {
   assert_output_contains "arg: two words"
 }
 
+@test "a subcommand's exit status reaches the caller" {
+  plugin_with_stub
+
+  TAMA_STUB_EXIT=3 run "$PLUGIN/bin/tama" stub
+  assert_status 3
+}
+
 @test "a subcommand is told where the plugin is" {
   plugin_with_stub
 
@@ -182,6 +194,12 @@ plugin_with_stub() {
 
   unset TMUX
   run --separate-stderr "$PLUGIN/bin/tama" stub
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+
+  # An exported but empty TMUX is the same condition.
+  TMUX='' run --separate-stderr "$PLUGIN/bin/tama" stub
   assert_success
   [ -z "$output" ]
   [ -z "$stderr" ]
@@ -207,6 +225,22 @@ plugin_with_stub() {
   run --separate-stderr "$broken/bin/tama" version
   [ "$status" -ne 0 ]
   assert_stderr_contains 'lib/'
+
+  # Same for a lib/ that is there but missing a file the rest depends on.
+  local partial="$BATS_TEST_TMPDIR/partial"
+  tama_copy_plugin "$partial"
+  rm "$partial/lib/options.sh"
+
+  run --separate-stderr "$partial/bin/tama" version
+  [ "$status" -ne 0 ]
+  assert_stderr_contains 'options.sh'
+}
+
+@test "version and --help reject arguments they cannot honour" {
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" version --pane %1
+  assert_usage_error
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" --help extra
+  assert_usage_error
 }
 
 @test "the entry points parse under the bash macOS ships" {
@@ -234,4 +268,33 @@ plugin_with_stub() {
   run "$link" version
   assert_success
   [[ "$output" =~ ^tama\ [0-9] ]]
+}
+
+@test "the dispatcher works through a chain of relative symlinks" {
+  mkdir -p "$BATS_TEST_TMPDIR/nest"
+  ln -s "$PLUGIN_ROOT/bin/tama" "$BATS_TEST_TMPDIR/first"
+  # A relative target, resolved against the directory holding the link.
+  ln -s ../first "$BATS_TEST_TMPDIR/nest/second"
+
+  run "$BATS_TEST_TMPDIR/nest/second" version
+  assert_success
+  [[ "$output" =~ ^tama\ [0-9] ]]
+}
+
+@test "the dispatcher works from a clone whose path contains a space" {
+  local plugin="$BATS_TEST_TMPDIR/my plugins/tamagotchi"
+  mkdir -p "$BATS_TEST_TMPDIR/my plugins"
+  tama_copy_plugin "$plugin"
+  plugin="$(cd -P "$plugin" && pwd)"
+
+  run "$plugin/bin/tama" version
+  assert_success
+
+  run "$plugin/tamagotchi.tmux"
+  assert_success
+  assert_plugin_wired "$plugin"
+
+  # And the path it published is runnable as published.
+  run "$(test_tmux show -gqv @tama_bin)" version
+  assert_success
 }

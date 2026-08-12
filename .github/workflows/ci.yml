@@ -5,10 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: shellcheck
-    # Pinned rather than ubuntu-latest: the suite needs bats >= 1.5, and which
+    # Pinned rather than ubuntu-latest: the suite needs bats >= 1.7, and which
     # bats `apt` has is a property of the image.
     runs-on: ubuntu-24.04
     steps:
@@ -21,7 +24,7 @@ jobs:
 
   test:
     name: bats
-    # Pinned rather than ubuntu-latest: the suite needs bats >= 1.5, and which
+    # Pinned rather than ubuntu-latest: the suite needs bats >= 1.7, and which
     # bats `apt` has is a property of the image.
     runs-on: ubuntu-24.04
     steps:

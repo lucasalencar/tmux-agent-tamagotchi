@@ -20,11 +20,13 @@ TAMA_TMUX="${TAMA_TMUX:-tmux}"
 # tmux, wherever it is. Never quote-mangles the caller's arguments.
 tmux_run() {
   if [ -n "${TAMA_TMUX_ARGS:-}" ]; then
+    # Split into words, but with globbing off: a socket name is not a pattern.
+    set -f
     # shellcheck disable=SC2086  # deliberate: "-L socket" is two arguments
-    "$TAMA_TMUX" $TAMA_TMUX_ARGS "$@"
-  else
-    "$TAMA_TMUX" "$@"
+    set -- $TAMA_TMUX_ARGS "$@"
+    set +f
   fi
+  "$TAMA_TMUX" "$@"
 }
 
 # Usage error: loud, on stderr, exit 2. The hint carries an absolute path
@@ -47,6 +49,11 @@ require_tmux() {
 # sourced us by a bare relative name still finds it.
 _tama_lib_dir="${BASH_SOURCE[0]%/*}"
 [ "$_tama_lib_dir" = "${BASH_SOURCE[0]}" ] && _tama_lib_dir='.'
+if [ ! -r "$_tama_lib_dir/options.sh" ]; then
+  printf 'tama: no options.sh next to %s; this plugin directory is incomplete\n' \
+    "${BASH_SOURCE[0]}" >&2
+  exit 1
+fi
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=options.sh
 . "$_tama_lib_dir/options.sh"

@@ -64,8 +64,24 @@ tama_add_stub_subcommand() {
 printf 'argc: %s\n' "$#"
 printf 'arg: %s\n' "$@"
 printf 'plugin_dir: %s\n' "${TAMA_PLUGIN_DIR:-unset}"
+exit "${TAMA_STUB_EXIT:-0}"
 STUB
   chmod +x "$1/libexec/stub"
+}
+
+# Puts a `tmux` on PATH that talks to this test's server, so a snippet written
+# for a user's shell — a hook recipe — can be run verbatim without reaching the
+# real tmux.
+tama_shim_tmux_on_path() {
+  local bin="$BATS_TEST_TMPDIR/shim"
+  mkdir -p "$bin"
+  cat >"$bin/tmux" <<SHIM
+#!/bin/sh
+exec $(command -v tmux) -L "$TAMA_SOCKET" "\$@"
+SHIM
+  chmod +x "$bin/tmux"
+  PATH="$bin:$PATH"
+  export PATH
 }
 
 assert_success() {
@@ -163,8 +179,13 @@ assert_version_supported() {
 }
 
 assert_version_rejected() {
+  local before
+  before="$(tama_server_state)"
+
   tama_use_fake_tmux "$1"
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success || return 1
-  assert_plugin_not_wired
+  # Below the minimum the entrypoint wires nothing *at all*, so compare the whole
+  # server rather than only the two options it would have set.
+  assert_equal "$(tama_server_state)" "$before"
 }

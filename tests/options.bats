@@ -33,7 +33,9 @@ teardown() {
   assert_equal "$output" ''
 }
 
-@test "tmux reports a user option's value verbatim" {
+@test "tmux reports a user option's value with its whitespace intact" {
+  # The icon prefix and the flag text are single spaces, so a reader that
+  # trimmed would silently change what the status line shows.
   test_tmux set -g @tama_configured ' * '
 
   run test_tmux show -gv @tama_configured

@@ -3,6 +3,8 @@
 # tmux version reading and comparison. Lives here rather than in the entrypoint
 # because `doctor` has to report the same verdict, and two implementations of
 # "supported" would eventually disagree.
+#
+# Source lib/common.sh first: tama_tmux_version reaches tmux through tmux_run.
 
 # Pane user options, appendable hooks and format modifiers.
 # Read by whoever sources this file.
@@ -23,6 +25,9 @@ tama_tmux_version() {
     [0-9]*) ;;
     *-*) raw="${raw#*-}" ;;
   esac
+  # A stray trailing space or carriage return would otherwise sort before the
+  # minimum's bugfix letter and reject a version that is new enough.
+  raw="${raw%%[[:space:]]*}"
   printf '%s' "$raw"
 }
 
@@ -46,13 +51,17 @@ tama_version_minor() {
 # trying.
 tama_version_at_least() {
   local version="$1" minimum="$2"
+  # Byte order for the bugfix-letter comparison below, so the verdict cannot
+  # depend on the ambient locale.
+  local LC_ALL=C
   local version_number="${version%%[!0-9.]*}" minimum_number="${minimum%%[!0-9.]*}"
   local version_bugfix="${version#"$version_number"}"
   local minimum_bugfix="${minimum#"$minimum_number"}"
 
-  # Nothing we can read as a number: benefit of the doubt.
+  # Nothing we can read as a number: benefit of the doubt. (The expansion above
+  # already guarantees digits and dots, so only the shapes below can occur.)
   case "$version_number" in
-    '' | .* | *. | *..* | *[!0-9.]*) return 0 ;;
+    '' | .* | *. | *..*) return 0 ;;
   esac
 
   local version_major="${version_number%%.*}" minimum_major="${minimum_number%%.*}"

@@ -5,7 +5,8 @@
 # This file is the compatibility promise: agent hooks call `tama <subcommand>`
 # and nothing else. Everything under libexec/ and lib/ is internal and free to
 # move. Each subcommand is a file in libexec/ with the same name; the dispatcher
-# routes by file name and holds no list of its own.
+# routes by file name and keeps no list of them. The only names it owns are the
+# ones that have to answer before the tmux check — `version` and `--help`.
 #
 # What a libexec/ script may assume, and nothing more:
 #   * it is an executable file, run with the subcommand name already shifted off
@@ -109,10 +110,12 @@ main() {
 
   case "$subcommand" in
     version | --version)
+      [ "$#" -eq 0 ] || die_usage "$subcommand takes no arguments"
       printf 'tama %s\n' "$TAMA_VERSION"
       return 0
       ;;
     --help | -h | help)
+      [ "$#" -eq 0 ] || die_usage "$subcommand takes no arguments"
       usage
       return 0
       ;;
