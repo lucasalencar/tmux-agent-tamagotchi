@@ -20,6 +20,14 @@ load helper
 # project's development machine and no notification daemon on a CI runner, so **the
 # libnotify backend has never raised a banner anybody observed**; that is an open item
 # for a user with a Linux desktop, not something this suite quietly claims.
+#
+# The two `auto` tests gated on not-a-Mac skip on the only machine this plugin is
+# developed on, which is exactly the shape of test that passes for years while asserting
+# nothing. They can be run from a Mac, and were: copy the plugin somewhere, change the
+# `darwin*)` pattern in `tama_backend_is_darwin` to something no `$OSTYPE` matches, flip
+# the two gates in this file, and run it. That found a real failure the Mac run hid — a
+# mark asserted in a race with the sweep that a client attaching fires — so it is worth
+# doing again after anything here or in tama_backend_auto moves.
 setup() {
   # Before the server boots: the backend is reached from tmux hooks too — a window
   # selection dismissing a banner — and a hook's `run-shell` inherits the environment the
