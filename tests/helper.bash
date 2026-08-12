@@ -138,6 +138,94 @@ SHIM
   export PATH
 }
 
+# Where the fake backend records what it was asked to do. Exported *before* the test
+# server boots, because the backend is also invoked from tmux hooks — a window
+# selection dismissing a banner — and a hook's `run-shell` inherits the environment the
+# server was started with, not the one the test has now.
+tama_fake_backend_env() {
+  export TAMA_TEST_LOG="$BATS_TEST_TMPDIR/backend.log"
+  : >"$TAMA_TEST_LOG"
+  # The default is "the terminal is not in front", so a test that says nothing about
+  # focus is describing a user who is not looking. See the fixture.
+  export TAMA_FAKE_FOCUSED=1
+}
+
+# Points the plugin at the fake backend, by absolute path — which is also how a
+# third-party backend is configured, so this exercises that resolution rather than a
+# path only the tests can produce.
+tama_use_fake_backend() {
+  test_tmux set -g @tama_backend "$PLUGIN_ROOT/tests/fixtures/fake-backend"
+}
+
+# A copy of the fake backend with one capability missing, for the claims about what the
+# plugin does when a platform cannot do something. Prints the path.
+tama_fake_backend_without() { # <capability>
+  local dir="$BATS_TEST_TMPDIR/backend-without-$1"
+  mkdir -p "$dir"
+  cp "$PLUGIN_ROOT"/tests/fixtures/fake-backend/* "$dir/"
+  rm -f "$dir/$1"
+  printf '%s' "$dir"
+}
+
+# How many times the backend was asked for <capability>.
+tama_backend_calls() { # <capability>
+  grep -cx -- "$1" "$TAMA_TEST_LOG" 2>/dev/null || true
+}
+
+# Waits for a capability a tmux hook was supposed to reach. The entrypoint wires
+# `run-shell -b`, which is deliberately asynchronous, so the assertion has to be
+# "eventually" or it is timing noise.
+wait_until_backend_called() { # <capability>
+  local waited=0
+  while [ "$(tama_backend_calls "$1")" -eq 0 ]; do
+    waited=$((waited + 1))
+    if [ "$waited" -gt 200 ]; then
+      printf 'the backend was not asked to %s within 10s; calls were:\n%s\n' \
+        "$1" "$(cat "$TAMA_TEST_LOG")" >&2
+      return 1
+    fi
+    sleep 0.05
+  done
+}
+
+assert_backend_called() { # <capability>
+  if [ "$(tama_backend_calls "$1")" -eq 0 ]; then
+    printf 'expected the backend to be asked to %s; calls were:\n%s\n' \
+      "$1" "$(cat "$TAMA_TEST_LOG")" >&2
+    return 1
+  fi
+}
+
+refute_backend_called() { # <capability>
+  if [ "$(tama_backend_calls "$1")" -ne 0 ]; then
+    printf 'expected the backend NOT to be asked to %s; calls were:\n%s\n' \
+      "$1" "$(cat "$TAMA_TEST_LOG")" >&2
+    return 1
+  fi
+}
+
+# One value the backend was given, exactly as it arrived: `argv1`, `argv2`, `argc`, or
+# `env.TAMA_GROUP` and its siblings. Fails loudly rather than reading as empty when the
+# capability was never called at all.
+tama_backend_value() { # <capability> <what>
+  local file="$TAMA_TEST_LOG.$1.$2"
+  if [ ! -e "$file" ]; then
+    printf 'the backend recorded no %s for %s; calls were:\n%s\n' \
+      "$2" "$1" "$(cat "$TAMA_TEST_LOG")" >&2
+    return 1
+  fi
+  cat "$file"
+}
+
+assert_backend_value() { # <capability> <what> <expected>
+  local actual
+  actual="$(tama_backend_value "$1" "$2")" || return 1
+  if [ "$actual" != "$3" ]; then
+    printf 'expected the %s of %s to be %s\n     got %s\n' "$2" "$1" "$3" "$actual" >&2
+    return 1
+  fi
+}
+
 assert_success() {
   assert_status 0
 }

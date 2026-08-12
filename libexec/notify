@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+#
+# notify — an agent needs the user, and the user is not looking.
+#
+#   tama notify <agent_name> <message> [--pane <pane_id>]
+#
+# Raises the OS banner that says so, marks the window, and arranges for a click to
+# land the cursor on the pane that spoke. Everything platform-specific is behind
+# lib/backend.sh; everything about deciding is in lib/notify.sh.
+#
+# The message is one argument and stays one argument. It is arbitrary text an agent
+# wrote — spaces, quotes, `#`, `$`, a newline — and it is never expanded as a tmux
+# format, never pasted into a command line unquoted, and never stored in a tmux
+# option. The title is the opposite: a format the *user* wrote, expanded by tmux
+# against the pane. Keeping those two apart is what makes an agent's own words safe
+# to put on screen.
+#
+# The order is deliberate and each step earns its place:
+#
+#   1. banners off        → nothing to do at all
+#   2. read the window    → the one round trip everything below works from
+#   3. suppression        → the `AND` of ADR-0004, before anything is written
+#   4. the label provider → only if the user configured one
+#   5. one batch of writes: the label, the agent's name, the mark
+#   6. the group and the title, expanded by tmux
+#   7. the backend
+#
+# Failure policy: a wrong invocation exits 2 while its author is editing the hook.
+# Everything else exits 0 in silence — no pane, no window, no backend, no `notify`
+# capability, a notifier that failed. A banner that did not appear must never be the
+# reason an agent's turn failed, which is user story 52 and the reason this command
+# has no error path at all past the argument check.
+#
+# On being called twice for one interruption: an agent whose hook system fires two
+# events for the same question — Claude Code raises `Notification` alongside
+# `PermissionRequest` — gets one banner, because banners are grouped per window and
+# the second replaces the first. That is the core's whole contribution to the
+# problem; an integration that wants to send only one call is welcome to decide
+# that for itself, and only it can (ADR-0002).
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+deliver() { # <target> <agent_name> <message>
+  local target="$1" agent="$2" message="$3"
+
+  tama_window_read "$target" || exit 0
+
+  # Before any write: a suppressed notification must leave no trace, or the mark it
+  # raised on the way to being dropped would outlive it.
+  tama_notify_suppressed && exit 0
+
+  tama_notify_label
+
+  tama_batch_reset
+  # The name is what the default title leads with, and it is sticky in the pane
+  # record exactly as `state` keeps it: an agent that only ever calls `notify` still
+  # gets a title with its name in it. Written rather than compared first, because
+  # asking would cost a round trip to save a write that tmux does for nothing.
+  tama_batch_add set -p -t "$TAMA_WINDOW_PANE_ID" '@tama_pane_agent' "$agent"
+  if [ -n "$TAMA_NOTIFY_LABEL" ]; then
+    tama_batch_add set -p -t "$TAMA_WINDOW_PANE_ID" '@tama_pane_label' \
+      "$TAMA_NOTIFY_LABEL"
+  else
+    # Unset, never emptied — the rule the whole plugin follows. It matters here
+    # because the default title asks whether there *is* a label, and one set to the
+    # empty string would answer yes and draw an empty pair of brackets.
+    tama_batch_add set -puq -t "$TAMA_WINDOW_PANE_ID" '@tama_pane_label'
+  fi
+  # The mark, raised unconditionally rather than through tama_flag_raise — which
+  # would ask tmux's cheap question a second time and get the wrong answer for the
+  # one case that matters. Getting here means delivering, and delivering means the
+  # user is not looking: a terminal behind a browser is a user who is not looking,
+  # whatever tmux thinks about which window is active. Deliver and mark are the same
+  # decision, made once, above.
+  #
+  # The other end of that invariant is in lib/window.sh: because a delivered banner
+  # always leaves a mark, a window with no mark has no banner pending, which is what
+  # lets the user arriving at a window dismiss without a notifier process per
+  # keystroke. Stop raising this and banners start outliving the thing they were
+  # about.
+  tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" on
+  # No refresh: none of these three is drawn by the icon job, and the mark is a plain
+  # format that redraws with the option write itself.
+  tama_batch_flush 'no' || true
+
+  # After the writes, because both formats read what was just written.
+  tama_notify_group
+  tama_notify_title "$TAMA_WINDOW_PANE_ID"
+
+  tama_notify_click "$TAMA_WINDOW_ID" "$TAMA_WINDOW_PANE_ID" "$TAMA_WINDOW_SESSION"
+
+  tama_notify_export_context
+  TAMA_GROUP="$TAMA_NOTIFY_GROUP"
+  TAMA_PANE_ID="$TAMA_WINDOW_PANE_ID"
+  TAMA_AGENT="$agent"
+  TAMA_CLICK="$TAMA_NOTIFY_CLICK"
+  export TAMA_GROUP TAMA_PANE_ID TAMA_AGENT TAMA_CLICK
+
+  tama_backend_invoke notify "$TAMA_NOTIFY_TITLE" "$message" || true
+}
+
+main() {
+  local pane='' agent='' message='' positional=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --pane)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--pane needs a pane id'
+        fi
+        pane="$2"
+        shift 2
+        ;;
+      --)
+        # Everything after this is a value, so a message from an agent can begin
+        # with a dash — which a sentence quite reasonably can.
+        shift
+        while [ "$#" -gt 0 ]; do
+          positional=$((positional + 1))
+          case "$positional" in
+            1) agent="$1" ;;
+            2) message="$1" ;;
+            *) die_usage "notify takes two arguments, got: $1" ;;
+          esac
+          shift
+        done
+        ;;
+      -*) die_usage "unknown option: $1" ;;
+      *)
+        positional=$((positional + 1))
+        case "$positional" in
+          1) agent="$1" ;;
+          2) message="$1" ;;
+          *) die_usage "notify takes two arguments, got: $1" ;;
+        esac
+        shift
+        ;;
+    esac
+  done
+
+  # Both are required, and empty counts as missing: a hook that failed to interpolate
+  # its variable is a hook whose author needs to hear about it now rather than
+  # wondering later why the banners say nothing. An integration whose payload did not
+  # give up a message has to put something there — the event's name will do.
+  [ -n "$agent" ] || die_usage 'notify needs an agent name'
+  [ -n "$message" ] || die_usage 'notify needs a message'
+
+  # The name is stored in a pane option and expanded into a title, so it has to
+  # survive that round trip; the message never touches an option and may hold
+  # anything at all. The shape of the call is checked before anything about the
+  # environment, so that a wrong hook is loud wherever it runs.
+  tama_pane_value_is_storable "$agent" ||
+    die_usage 'an agent name cannot contain a newline or a control separator'
+
+  # Nothing to interrupt anybody about.
+  tama_notify_enabled || exit 0
+
+  # --pane overrides the pane the hook happens to run in, which wrappers lose and
+  # tests never have. Having neither is one of the quiet no-ops.
+  pane="${pane:-${TMUX_PANE:-}}"
+  [ -n "$pane" ] || exit 0
+
+  deliver "$pane" "$agent" "$message"
+}
+
+main "$@"

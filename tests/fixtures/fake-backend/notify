@@ -1,0 +1,13 @@
+#!/bin/sh
+#
+# The fake backend's notify: records what a real one would have put on screen.
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=record.sh
+. "${0%/*}/record.sh"
+
+tama_record notify "$@"
+
+# A notifier that raised a banner. The plugin ignores this, and there is a test that
+# says a notifier which failed is ignored too.
+exit 0

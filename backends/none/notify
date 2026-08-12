@@ -1,0 +1,11 @@
+#!/bin/sh
+#
+# The no-op backend's notify: there is nowhere to put a banner on this machine, so
+# nothing happens, and it happens successfully.
+#
+# This is where `@tama_backend auto` lands on a machine with no notifier — a CI
+# runner, a headless server, a macOS with no terminal-notifier installed — and it is
+# what makes the plugin silent by default there instead of failing on every
+# notification an agent reports. `tama doctor` is what explains why this one was
+# chosen.
+exit 0

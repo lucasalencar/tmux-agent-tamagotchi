@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#
+# focus-window — bring the terminal showing a session to the front.
+#
+#   tama focus-window <session>
+#
+# The last step of a notification's click action, and the only part of it that is not
+# something tmux can do for itself: selecting a window and a pane is tmux's business,
+# but a terminal emulator is the desktop's. So this is one line of dispatch to the
+# backend's `focus` capability, and everything terminal-specific stays there — or in
+# the user's own script, since `@tama_focus_command` replaces the capability
+# wholesale. That option is the answer to "my terminal needs something nobody else's
+# does", and it is why this file has no logic to be argued with.
+#
+# **This is the one subcommand that runs outside tmux**, and it has to: the click
+# arrives in a process the desktop started, long after the hook that raised the banner
+# exited, with no `$TMUX` in its environment. bin/tama exempts it from the check that
+# makes every other command a quiet no-op there — a promise that is easy to break by
+# accident and takes the whole click with it, so it is named in both places.
+#
+# The session is named rather than the window because that is what a terminal window
+# can be recognised by: the macOS backend matches it against the terminal window's
+# title, which works because the user sets `set-titles-string "#S"`. That is the
+# fragile half of ADR-0004's `AND` and the reason suppression never trusts it alone.
+#
+# Never fails, even here where nothing is waiting on it: a backend that cannot find
+# the terminal has nothing to tell the user that the terminal not coming forward has
+# not already told them.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local session='' positional=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --) shift ;;
+      -*) die_usage "unknown option: $1" ;;
+      *)
+        positional=$((positional + 1))
+        [ "$positional" -eq 1 ] ||
+          die_usage "focus-window takes one session, got: $1"
+        session="$1"
+        shift
+        ;;
+    esac
+  done
+
+  # A click action that lost its session name is a click that cannot say which
+  # terminal window it means. Loud, because it means the banner was raised wrong and
+  # nobody would otherwise find out.
+  [ -n "$session" ] || die_usage 'focus-window needs a session'
+
+  TAMA_SESSION="$session"
+  export TAMA_SESSION
+  tama_backend_export_terminal
+
+  tama_backend_invoke focus "$session" || true
+}
+
+main "$@"

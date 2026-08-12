@@ -1,0 +1,12 @@
+#!/bin/sh
+#
+# The fake backend's dismiss: records which group it was asked to take down, which is
+# how a test proves that raising and dismissing name the same banner.
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=record.sh
+. "${0%/*}/record.sh"
+
+tama_record dismiss "$@"
+
+exit 0

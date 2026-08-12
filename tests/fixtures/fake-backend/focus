@@ -1,0 +1,13 @@
+#!/bin/sh
+#
+# The fake backend's focus: records the session it was asked to bring forward, which is
+# the last step of the click action and the one that has to happen even when the pane
+# and the window the click named are both gone.
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=record.sh
+. "${0%/*}/record.sh"
+
+tama_record focus "$@"
+
+exit 0

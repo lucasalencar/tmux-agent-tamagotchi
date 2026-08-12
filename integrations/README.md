@@ -33,9 +33,10 @@ in particular, none of them uses `jq` (ADR-0001).
 ## Wiring an agent that has no adapter here
 
 Nothing about the CLI is private, so any hook system that can run a command can drive it:
-`tama state running|waiting|idle|error|clear`, plus `tama state subagent-start|stop <id>`.
-Every recipe follows the same shape, which keeps working when the plugin moves and stays
-quiet on a machine where it is not installed (ADR-0003):
+`tama state running|waiting|idle|error|clear`, plus `tama state subagent-start|stop <id>`,
+and `tama notify <agent> <message>` for the events that should also raise a banner. Every
+recipe follows the same shape, which keeps working when the plugin moves and stays quiet on
+a machine where it is not installed (ADR-0003):
 
 ```sh
 [ -n "$TMUX" ] || exit 0
@@ -43,5 +44,20 @@ tama="$(tmux show -gqv @tama_bin)"
 [ -x "$tama" ] || exit 0
 exec "$tama" state running my-agent
 ```
+
+Two things to know if your adapter raises banners:
+
+- **The message is one argument and stays one argument.** It is never expanded as a tmux
+  format, never read as shell and never stored in a tmux option, so nothing in it needs
+  escaping — but nothing may split it either. Hand over exactly what the agent said.
+- **Both arguments are required and neither may be empty**, because an empty one is a hook
+  that failed to interpolate its variable, and that is a mistake worth hearing about while
+  you are still editing the hook. If your agent's payload did not give up a message, put
+  something there yourself — the event's name will do.
+
+Deciding that a delegated run should stay quiet is the adapter's own call, and only the
+adapter can make it: nothing in the core knows what a delegated run is (ADR-0002). The core
+does make a double call harmless, though — banners are grouped per window, so an agent that
+fires two events for one question replaces its own banner rather than raising two.
 
 See `tama --help` for the full command surface.

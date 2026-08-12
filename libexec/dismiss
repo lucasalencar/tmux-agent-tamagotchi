@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+#
+# dismiss — take down the banner a window has pending.
+#
+#   tama dismiss [--pane <pane_id>] [<window_target>]
+#
+# The user arriving at a window is what normally calls this, through `tama
+# on-select`: notification centre should not accumulate things already dealt with.
+# It is here as a subcommand of its own for a key binding, and because a user who
+# wants the banner gone without visiting the window should not have to visit it.
+#
+# Unconditional, unlike the mark it goes with: whoever calls this is saying the
+# banner has served its purpose. Which banner that is comes from `@tama_group_format`
+# by way of lib/notify.sh — the same expansion `notify` used to raise it, so the two
+# cannot name different things.
+#
+# Never fails: a banner that would not go away is not worth a word out of an agent's
+# hook or a line in the server log.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local target='' pane='' positional=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --pane)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--pane needs a pane id'
+        fi
+        pane="$2"
+        shift 2
+        ;;
+      -*) die_usage "unknown option: $1" ;;
+      *)
+        positional=$((positional + 1))
+        [ "$positional" -eq 1 ] || die_usage "dismiss takes at most one target, got: $1"
+        # An empty one is a binding that failed to interpolate its format, not a
+        # request for whichever window tmux would pick.
+        [ -n "$1" ] || die_usage 'dismiss needs a window target'
+        target="$1"
+        shift
+        ;;
+    esac
+  done
+
+  target="${target:-${pane:-${TMUX_PANE:-}}}"
+  [ -n "$target" ] || exit 0
+
+  # With banners off there is nothing of ours on screen to take down, and asking the
+  # backend would start a notifier process to say so.
+  tama_notify_enabled || exit 0
+
+  tama_window_read "$target" || exit 0
+  tama_notify_dismiss
+}
+
+main "$@"

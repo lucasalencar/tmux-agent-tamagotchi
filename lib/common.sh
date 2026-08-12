@@ -119,5 +119,15 @@ _tama_require_lib "$_tama_lib_dir/stale.sh"
 # shellcheck source=stale.sh
 . "$_tama_lib_dir/stale.sh"
 
+_tama_require_lib "$_tama_lib_dir/backend.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=backend.sh
+. "$_tama_lib_dir/backend.sh"
+
+_tama_require_lib "$_tama_lib_dir/notify.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=notify.sh
+. "$_tama_lib_dir/notify.sh"
+
 unset _tama_lib_dir
 unset -f _tama_require_lib

@@ -1,0 +1,5 @@
+#!/bin/sh
+#
+# The no-op backend's dismiss. Nothing raised a banner here, so nothing has one to
+# take down.
+exit 0

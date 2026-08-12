@@ -1,0 +1,20 @@
+#!/bin/sh
+#
+# The fake backend's focused: the expensive half of the suppression `AND`, with the
+# answer under the test's control.
+#
+#   TAMA_FAKE_FOCUSED=0   the terminal is in front, showing this session
+#   anything else         it is not — which is the default, because a test that has
+#                         not said otherwise is not describing a user who is looking
+#
+# Recorded as well as answered, so that a test can prove this was *not* consulted: the
+# ordering of the `AND` is the point of ADR-0004, not an optimization, and only the
+# absence of a call here shows that the cheap check ran first.
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=record.sh
+. "${0%/*}/record.sh"
+
+tama_record focused "$@"
+
+exit "${TAMA_FAKE_FOCUSED:-1}"

@@ -34,9 +34,11 @@
 # The $TMUX_PANE fallback stays for a user calling this from a key binding, where the
 # variable does name a real pane.
 #
-# In v0.1 this unflags and sweeps stale state. It is the seam for everything else
-# that becomes true when the user arrives at a window — dismissing that window's
-# pending notification — so that lands here rather than growing another hook.
+# Three things become true when the user arrives at a window, and all three happen
+# here rather than off three hooks of their own: the mark goes, the banner that went
+# with it is dismissed, and the window's panes are swept. Dismissing belongs with
+# unflagging in particular — they are the two halves of "already dealt with", and the
+# mark is what tells this command whether there was a banner at all.
 #
 # Never fails: this runs from a tmux hook, where a non-zero exit is noise in the
 # server log and nothing a user can act on.
@@ -80,7 +82,17 @@ main() {
   # `--all` sweep is about the server and does not need a target at all.
   local target="${window:-${pane:-${TMUX_PANE:-}}}"
 
-  [ -z "$target" ] || tama_flag_clear "$target"
+  # Taking the mark off is also how this knows whether there is a banner to take
+  # down. `notify` raises the mark whenever it delivers one, so a window that had no
+  # mark had no banner of ours pending — and this runs on every window selection, so
+  # asking the backend anyway would mean starting a notifier process every time the
+  # user presses a key. The invariant is stated at both ends; see lib/window.sh.
+  if [ -n "$target" ] && tama_flag_clear "$target"; then
+    # The window tama_flag_clear just read, so this costs no second round trip.
+    if tama_notify_enabled; then
+      tama_notify_dismiss
+    fi
+  fi
 
   # After the flag, not before: taking the mark off is what the user is waiting for,
   # and the sweep is housekeeping that may read every pane on the server.
