@@ -20,8 +20,9 @@ TAMA_US=$'\037'
 TAMA_PANE_OPTIONS='state_main subagents state cmd agent cwd'
 
 # The read: the pane's identity, its stored state, and the live command and path
-# that a fresh state write snapshots. Built from the list above so the order the
-# fields are read in cannot drift from the order they are named in.
+# that a fresh state write snapshots. The format is built from the list above,
+# but the variables it is unpacked into are written out by hand — adding an
+# option means touching both, in the same order.
 #
 # One asymmetry to know about: reading an option through a *format* falls back to
 # the window, session and global scopes, while `show -p` does not. Nothing sets
@@ -48,11 +49,18 @@ TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{pane_current_path}"
 tama_pane_read() {
   local raw
   raw="$(tmux_run display-message -p -t "$1" "$TAMA_PANE_READ_FORMAT" 2>/dev/null)" || raw=''
-  IFS="$TAMA_US" read -r TAMA_PANE_ID TAMA_PANE_STATE_MAIN TAMA_PANE_SUBAGENTS \
+  # `-d ''` reads to the end of the input rather than to the end of the first
+  # line, so a newline inside a value is data instead of the end of the record.
+  # Without it a directory — or an agent name — containing one truncates the read:
+  # the command snapshot silently comes back empty, and the pane then differs from
+  # itself on every report, which defeats the write short-circuit for good.
+  IFS="$TAMA_US" read -r -d '' TAMA_PANE_ID TAMA_PANE_STATE_MAIN TAMA_PANE_SUBAGENTS \
     TAMA_PANE_STATE TAMA_PANE_CMD TAMA_PANE_AGENT TAMA_PANE_CWD \
     TAMA_PANE_CURRENT_CMD TAMA_PANE_CURRENT_PATH <<EOF
 $raw
 EOF
+  # The last field ends at the newline the here-document adds, not at a separator.
+  TAMA_PANE_CURRENT_PATH="${TAMA_PANE_CURRENT_PATH%$'\n'}"
   [ -n "$TAMA_PANE_ID" ]
 }
 
@@ -83,23 +91,30 @@ tama_pane_derive() { # <state_main> <subagents>
 # Globbing is off around the splits because an id is not a pattern: an id
 # containing `*` would otherwise be replaced by the working directory's contents.
 
+# Whether <id> is one of the live subagents in <list>. Also what the writer uses
+# to ask whether its own call still holds after the fact.
+tama_subagents_contains() { # <list> <id>
+  local id="$2" existing
+  set -f
+  # shellcheck disable=SC2086  # deliberate: the list is space separated
+  set -- $1
+  set +f
+  for existing in "$@"; do
+    [ "$existing" = "$id" ] && return 0
+  done
+  return 1
+}
+
 # Sets TAMA_SUBAGENTS_NEW to the list with <id> present. Already being there is
 # the whole answer — a duplicate start is idempotent, which is what makes a hook
 # that fires twice harmless.
 # shellcheck disable=SC2034  # TAMA_SUBAGENTS_NEW is read by the caller
 tama_subagents_add() { # <list> <id>
-  local list="$1" id="$2" existing
-  set -f
-  # shellcheck disable=SC2086  # deliberate: the list is space separated
-  set -- $list
-  set +f
-  for existing in "$@"; do
-    if [ "$existing" = "$id" ]; then
-      TAMA_SUBAGENTS_NEW="$list"
-      return 0
-    fi
-  done
-  TAMA_SUBAGENTS_NEW="${list:+$list }$id"
+  if tama_subagents_contains "$1" "$2"; then
+    TAMA_SUBAGENTS_NEW="$1"
+  else
+    TAMA_SUBAGENTS_NEW="${1:+$1 }$2"
+  fi
 }
 
 # Sets TAMA_SUBAGENTS_NEW to the list without <id>. An id that is not there
@@ -121,6 +136,10 @@ tama_subagents_remove() { # <list> <id>
 # Writes are batched into a single tmux invocation, because the alternative is
 # one round trip per option on the hottest write path in the plugin.
 
+# The count is kept alongside the array rather than read off it, because bash 3.2
+# — the /bin/bash every macOS ships — treats expanding an empty array as an unset
+# variable under `nounset` and dies. Nothing may expand TAMA_BATCH until something
+# has been added to it.
 tama_batch_reset() {
   TAMA_BATCH=()
   TAMA_BATCH_COUNT=0
@@ -140,22 +159,33 @@ tama_batch_add() {
 tama_pane_stage() { # <pane_id> <option> <new> <stored>
   [ "$3" = "$4" ] && return 0
   if [ -n "$3" ]; then
-    tama_batch_add set -p -t "$1" "@tama_pane_$2" "$3"
+    # tmux reads an argument that ends in `;` as the end of a command, strips it,
+    # and starts parsing the next one — so a value ending in a semicolon would be
+    # stored without it, and could take the rest of the batch with it. Escaping
+    # only the last one is deliberate: tmux leaves a `;` anywhere else alone, and
+    # would keep the backslash if we escaped it.
+    case "$3" in
+      *\;) tama_batch_add set -p -t "$1" "@tama_pane_$2" "${3%;}\\;" ;;
+      *) tama_batch_add set -p -t "$1" "@tama_pane_$2" "$3" ;;
+    esac
   else
     tama_batch_add set -puq -t "$1" "@tama_pane_$2"
   fi
 }
 
-# Sends what was staged, followed by the client refresh that pushes the new
-# status line out before the next status-interval tick. Nothing staged sends
-# nothing and returns non-zero — the short-circuit that makes a repeated
-# `state running` free.
+# Sends what was staged. Nothing staged sends nothing and returns non-zero — the
+# short-circuit that makes a repeated `state running` free.
+#
+# Refreshing the clients is asked for separately, because it costs far more than
+# the write: it redraws every status line, which re-runs the icon command once per
+# window on the server. Only a change the status line would show is worth that —
+# the command and path snapshots are for a later sweep, and nobody draws them.
 #
 # The refresh goes last because tmux abandons the rest of a batch when one
 # command fails, and this is the one that fails when no client is attached.
-tama_batch_flush() {
+tama_batch_flush() { # <refresh: yes|no>
   [ "$TAMA_BATCH_COUNT" -gt 0 ] || return 1
-  tama_batch_add refresh-client -S
+  [ "$1" = 'no' ] || tama_batch_add refresh-client -S
   # A write that did not land is not worth failing an agent's turn over.
   tmux_run "${TAMA_BATCH[@]}" >/dev/null 2>&1 || true
   tama_batch_reset

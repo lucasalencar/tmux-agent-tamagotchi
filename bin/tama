@@ -82,14 +82,16 @@ Subcommands:
                         An agent that is idle with one still live shows as
                         working in the background rather than as finished.
   icons <window_id>     Print one glyph per agent pane of that window, in pane
-                        order. This is what \$@tama_icons runs for you.
+                        order. This is what @tama_icons runs for you.
   version               Print the plugin version.
   --help, -h, help      Print this message.
 
 Put the icons in your status line wherever you want them — the plugin never
-rewrites it for you:
+rewrites it for you. Keeping tmux's own default in front of them is what keeps
+its zoom and bell markers:
 
-  set -g window-status-format '#I:#W#{E:@tama_icons}'
+  set -g window-status-format \
+    '#I:#W#{?window_flags,#{window_flags}, }#{E:@tama_icons}'
 
 Common options:
   --pane <pane_id>      Act on this pane instead of \$TMUX_PANE (on the

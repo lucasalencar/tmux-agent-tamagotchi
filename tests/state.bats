@@ -17,16 +17,27 @@ teardown() {
 }
 
 @test "reporting a state records it on the pane, with the snapshot around it" {
-  run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
+  # A pane whose command and directory are nothing like the caller's or the
+  # session's active pane's, so a snapshot taken from the wrong pane cannot pass.
+  local agent_pane agent_cwd
+  # Resolved, because tmux reports the pane's real path and /tmp is a symlink on
+  # macOS.
+  agent_cwd="$(cd -P /tmp && pwd)"
+  test_tmux new-window -d -t t -c "$agent_cwd" 'sleep 47'
+  agent_pane="$(test_tmux list-panes -a -F '#{pane_id} #{pane_current_command}' |
+    awk '$2 == "sleep" { print $1 }')"
+  [ -n "$agent_pane" ]
+
+  run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$agent_pane"
   assert_success
 
-  assert_pane_option "$PANE" state_main running
-  assert_pane_option "$PANE" state running
-  assert_pane_option "$PANE" agent Claude
+  assert_pane_option "$agent_pane" state_main running
+  assert_pane_option "$agent_pane" state running
+  assert_pane_option "$agent_pane" agent Claude
   # The snapshot is what a later sweep compares against to notice the agent is
   # gone, so it has to be the pane's own command and path, not the caller's.
-  assert_pane_option "$PANE" cmd "$(test_tmux display-message -p -t "$PANE" '#{pane_current_command}')"
-  assert_pane_option "$PANE" cwd "$(test_tmux display-message -p -t "$PANE" '#{pane_current_path}')"
+  assert_pane_option "$agent_pane" cmd sleep
+  assert_pane_option "$agent_pane" cwd "$agent_cwd"
 }
 
 @test "with no --pane the state lands on the pane the hook is running in" {
@@ -182,10 +193,13 @@ teardown() {
   # tmux tells an unset option from one set to the empty string, and so does
   # everything that reads them: a cleared pane must be indistinguishable from a
   # pane that never ran an agent.
-  local option
-  for option in state_main subagents state cmd agent cwd; do
-    assert_pane_option_unset "$PANE" "$option"
-  done
+  #
+  # Asked of the pane rather than of a list of names, so an option this plugin
+  # learns to write but forgets to clear fails here without anybody remembering
+  # to add it.
+  local remaining
+  remaining="$(test_tmux show -p -t "$PANE" | grep -c '^@tama_' || true)"
+  assert_equal "$remaining" 0
 }
 
 @test "clearing a pane that never ran an agent is a silent no-op" {
@@ -224,8 +238,6 @@ teardown() {
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
 
-  # It still looked — it has to, to find out — and then wrote nothing.
-  assert_tmux_command 'display-message'
   refute_tmux_command 'set'
   refute_tmux_command 'refresh-client'
 }
@@ -264,19 +276,71 @@ teardown() {
   # not enough to catch that; only running the paths that write is.
   tama_use_bash_32_or_skip
 
-  run "$PLUGIN_ROOT/bin/tama" state subagent-start sub-1 --pane "$PANE"
+  # Including on stderr: a 3.2-only diagnostic on every hook call is a broken
+  # plugin even when the options come out right.
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" state subagent-start sub-1 --pane "$PANE"
   assert_success
-  run "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
+  [ -z "$stderr" ]
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
   assert_success
+  [ -z "$stderr" ]
   assert_pane_option "$PANE" state background
 
   # Including the no-op paths, where nothing is staged at all.
-  run "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
+  assert_success
+  [ -z "$stderr" ]
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" state clear --pane "$PANE"
+  assert_success
+  [ -z "$stderr" ]
+  assert_pane_option_unset "$PANE" state
+}
+
+@test "a change nothing can see writes, but refreshes no client" {
+  # Waking every client redraws every status line, which re-runs the icon command
+  # once per window on the server. A new agent name on an unchanged state is worth
+  # storing and not worth that.
+  run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
 
-  run "$PLUGIN_ROOT/bin/tama" state clear --pane "$PANE"
+  tama_log_tmux_calls
+  run "$PLUGIN_ROOT/bin/tama" state running Codex --pane "$PANE"
   assert_success
-  assert_pane_option_unset "$PANE" state
+
+  assert_tmux_command 'set'
+  refute_tmux_command 'refresh-client'
+  assert_pane_option "$PANE" agent Codex
+}
+
+@test "concurrent subagent starts keep both ids" {
+  # tmux has no atomic read-modify-write, so this is the case the optimistic loop
+  # exists for. Losing a start is the failure that matters: a pane with a live
+  # subagent would look finished.
+  "$PLUGIN_ROOT/bin/tama" state subagent-start sub-a --pane "$PANE" &
+  "$PLUGIN_ROOT/bin/tama" state subagent-start sub-b --pane "$PANE" &
+  wait
+
+  local list
+  list="$(test_tmux show -p -t "$PANE" -v @tama_pane_subagents)"
+  assert_contains "$list" sub-a 'the subagent list'
+  assert_contains "$list" sub-b 'the subagent list'
+}
+
+@test "a value that tmux would read as a command separator survives intact" {
+  # tmux takes an argument ending in `;` as the end of a command, and would both
+  # store the name without it and abandon the rest of the batch.
+  run "$PLUGIN_ROOT/bin/tama" state running 'Claude;' --pane "$PANE"
+  assert_success
+
+  assert_pane_option "$PANE" agent 'Claude;'
+  assert_pane_option "$PANE" cwd "$(test_tmux display-message -p -t "$PANE" '#{pane_current_path}')"
+
+  # And the pane still recognises itself, so the hot path stays short-circuited.
+  tama_log_tmux_calls
+  run "$PLUGIN_ROOT/bin/tama" state running 'Claude;' --pane "$PANE"
+  assert_success
+  refute_tmux_command 'set'
 }
 
 @test "state rejects invocations a hook author has to fix" {
@@ -302,4 +366,10 @@ teardown() {
   # silently become several.
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" state subagent-start 'two ids'
   assert_usage_error 'whitespace'
+
+  # A newline would end the record the whole pane is read as, so everything after
+  # it would come back empty on every later read.
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" state running "$(printf 'Cla\nude')" --pane "$PANE"
+  assert_usage_error 'newline'
+  assert_pane_option_unset "$PANE" state
 }

@@ -68,13 +68,17 @@ main() {
   # somebody spent an afternoon on. `#{E:@tama_icons}` expands this option's own
   # format, which runs the command once for the window being drawn.
   #
-  # This is the interpolation the comment above is about: the path is quoted for
-  # the shell that will run the job, and the result is then escaped for the
-  # format that produces it.
-  local icon_command
-  icon_command="$(tama_shell_quote "$TAMA_PLUGIN_DIR/bin/tama")"
-  icon_command="$(tama_format_escape "$icon_command")"
-  tmux_run set -g @tama_icons "#($icon_command icons #{window_id})"
+  # The path is *referenced*, never interpolated, and that is what makes it
+  # correct for every path a clone can live at. tmux finds the `)` that ends a
+  # `#()` job before it expands anything inside, so a directory whose name
+  # contains a parenthesis — `~/Dropbox (Personal)`, say — would truncate the
+  # command and spill the rest of the path into every window's name. There is no
+  # escape for `)` in a job; not putting it there is the only fix. `#{q:}` then
+  # quotes the value for the shell that runs the job, which it has done with the
+  # same byte-for-byte escape list since well before the tmux this plugin
+  # requires, and the value of an option is not expanded again, so a `#` or a `%`
+  # in the path is inert.
+  tmux_run set -g @tama_icons '#(#{q:@tama_bin} icons #{window_id})'
 
   # A failed write is not worth failing a config reload over.
   return 0

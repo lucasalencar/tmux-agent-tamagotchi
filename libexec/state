@@ -25,9 +25,10 @@ set -o nounset
 # shellcheck source=../lib/common.sh
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
-# The optimistic retry loop below, in numbers. Constants rather than options for
-# now: nothing has asked to tune them, and the failure they guard is benign.
-TAMA_SUBAGENT_RETRIES=5
+# The optimistic loop below, in numbers: attempts in total, not retries after the
+# first. Constants rather than options for now — nothing has asked to tune them,
+# and the failure they guard is benign.
+TAMA_SUBAGENT_ATTEMPTS=5
 TAMA_SUBAGENT_RETRY_DELAY=0.05
 
 # Records a state, plus the snapshot that a later sweep needs to notice the agent
@@ -35,24 +36,31 @@ TAMA_SUBAGENT_RETRY_DELAY=0.05
 # `running` state is reported on every tool call, which makes this the one
 # genuinely hot write path in the plugin. Skipping the write skips the client
 # refresh with it, which is the expensive half.
-report() { # <pane> <state_main> <agent_name>
-  tama_pane_read "$1" || exit 0
-  tama_pane_derive "$2" "$TAMA_PANE_SUBAGENTS"
+report() {
+  local pane="$1" main="$2" name="$3" refresh='no'
+  tama_pane_read "$pane" || exit 0
+  tama_pane_derive "$main" "$TAMA_PANE_SUBAGENTS"
+
+  # Only a different icon is worth redrawing every client for. A pane whose
+  # command or path merely moved is a cheap write and nothing a user can see.
+  [ "$TAMA_PANE_DERIVED" = "$TAMA_PANE_STATE" ] || refresh='yes'
 
   tama_batch_reset
-  tama_pane_stage "$TAMA_PANE_ID" state_main "$2" "$TAMA_PANE_STATE_MAIN"
+  tama_pane_stage "$TAMA_PANE_ID" state_main "$main" "$TAMA_PANE_STATE_MAIN"
   tama_pane_stage "$TAMA_PANE_ID" state "$TAMA_PANE_DERIVED" "$TAMA_PANE_STATE"
   tama_pane_stage "$TAMA_PANE_ID" cmd "$TAMA_PANE_CURRENT_CMD" "$TAMA_PANE_CMD"
-  tama_pane_stage "$TAMA_PANE_ID" agent "${3:-$TAMA_PANE_AGENT}" "$TAMA_PANE_AGENT"
+  tama_pane_stage "$TAMA_PANE_ID" agent "${name:-$TAMA_PANE_AGENT}" "$TAMA_PANE_AGENT"
   tama_pane_stage "$TAMA_PANE_ID" cwd "$TAMA_PANE_CURRENT_PATH" "$TAMA_PANE_CWD"
-  tama_batch_flush || true
+  tama_batch_flush "$refresh" || true
 }
 
 # Removes every trace of the agent from the pane. Unsetting rather than emptying
 # is the whole point: a cleared pane must be indistinguishable from a pane that
 # never ran an agent, and it is also what heals a subagent id that leaked.
-clear_pane() { # <pane>
-  tama_pane_read "$1" || exit 0
+clear_pane() {
+  local pane="$1" refresh='no'
+  tama_pane_read "$pane" || exit 0
+  [ -z "$TAMA_PANE_STATE" ] || refresh='yes'
 
   tama_batch_reset
   tama_pane_stage "$TAMA_PANE_ID" state_main '' "$TAMA_PANE_STATE_MAIN"
@@ -61,54 +69,75 @@ clear_pane() { # <pane>
   tama_pane_stage "$TAMA_PANE_ID" cmd '' "$TAMA_PANE_CMD"
   tama_pane_stage "$TAMA_PANE_ID" agent '' "$TAMA_PANE_AGENT"
   tama_pane_stage "$TAMA_PANE_ID" cwd '' "$TAMA_PANE_CWD"
-  tama_batch_flush || true
+  tama_batch_flush "$refresh" || true
 }
 
 # Adds or removes a subagent id, and recomputes the display state with it, since
 # whether any subagent is live is what tells `background` from `idle`.
 #
 # tmux has no atomic read-modify-write, so the list is maintained optimistically:
-# read, modify, write, read back, and try again from a fresh read if somebody
-# else got in between. The recomputation is inside the loop deliberately — a
-# retry that recomputed from the list it lost the race with would store a display
-# state that contradicts the list next to it.
+# read, modify, write, read back, and try again from a fresh read if the list no
+# longer says what this call needed it to say. The recomputation is inside the
+# loop deliberately — a retry that recomputed from the list it lost the race with
+# would store a display state that contradicts the list next to it.
 #
-# Under a burst of concurrent starts and stops an id can still be lost or left
-# behind, and that is accepted rather than locked. The failure is benign and
-# self-healing: a leaked id only makes the pane look busier than it is
-# (`background` where `idle` was due), and the next `state clear` — or a later
-# sweep — removes it. A lock in a shell script invoked on every subagent event
-# would cost more than the symptom it prevents.
-subagent() { # <pane> <subagent-start|subagent-stop> <id>
-  local attempt=1 wanted
+# What "worked" means is the caller's own id, not the list: a start is done when
+# its id is there and a stop when its id is gone. Comparing the whole list instead
+# would read somebody else's concurrent start as a lost race, and rewriting the
+# list read before it would then drop *their* id.
+#
+# Under a burst this is still racy in two directions, and that is accepted rather
+# than locked. A leaked id makes the pane look busier than it is (`background`
+# where `idle` was due) and is healed by the next `state clear` or sweep; a
+# retried start can also resurrect an id a concurrent stop had just removed, which
+# lands in the same benign direction. The reverse — losing a start, so a pane with
+# a live subagent looks finished — is the one worth spending attempts against,
+# which is what the retries are for. A lock in a shell script invoked on every
+# subagent event would cost more than any of it.
+subagent() {
+  local pane="$1" verb="$2" id="$3" attempt=1 wanted refresh
   while :; do
-    tama_pane_read "$1" || exit 0
-    case "$2" in
-      subagent-start) tama_subagents_add "$TAMA_PANE_SUBAGENTS" "$3" ;;
-      subagent-stop) tama_subagents_remove "$TAMA_PANE_SUBAGENTS" "$3" ;;
+    tama_pane_read "$pane" || exit 0
+    case "$verb" in
+      subagent-start) tama_subagents_add "$TAMA_PANE_SUBAGENTS" "$id" ;;
+      subagent-stop) tama_subagents_remove "$TAMA_PANE_SUBAGENTS" "$id" ;;
     esac
     wanted="$TAMA_SUBAGENTS_NEW"
     tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$wanted"
+
+    refresh='no'
+    [ "$TAMA_PANE_DERIVED" = "$TAMA_PANE_STATE" ] || refresh='yes'
 
     tama_batch_reset
     tama_pane_stage "$TAMA_PANE_ID" subagents "$wanted" "$TAMA_PANE_SUBAGENTS"
     tama_pane_stage "$TAMA_PANE_ID" state "$TAMA_PANE_DERIVED" "$TAMA_PANE_STATE"
     # Nothing to write: a duplicate start, or a stop for an id that is not there.
-    tama_batch_flush || return 0
+    tama_batch_flush "$refresh" || return 0
 
-    # Did the write survive? A concurrent start or stop that had read the same
-    # list would have overwritten it with a list missing this id.
-    tama_pane_read "$1" || return 0
-    [ "$TAMA_PANE_SUBAGENTS" = "$wanted" ] && return 0
+    tama_pane_read "$pane" || return 0
+    if tama_subagents_contains "$TAMA_PANE_SUBAGENTS" "$id"; then
+      [ "$verb" = 'subagent-start' ] && return 0
+    else
+      [ "$verb" = 'subagent-stop' ] && return 0
+    fi
 
     attempt=$((attempt + 1))
-    [ "$attempt" -le "$TAMA_SUBAGENT_RETRIES" ] || return 0
+    [ "$attempt" -le "$TAMA_SUBAGENT_ATTEMPTS" ] || return 0
     sleep "$TAMA_SUBAGENT_RETRY_DELAY"
   done
 }
 
+# A value the plugin will store in a tmux option and read back. A newline would
+# end the record the whole state of a pane is read as, so the value would come
+# back truncated and the pane would then differ from itself for ever.
+check_value() { # <what> <value>
+  case "$2" in
+    *[$'\n\r']*) die_usage "$1 cannot contain a newline: $2" ;;
+  esac
+}
+
 main() {
-  local pane='' verb='' argument='' positional=0
+  local pane='' state='' argument='' positional=0
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -117,16 +146,11 @@ main() {
         pane="$2"
         shift 2
         ;;
-      --pane=*)
-        pane="${1#--pane=}"
-        [ -n "$pane" ] || die_usage '--pane needs a pane id'
-        shift
-        ;;
       -*) die_usage "unknown option: $1" ;;
       *)
         positional=$((positional + 1))
         case "$positional" in
-          1) verb="$1" ;;
+          1) state="$1" ;;
           2) argument="$1" ;;
           *) die_usage "state takes at most two arguments, got: $1" ;;
         esac
@@ -143,23 +167,31 @@ main() {
   pane="${pane:-${TMUX_PANE:-}}"
   [ -n "$pane" ] || exit 0
 
-  case "$verb" in
+  case "$state" in
     running | waiting | idle | error)
-      report "$pane" "$verb" "$argument"
+      # The name is stored and later expanded into a notification title, so it
+      # must survive the round trip through a tmux option intact.
+      check_value "an agent name" "$argument"
+      report "$pane" "$state" "$argument"
       ;;
     clear)
       clear_pane "$pane"
       ;;
     subagent-start | subagent-stop)
       # The id is what the plugin is being asked to track; without one there is
-      # nothing to do but say so. It travels in a space-separated list, so a
-      # whitespace id would silently become several.
-      [ -n "$argument" ] || die_usage "$verb needs a subagent id"
+      # nothing to do but say so.
+      [ -n "$argument" ] || die_usage "$state needs a subagent id"
+      check_value "a subagent id" "$argument"
+      # It travels in a space-separated list, so a whitespace id would silently
+      # become several.
       case "$argument" in
         *[[:space:]]*) die_usage "a subagent id cannot contain whitespace: $argument" ;;
       esac
-      subagent "$pane" "$verb" "$argument"
+      subagent "$pane" "$state" "$argument"
       ;;
+    # Not a state this version knows. Quiet on purpose: agents grow event types,
+    # and a hook written for a newer plugin has to stay silent on an older one
+    # rather than fail the turn it is reporting on.
     *) exit 0 ;;
   esac
 }
