@@ -97,6 +97,72 @@ main() {
     *) tmux_run set -g @tama_icons '#(#{q:@tama_bin} icons #{window_id})' ;;
   esac
 
+  # The flag, as a second format the user interpolates wherever they want it. Unlike
+  # the icons this is not a `#()` job and needs none: the answer is already in a
+  # window option, so tmux can draw it without running anything, once per window per
+  # redraw rather than once per status interval.
+  #
+  # `#{E:@tama_flag_text}` expands the text as a format in turn, so a user can put
+  # `#[fg=red]` in it. The option is referenced, never interpolated, for the same
+  # reason the icon path references `@tama_bin`.
+  tmux_run set -g @tama_flag '#{?@tama_window_flag,#{E:@tama_flag_text},}'
+
+  # The flag text has to exist as an option, because a format cannot carry a default:
+  # `#{E:@tama_flag_text}` on an option nobody set expands to nothing, and the flag
+  # would be raised and draw as empty. So it is seeded here — and only when it has
+  # never been set, which is what keeps `set -g @tama_flag_text ''` meaning "no text"
+  # rather than being handed the default back on the next reload. Same distinction
+  # lib/options.sh draws for every other option; this is the one that cannot be drawn
+  # at read time, since tmux is doing the reading.
+  if ! tmux_run show -gv @tama_flag_text >/dev/null 2>&1; then
+    tmux_run set -g @tama_flag_text ' *'
+  fi
+
+  wire_hooks
+  return 0
+}
+
+# The one hook the flag needs: the user selecting a window is what clears its mark,
+# and nothing else does. Appended, never assigned, so a user's own
+# `after-select-window` lines keep working — and skipped when it is already there,
+# because this file runs again on every `tmux source-file` and `set-hook -ga` would
+# otherwise stack another copy on each reload.
+#
+# The recipe names the plugin through `@tama_bin` instead of carrying its path, which
+# `run-shell` expands when the hook fires. That is what makes the string a constant:
+# the check below can compare it exactly, a user who moves their clone does not need
+# to rewire anything, and there is no stale absolute path left in a hook pointing at
+# a directory that has gone.
+#
+# `#{window_id}` is expanded the same way, against the window the hook fired for, and
+# it has to be: tmux sets $TMUX_PANE in a hook's `run-shell` to a pane that does not
+# exist, so a command left to find its own target from the environment would quietly
+# clear nothing. Interpolated bare, because a window id is `@` and digits — there is
+# nothing in it for a shell to act on.
+#
+# `@tama_manage_hooks off` leaves tmux's hooks alone entirely, for users who keep
+# their configuration under their own control and would rather call `tama on-select`
+# from a hook they wrote themselves.
+TAMA_ON_SELECT_RECIPE='run-shell -b '"'"'#{q:@tama_bin} on-select --window #{window_id}'"'"''
+
+wire_hooks() {
+  # The option name carries its own `tama_`: tama_opt prepends the `@` and nothing
+  # else, so a name without the prefix reads an option nobody sets and silently
+  # lands on the default — which for this one would mean wiring hooks the user
+  # asked it not to touch.
+  [ "$(tama_opt tama_manage_hooks on)" = 'on' ] || return 0
+
+  # tmux prints a hook array back requoted — single quotes come out double — so this
+  # matches the part of the recipe that no requoting touches rather than the whole
+  # line. Matching the command and the option name together is specific enough that
+  # no other hook could collide with it.
+  if tmux_run show-options -g after-select-window 2>/dev/null |
+    grep -qF -- '#{q:@tama_bin} on-select'; then
+    return 0
+  fi
+
+  tmux_run set-hook -ga after-select-window "$TAMA_ON_SELECT_RECIPE" >/dev/null 2>&1 ||
+    true
   # A failed write is not worth failing a config reload over.
   return 0
 }

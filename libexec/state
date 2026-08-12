@@ -19,10 +19,10 @@
 # about: agents grow event types, and a hook wired to a newer plugin must stay
 # quiet on an older one.
 #
-# Note for whoever adds the window flag: nothing here writes when nothing changed,
-# so anything that must happen on the *event* rather than on the change — raising a
-# flag for a question the user has already dismissed once — cannot live behind that
-# short-circuit.
+# `waiting` and `error` also raise the window's attention flag, when the user is not
+# already looking at that window. That happens on the *event* and not on the change:
+# nothing here writes when nothing changed, and a question the user has already
+# walked away from once must be able to raise the flag again. See report().
 
 set -o nounset
 
@@ -70,6 +70,18 @@ report() {
   # is the last command of the script, so without this the hot path — a repeated
   # `state running` — would exit non-zero out of an agent's hook.
   tama_batch_flush "$refresh" || true
+
+  # Deliberately after the flush and outside it: the flag answers to the *event*, not
+  # to the write. An agent already in `waiting` that asks again — the user glanced at
+  # the window, went back to another one, and the question is still open — stages
+  # nothing above, and would raise no flag if this hung off the write.
+  #
+  # Only the two states that mean the agent has stopped and needs the user. `running`
+  # and `idle` are not an interruption, and it is the hot path besides: this costs a
+  # round trip, which is exactly why it is not on it.
+  case "$state_main" in
+    waiting | error) tama_flag_raise "$TAMA_PANE_ID" ;;
+  esac
 }
 
 # Removes every trace of the agent from the pane. Unsetting rather than emptying
@@ -100,10 +112,9 @@ clear_pane() {
 # Adds or removes a subagent id, and recomputes the display state with it, since
 # whether any subagent is live is what tells `background` from `idle`.
 #
-# Note for whoever adds the window flag: `report` writes nothing when nothing
-# changed, so anything that must happen on the *event* rather than on the change —
-# raising a flag for a question the user has already dismissed once — cannot live
-# behind that short-circuit.
+# No flag is raised here. A subagent starting or stopping is the agent talking about
+# its own bookkeeping, not asking the user for anything; only `waiting` and `error`
+# interrupt somebody.
 #
 # tmux has no atomic read-modify-write, so the list is maintained optimistically:
 # read, modify, write, read back, and try again from a fresh read if the list no

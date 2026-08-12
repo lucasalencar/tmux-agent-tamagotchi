@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#
+# unflag — take the attention mark off a window.
+#
+#   tama unflag [--pane <pane_id>] [<window_target>]
+#
+# Unconditional, unlike `flag`: whoever calls this is saying the mark has been seen,
+# and there is nothing to weigh. `tama on-select` is the caller that matters — the
+# user selecting the window is the only thing that clears a flag in normal use.
+#
+# Nothing an agent does clears it. That asymmetry is the feature: the flag records
+# that something happened while nobody was looking, so an agent moving on from
+# `waiting` to `running` leaves it exactly where it was.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local target='' pane='' positional=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --pane)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--pane needs a pane id'
+        fi
+        pane="$2"
+        shift 2
+        ;;
+      -*) die_usage "unknown option: $1" ;;
+      *)
+        positional=$((positional + 1))
+        [ "$positional" -eq 1 ] || die_usage "unflag takes at most one target, got: $1"
+        [ -n "$1" ] || die_usage 'unflag needs a window target'
+        target="$1"
+        shift
+        ;;
+    esac
+  done
+
+  target="${target:-${pane:-${TMUX_PANE:-}}}"
+  [ -n "$target" ] || exit 0
+
+  tama_flag_clear "$target"
+}
+
+main "$@"

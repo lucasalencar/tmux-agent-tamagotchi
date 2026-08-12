@@ -28,12 +28,66 @@ teardown() {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
 
-  # Only its own options may differ: the plugin must not touch the status line,
-  # the hooks or the key bindings the user configured. Where the exported formats
-  # go in the status line is the user's decision, not the plugin's.
+  # Only its own options and its own hook may differ: the plugin must not touch the
+  # status line or the key bindings the user configured. Where the exported formats go
+  # in the status line is the user's decision, not the plugin's.
+  #
+  # The one hook is the exception the flag needs — clearing a mark when the user
+  # selects a window cannot be the user's manual step. It is normalised back to the
+  # bare hook name that `show-hooks -g` prints for an empty hook, rather than deleted:
+  # deleting the line would also hide a *second* entry appearing there, and the
+  # pattern names the plugin, so a hook wired to anything else still fails here.
   local after
-  after="$(tama_server_state | grep -v '^@tama_')"
+  after="$(tama_server_state | grep -v '^@tama_' |
+    sed 's|^after-select-window\[[0-9]*\] run-shell -b ".*@tama_bin.*on-select.*"$|after-select-window|')"
   assert_equal "$after" "$(printf '%s\n' "$before" | grep -v '^@tama_')"
+}
+
+@test "the plugin appends its hook and leaves the user's own alone" {
+  # tmux hooks are an array and `set-hook -ga` appends, which is the only safe way in:
+  # assigning would silently disable whatever the user had wired to the same event.
+  test_tmux set-hook -ga after-select-window "run-shell -b 'echo mine'"
+
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+
+  local hooks
+  hooks="$(test_tmux show-options -g after-select-window)"
+  assert_contains "$hooks" 'echo mine' "the user's hook"
+  assert_contains "$hooks" 'on-select' "the plugin's hook"
+}
+
+@test "the wired hook survives the plugin directory moving" {
+  # The recipe references @tama_bin rather than carrying a path, and run-shell expands
+  # it when the hook fires. So a user who moves their clone gets a working hook from
+  # the next load with nothing to rewire, and no hook is left pointing at a directory
+  # that has gone.
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+
+  local hooks
+  hooks="$(test_tmux show-options -g after-select-window)"
+  assert_contains "$hooks" '@tama_bin' 'the hook recipe'
+  case "$hooks" in
+    *"$PLUGIN_ROOT"*)
+      printf 'the hook hard-coded the plugin path: %s\n' "$hooks" >&2
+      return 1
+      ;;
+  esac
+}
+
+@test "hook management can be turned off" {
+  test_tmux set -g @tama_manage_hooks off
+
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+
+  # Off means tmux's hooks are left exactly as they were, while everything else the
+  # plugin exports still works — a user who manages their own configuration calls
+  # `tama on-select` from a hook they wrote.
+  assert_equal "$(test_tmux show-options -g after-select-window 2>/dev/null)" \
+    'after-select-window'
+  assert_plugin_wired "$PLUGIN_ROOT"
 }
 
 @test "loading the plugin exports the icon format for the user to interpolate" {

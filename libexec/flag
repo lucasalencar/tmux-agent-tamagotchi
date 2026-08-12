@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#
+# flag — mark a window as wanting the user's attention.
+#
+#   tama flag [--pane <pane_id>] [<window_target>]
+#
+# `state waiting` and `state error` raise the flag themselves, so a hook rarely
+# needs this; it is here for a user's own key binding and for the integrations that
+# report something the state model has no word for.
+#
+# Raising is conditional, and the condition is the point: a window the user is
+# already looking at is not flagged, because the flag means "this happened while
+# nobody was looking". The condition itself lives in lib/window.sh, shared with
+# notification suppression — there is exactly one implementation of it.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local target='' pane='' positional=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --pane)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--pane needs a pane id'
+        fi
+        pane="$2"
+        shift 2
+        ;;
+      -*) die_usage "unknown option: $1" ;;
+      *)
+        positional=$((positional + 1))
+        [ "$positional" -eq 1 ] || die_usage "flag takes at most one target, got: $1"
+        # An empty one is a binding that failed to interpolate its format, not a
+        # request for whichever window tmux would pick.
+        [ -n "$1" ] || die_usage 'flag needs a window target'
+        target="$1"
+        shift
+        ;;
+    esac
+  done
+
+  # A window given outright wins over the pane the hook happens to run in, which is
+  # what makes this usable from a key binding; `--pane` then overrides $TMUX_PANE the
+  # way it does on `state`. Having none of the three is one of the quiet no-ops:
+  # there is no window to mark, and an agent's turn must not fail over it.
+  target="${target:-${pane:-${TMUX_PANE:-}}}"
+  [ -n "$target" ] || exit 0
+
+  tama_flag_raise "$target"
+}
+
+main "$@"

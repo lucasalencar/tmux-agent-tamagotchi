@@ -75,3 +75,33 @@ boot_demo() {
   # id the format hands it.
   assert_equal "$(tama_render_icons "$(test_tmux display-message -p -t "$pane" '#{window_id}')")" ' ●'
 }
+
+@test "an agent that needs the user marks the window in the demo status line" {
+  boot_demo "$PLUGIN_ROOT"
+  assert_success
+  tama_point_at_server
+
+  local pane plain
+  pane="$(test_tmux list-panes -t demo -F '#{pane_id}' | head -1)"
+  # The window status line without anything of the plugin's in it, tmux's own zoom and
+  # bell markers included — the same baseline the no-agent test above compares against.
+  plain="$(test_tmux display-message -p -t "$pane" '#I:#W#{?window_flags,#{window_flags},}')"
+
+  run "$PLUGIN_ROOT/bin/tama" state waiting Claude --pane "$pane"
+  assert_success
+
+  # Nobody is attached to this server, so nobody is looking at the window: the mark
+  # belongs there. Read off the status line the demo config sets rather than off the
+  # option, because the format doing the drawing is half of what this asserts. The
+  # flag needs no job to expand, unlike the icons, so display-message does see it.
+  local rendered
+  rendered="$(test_tmux display-message -p -t "$pane" '#{E:window-status-format}')"
+  assert_equal "$rendered" "$plain *"
+
+  # And the user arriving clears it, which is the only thing that does.
+  run "$PLUGIN_ROOT/bin/tama" on-select --window \
+    "$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  assert_success
+  rendered="$(test_tmux display-message -p -t "$pane" '#{E:window-status-format}')"
+  assert_equal "$rendered" "$plain"
+}

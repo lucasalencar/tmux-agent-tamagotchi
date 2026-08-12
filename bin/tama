@@ -83,6 +83,14 @@ Subcommands:
                         working in the background rather than as finished.
   icons <window_id>     Print one glyph per agent pane of that window, in pane
                         order. This is what @tama_icons runs for you.
+  flag [target]         Mark a window as wanting your attention, unless you are
+                        already looking at it. Reported states do this for you:
+                        waiting and error both raise it.
+  unflag [target]       Take the mark off. Nothing an agent does clears a flag —
+                        it records that something happened while you were away,
+                        so only you clear it, by selecting the window.
+  on-select             What the after-select-window hook runs: you arrived at a
+                        window, so its flag goes.
   version               Print the plugin version.
   --help, -h, help      Print this message.
 
@@ -91,8 +99,11 @@ rewrites it for you. Set both formats, or the window you are looking at is the
 one without icons; keep tmux's own window_flags to keep its zoom and bell
 markers, but without the space it pads with, since the icons bring their own:
 
-  set -g window-status-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}'
-  set -g window-status-current-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}'
+  set -g window-status-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
+  set -g window-status-current-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
+
+@tama_flag draws @tama_flag_text — " *" unless you set it — on the windows that
+want you. Set it to something with #[fg=red] in it if you would rather see colour.
 
 Common options:
   --pane <pane_id>      Act on this pane instead of \$TMUX_PANE (on the

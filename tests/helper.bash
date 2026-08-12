@@ -174,6 +174,90 @@ tama_render_icons() {
   sh -c "$command"
 }
 
+# Attaches a real client to <session>, without a terminal.
+#
+# The flag's whole condition is whether the user is looking, and half of that is
+# whether anybody is attached at all — so a suite that never attaches a client can
+# only ever test the "nobody is there" half, and would pass an implementation that
+# flagged the window the user is staring at.
+#
+# Control mode (`-C`) is what makes it possible: it speaks a line protocol over
+# ordinary pipes, so it needs no pty and behaves the same on both CI platforms. The
+# fifo, and the writer held open on it, are there because a client whose stdin
+# reaches EOF detaches again immediately.
+tama_attach_client() {
+  local session="$1"
+  local fifo="$BATS_TEST_TMPDIR/attach-$session.fifo"
+  mkfifo "$fifo"
+  # Outlives the test; both this and the client are killed in teardown.
+  sleep 300 >"$fifo" &
+  TAMA_FIFO_HOLDER_PID=$!
+  tmux -L "$TAMA_SOCKET" -C attach -t "$session" <"$fifo" >/dev/null 2>&1 &
+  TAMA_CLIENT_PID=$!
+
+  # The client is up when tmux says the session has one. Polled rather than slept
+  # on: a fixed sleep is either slower than it needs to be or flaky on a loaded CI
+  # runner, and this is the fact the test actually depends on.
+  local waited=0
+  while [ "$(test_tmux display-message -p -t "$session" '#{session_attached}')" = '0' ]; do
+    waited=$((waited + 1))
+    if [ "$waited" -gt 200 ]; then
+      printf 'no client attached to %s after 10s\n' "$session" >&2
+      return 1
+    fi
+    sleep 0.05
+  done
+}
+
+tama_detach_client() {
+  [ -z "${TAMA_CLIENT_PID:-}" ] || kill "$TAMA_CLIENT_PID" 2>/dev/null || true
+  [ -z "${TAMA_FIFO_HOLDER_PID:-}" ] || kill "$TAMA_FIFO_HOLDER_PID" 2>/dev/null || true
+  TAMA_CLIENT_PID=''
+  TAMA_FIFO_HOLDER_PID=''
+}
+
+# The window's attention flag, asked the way the status line asks: through the
+# exported format rather than by reading the option, so a test cannot pass while the
+# thing the user would see stays empty.
+assert_flagged() {
+  local rendered
+  rendered="$(test_tmux display-message -p -t "$1" '#{E:@tama_flag}')"
+  if [ -z "$rendered" ]; then
+    printf 'expected window %s to be flagged, but @tama_flag rendered empty\n' "$1" >&2
+    return 1
+  fi
+}
+
+assert_not_flagged() {
+  local rendered
+  rendered="$(test_tmux display-message -p -t "$1" '#{E:@tama_flag}')"
+  if [ -n "$rendered" ]; then
+    printf 'expected window %s not to be flagged, got: %s\n' "$1" "$rendered" >&2
+    return 1
+  fi
+}
+
+# The flag as tmux stores it, for the claims that are about the option itself:
+# clearing must *unset* it, not write an empty string.
+assert_window_option_unset() {
+  local value
+  if value="$(test_tmux show -w -t "$1" -v "@tama_$2")"; then
+    printf 'expected @tama_%s to be unset on %s, got: %s\n' "$2" "$1" "$value" >&2
+    return 1
+  fi
+}
+
+# The window id of a window named by session:index — the identity everything in the
+# plugin uses, resolved once so a test never passes an index to the CLI.
+tama_window_id() {
+  test_tmux display-message -p -t "$1" '#{window_id}'
+}
+
+# The active pane of a window named by session:index.
+tama_pane_of() {
+  test_tmux display-message -p -t "$1" '#{pane_id}'
+}
+
 # A pane option as tmux stores it. Without -q so that an option which was never
 # set fails instead of reading as empty — the difference between a cleared pane
 # and an agent pane.

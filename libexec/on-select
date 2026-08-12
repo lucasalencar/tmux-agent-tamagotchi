@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+#
+# on-select — the user just looked at a window.
+#
+#   tama on-select [--window <window_id>] [--pane <pane_id>]
+#
+# Wired to tmux's `after-select-window` hook by the entrypoint, which is what makes
+# clearing a flag free of any manual step: the user selects the window, the mark
+# goes. It is the only thing that clears one.
+#
+# The hook passes `--window` because $TMUX_PANE cannot be trusted here. tmux sets it,
+# in a hook's `run-shell`, to a pane id that does not exist — `%101` on the tmux this
+# was written against — so a command that resolved its target from the environment
+# silently did nothing at all, on the one path the whole feature depends on. What is
+# reliable is tmux's own format expansion: `run-shell` expands `#{window_id}` against
+# the window the hook fired for, before the shell ever runs. So the recipe interpolates
+# the answer rather than making this command go looking for it.
+#
+# The $TMUX_PANE fallback stays for a user calling this from a key binding, where the
+# variable does name a real pane.
+#
+# In v0.1 this only unflags. It is the seam for everything else that becomes true
+# when the user arrives at a window — dismissing that window's pending notification,
+# sweeping the state of panes whose agent is gone — so those land here rather than
+# growing another hook.
+#
+# Never fails: this runs from a tmux hook, where a non-zero exit is noise in the
+# server log and nothing a user can act on.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local window='' pane=''
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --window)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--window needs a window id'
+        fi
+        window="$2"
+        shift 2
+        ;;
+      --pane)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--pane needs a pane id'
+        fi
+        pane="$2"
+        shift 2
+        ;;
+      -*) die_usage "unknown option: $1" ;;
+      *) die_usage "on-select takes no arguments, got: $1" ;;
+    esac
+  done
+
+  # The window the hook named, else the pane it was asked about, else the pane a key
+  # binding is running in. Having none of them is a quiet no-op.
+  local target="${window:-${pane:-${TMUX_PANE:-}}}"
+  [ -n "$target" ] || exit 0
+
+  tama_flag_clear "$target"
+}
+
+main "$@"
