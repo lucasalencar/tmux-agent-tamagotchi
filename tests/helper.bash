@@ -14,14 +14,14 @@ export PLUGIN_ROOT
 
 # Names a socket for this test without booting anything on it.
 tama_reserve_socket() {
-  TAMA_SOCKET="${1:-tamatest}-$$-${BATS_TEST_NUMBER:-0}"
+  TAMA_SOCKET="$1-$$-${BATS_TEST_NUMBER:-0}"
   export TAMA_SOCKET
 }
 
 # Boots an isolated tmux server with an empty config and exports the
 # indirection every script uses to reach it.
 tama_start_server() {
-  tama_reserve_socket
+  tama_reserve_socket tamatest
   # Exported before the server boots, so jobs the server itself spawns — status
   # line `#()` formats, hooks — inherit it and cannot reach the user's tmux.
   export TAMA_TMUX=tmux
@@ -156,9 +156,9 @@ tama_server_state() {
   test_tmux list-keys
 }
 
-# Both discovery options point at the given clone (this one by default).
+# Both discovery options point at the given clone.
 assert_plugin_wired() {
-  local root="${1:-$PLUGIN_ROOT}"
+  local root="$1"
   assert_equal "$(test_tmux show -gqv @tama_bin)" "$root/bin/tama" || return 1
   assert_equal "$(test_tmux show -gqv @tama_bin_dir)" "$root/bin"
 }
@@ -175,7 +175,7 @@ assert_version_supported() {
   tama_use_fake_tmux "$1"
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success || return 1
-  assert_plugin_wired
+  assert_plugin_wired "$PLUGIN_ROOT"
 }
 
 assert_version_rejected() {

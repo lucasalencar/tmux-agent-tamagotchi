@@ -258,7 +258,7 @@ extract_hook_recipe() {
   assert_success
   run /bin/bash "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
-  assert_plugin_wired
+  assert_plugin_wired "$PLUGIN_ROOT"
 }
 
 @test "the dispatcher works when reached through a symlink to itself" {

@@ -131,8 +131,9 @@ main() {
   # -x alone is true for a directory, and dispatching to one exits 126 with a
   # bash diagnostic instead of the usage error the contract promises.
   local command_file="$TAMA_PLUGIN_DIR/libexec/$subcommand"
-  [ -f "$command_file" ] && [ -x "$command_file" ] ||
+  if [ ! -f "$command_file" ] || [ ! -x "$command_file" ]; then
     die_usage "unknown subcommand: $subcommand"
+  fi
 
   # From here on the command acts on tmux, so an absent server is a no-op.
   require_tmux

@@ -18,7 +18,7 @@ teardown() {
   [ -z "$output" ]
   [ -z "$stderr" ]
 
-  assert_plugin_wired
+  assert_plugin_wired "$PLUGIN_ROOT"
 }
 
 @test "loading the plugin changes nothing else about the server" {
@@ -76,7 +76,7 @@ teardown() {
   run "$link/tamagotchi.tmux"
   assert_success
 
-  assert_plugin_wired
+  assert_plugin_wired "$PLUGIN_ROOT"
   local bin
   bin="$(test_tmux show -gqv @tama_bin)"
   [ -x "$bin" ]
@@ -165,7 +165,7 @@ teardown() {
   run --separate-stderr "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
   [ -z "$stderr" ]
-  assert_plugin_wired
+  assert_plugin_wired "$PLUGIN_ROOT"
   run grep -q 'display-message' "$TAMA_FAKE_TMUX_LOG"
   assert_status 1
 }
@@ -213,5 +213,5 @@ teardown() {
 
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
-  assert_plugin_wired
+  assert_plugin_wired "$PLUGIN_ROOT"
 }
