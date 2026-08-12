@@ -58,10 +58,22 @@ tama_point_at_server() {
   unset TMUX_PANE
 }
 
+# Kills this test's server and takes its socket with it. A server that exits
+# leaves its socket file behind, and a suite that boots one per test leaves as
+# many dead sockets in the tmux directory as it has ever run tests — which is
+# litter in a directory shared with every other tmux on the machine. Only ever
+# this test's own name, for the same reason.
 tama_kill_server() {
   if [ -n "${TAMA_SOCKET:-}" ]; then
     tmux -L "$TAMA_SOCKET" kill-server 2>/dev/null || true
+    rm -f "$(tama_socket_dir)/$TAMA_SOCKET"
   fi
+}
+
+# Where tmux keeps sockets named with -L. Its own rule: $TMUX_TMPDIR if set,
+# otherwise /tmp, plus a per-user directory.
+tama_socket_dir() {
+  printf '%s/tmux-%s' "${TMUX_TMPDIR:-/tmp}" "$(id -u)"
 }
 
 # Talks to the test server directly, for arranging fixtures and asserting.
