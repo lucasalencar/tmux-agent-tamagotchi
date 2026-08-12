@@ -29,6 +29,24 @@ tmux_run() {
   "$TAMA_TMUX" "$@"
 }
 
+# Interpolating a path into a tmux format takes two escapes, in this order,
+# because that is the order the two layers run in: tmux expands the format first,
+# then a shell parses what came out.
+
+# For the shell tmux runs a `#()` job with: single quotes, so a plugin directory
+# with a space in it stays one word.
+tama_shell_quote() {
+  local escaped="${1//\'/\'\\\'\'}"
+  printf "'%s'" "$escaped"
+}
+
+# For the format itself: `#` introduces a format and `%` a strftime conversion,
+# and both are consumed before the result reaches that shell.
+tama_format_escape() {
+  local escaped="${1//\#/\#\#}"
+  printf '%s' "${escaped//%/%%}"
+}
+
 # Usage error: loud, on stderr, exit 2. The hint carries an absolute path
 # because nothing is installed onto PATH — `tama` alone is not runnable.
 die_usage() {

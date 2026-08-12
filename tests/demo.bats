@@ -45,8 +45,30 @@ boot_demo() {
   # The demo interpolates the plugin's exported formats into the window status
   # line. With no agent pane they must expand to nothing at all — not even the
   # stray space that padding would leave.
+  #
+  # display-message does not run format jobs, so this sees the status line with
+  # the icon command *not* run, which is exactly the case that has to leave no
+  # trace either. What the command itself contributes is the test below.
   local rendered plain
   rendered="$(test_tmux display-message -p '#{E:window-status-format}')"
   plain="$(test_tmux display-message -p '#I:#W#{?window_flags,#{window_flags}, }')"
   assert_equal "$rendered" "$plain"
+
+  tama_point_at_server
+  assert_equal "$(tama_render_icons demo)" ''
+}
+
+@test "an agent reporting a state moves the icons in the demo status line" {
+  boot_demo "$PLUGIN_ROOT"
+  assert_success
+  tama_point_at_server
+
+  local pane
+  pane="$(test_tmux list-panes -t demo -F '#{pane_id}' | head -1)"
+  run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$pane"
+  assert_success
+
+  # The whole slice, through the config a user is told to copy: the state an
+  # agent reported, drawn by the command the demo's status line runs.
+  assert_equal "$(tama_render_icons demo)" ' ●'
 }

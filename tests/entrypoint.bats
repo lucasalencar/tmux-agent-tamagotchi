@@ -28,11 +28,23 @@ teardown() {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
 
-  # Only the two discovery options may differ: the plugin must not touch the
-  # status line, the hooks or the key bindings the user configured.
+  # Only its own options may differ: the plugin must not touch the status line,
+  # the hooks or the key bindings the user configured. Where the exported formats
+  # go in the status line is the user's decision, not the plugin's.
   local after
-  after="$(tama_server_state | grep -v '^@tama_bin')"
-  assert_equal "$after" "$(printf '%s\n' "$before" | grep -v '^@tama_bin')"
+  after="$(tama_server_state | grep -v '^@tama_')"
+  assert_equal "$after" "$(printf '%s\n' "$before" | grep -v '^@tama_')"
+}
+
+@test "loading the plugin exports the icon format for the user to interpolate" {
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+
+  # A format the user puts where they want it, that runs the icon command for the
+  # window being drawn. Rendered rather than compared as a string, because what
+  # matters is that tmux and the shell agree on what it means.
+  test_tmux set -p @tama_pane_state running
+  assert_equal "$(tama_render_icons t)" ' ●'
 }
 
 @test "the exported options are reachable from a tmux format" {

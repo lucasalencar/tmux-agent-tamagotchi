@@ -136,6 +136,37 @@ assert_usage_error() {
   [ "$#" -eq 0 ] || assert_stderr_contains "$1"
 }
 
+# The icon string for a window, straight from the CLI.
+tama_icons() {
+  "$PLUGIN_ROOT/bin/tama" icons "$1"
+}
+
+# The icon string the way the status line produces it, which is the only claim
+# worth making about the exported format: tmux expands `@tama_icons` — turning
+# the escaped plugin path back into a path and substituting the window id — and
+# hands the result to a shell.
+#
+# It has to be assembled here because `display-message` does not run format jobs,
+# so no amount of expanding a status-line format from a test will run the icon
+# command. Attaching a real client would, but only after a status-interval tick.
+tama_render_icons() {
+  local job command
+  job="$(test_tmux show -gqv @tama_icons)"
+  case "$job" in
+    '#('*')') ;;
+    *)
+      printf 'expected @tama_icons to be a #() job, got: %s\n' "$job" >&2
+      return 1
+      ;;
+  esac
+  # What is left is the format tmux expands before running it.
+  job="${job#'#('}"
+  job="${job%')'}"
+  command="$(test_tmux display-message -p -t "$1" "$job")"
+  # /bin/sh, because that is what tmux runs a job with.
+  sh -c "$command"
+}
+
 # A pane option as tmux stores it. Without -q so that an option which was never
 # set fails instead of reading as empty — the difference between a cleared pane
 # and an agent pane.

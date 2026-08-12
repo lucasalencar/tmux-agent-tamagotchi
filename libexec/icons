@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#
+# icons — one glyph per agent pane of a window, in pane order.
+#
+#   tama icons <window_id>
+#
+# The hottest read path in the plugin: tmux runs this in a shell of its own, once
+# per window per status-interval, for every window on the server. So it makes
+# exactly one tmux call and forks nothing — which is also why it prints the
+# display state that `state` already derived and stored, instead of deriving
+# anything here.
+#
+# The window is named by `#{window_id}`, never by index: an index moves under
+# renumber-windows, and this command is invoked from a format that was expanded
+# some moments earlier.
+#
+# v0.1 ships the default glyph set only. Making the glyphs, the disabled states
+# and the spacing configurable is a separate change, and this is the file that
+# grows those option reads when it lands.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  [ "$#" -eq 1 ] || die_usage 'icons needs exactly one window id'
+
+  local states icons='' state
+  # One line per pane, in pane order, empty for every pane that is not an agent
+  # pane. A window that is gone — closed between the format expanding and this
+  # running — is not an error worth a word on stdout.
+  states="$(tmux_run list-panes -t "$1" -F '#{@tama_pane_state}' 2>/dev/null)" || exit 0
+
+  # Splitting on whitespace drops the empty lines with no test for them, and
+  # globbing is off because a state name is not a pattern.
+  set -f
+  # shellcheck disable=SC2086  # deliberate: one word per agent pane
+  set -- $states
+  set +f
+
+  for state in "$@"; do
+    case "$state" in
+      # The braces are not decoration: bash reads the bytes of a multibyte glyph
+      # as part of the name in `$icons●`, and dies under `nounset`.
+      running) icons="${icons}●" ;;
+      waiting) icons="${icons}◐" ;;
+      background) icons="${icons}⚙" ;;
+      idle) icons="${icons}○" ;;
+      error) icons="${icons}✕" ;;
+      # A state from a newer version of the plugin, or from somebody else's
+      # option of the same name: not ours to draw.
+    esac
+  done
+
+  # The prefix separates the icons from the window name, and exists only when
+  # there is something to separate: a window with no agent pane must contribute
+  # nothing at all to the status line, not even the stray space that padding
+  # would leave. No trailing newline for the same reason.
+  [ -n "$icons" ] || return 0
+  printf ' %s' "$icons"
+}
+
+main "$@"

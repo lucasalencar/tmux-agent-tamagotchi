@@ -63,6 +63,19 @@ main() {
   tmux_run set -g @tama_bin "$TAMA_PLUGIN_DIR/bin/tama"
   tmux_run set -g @tama_bin_dir "$TAMA_PLUGIN_DIR/bin"
 
+  # A ready-made format for the user to interpolate into their own status line,
+  # wherever they want the icons — the plugin never rewrites a status line
+  # somebody spent an afternoon on. `#{E:@tama_icons}` expands this option's own
+  # format, which runs the command once for the window being drawn.
+  #
+  # This is the interpolation the comment above is about: the path is quoted for
+  # the shell that will run the job, and the result is then escaped for the
+  # format that produces it.
+  local icon_command
+  icon_command="$(tama_shell_quote "$TAMA_PLUGIN_DIR/bin/tama")"
+  icon_command="$(tama_format_escape "$icon_command")"
+  tmux_run set -g @tama_icons "#($icon_command icons #{window_id})"
+
   # A failed write is not worth failing a config reload over.
   return 0
 }
