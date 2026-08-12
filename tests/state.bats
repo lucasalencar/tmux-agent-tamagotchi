@@ -24,7 +24,7 @@ teardown() {
   # Resolved, because tmux reports the pane's real path and /tmp is a symlink on
   # macOS.
   agent_cwd="$(cd -P /tmp && pwd)"
-  test_tmux new-window -d -t t -c "$agent_cwd" 'sleep 47'
+  test_tmux new-window -d -t t: -c "$agent_cwd" 'sleep 47'
   # Polled, because the pane reports the shell tmux started it with until the
   # command it was given has replaced it.
   local waited=0

@@ -75,7 +75,7 @@ report() {
 }
 
 @test "the icons are the window's own, not the whole server's" {
-  test_tmux new-window -d -t t
+  test_tmux new-window -d -t t:
   local other_window other_pane
   other_window="$(test_tmux list-windows -t t -F '#{window_id}' | tail -1)"
   other_pane="$(test_tmux list-panes -t "$other_window" -F '#{pane_id}')"
