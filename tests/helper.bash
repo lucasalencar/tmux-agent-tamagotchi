@@ -42,7 +42,20 @@ tama_start_server() {
     printf 'could not boot a tmux server on %s\n' "$TAMA_SOCKET" >&2
     return 1
   }
+  tama_no_backend
   tama_point_at_server
+}
+
+# Turns every capability off, which is what an empty `@tama_backend` means.
+#
+# The default is `auto`, and `auto` resolves to a *real* platform backend on a machine
+# that has one — on the developer's own Mac it finds their `terminal-notifier`. Then any
+# test that happens to reach the notification path, including a window selection
+# dismissing a mark, starts a real process that talks to their desktop. So a test server
+# begins with no backend at all and every suite that wants one says so: the fake backend,
+# a capability override, or `macos` with the notifier pointed at a fixture.
+tama_no_backend() {
+  test_tmux set -g @tama_backend ''
 }
 
 # Points the CLI at this test's server, for a suite that booted its own.

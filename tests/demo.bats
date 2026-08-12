@@ -18,6 +18,10 @@ boot_demo() {
   run env "TAMA_DEMO_PLUGIN_DIR=$1" \
     tmux -L "$TAMA_SOCKET" -f "${2:-$PLUGIN_ROOT/examples/demo.tmux.conf}" \
     new-session -d -s demo
+  # The demo config deliberately leaves `@tama_backend auto`, which on the developer's
+  # own Mac resolves to their real notifier — and this suite reaches the dismissal path.
+  # See tama_no_backend. Ignored when the boot was meant to fail.
+  tama_no_backend 2>/dev/null || true
 }
 
 @test "the demo config boots a throwaway server with the plugin loaded" {
