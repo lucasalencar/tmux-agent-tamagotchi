@@ -20,14 +20,21 @@ teardown() {
 @test "reporting a state records it on the pane, with the snapshot around it" {
   # A pane whose command and directory are nothing like the caller's or the
   # session's active pane's, so a snapshot taken from the wrong pane cannot pass.
-  local agent_pane agent_cwd
+  local agent_pane='' agent_cwd
   # Resolved, because tmux reports the pane's real path and /tmp is a symlink on
   # macOS.
   agent_cwd="$(cd -P /tmp && pwd)"
   test_tmux new-window -d -t t -c "$agent_cwd" 'sleep 47'
-  agent_pane="$(test_tmux list-panes -a -F '#{pane_id} #{pane_current_command}' |
-    awk '$2 == "sleep" { print $1 }')"
-  [ -n "$agent_pane" ]
+  # Polled, because the pane reports the shell tmux started it with until the
+  # command it was given has replaced it.
+  local waited=0
+  while [ -z "${agent_pane:-}" ] && [ "$waited" -lt 50 ]; do
+    agent_pane="$(test_tmux list-panes -a -F '#{pane_id} #{pane_current_command}' |
+      awk '$2 == "sleep" { print $1 }')"
+    [ -n "$agent_pane" ] || sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -n "${agent_pane:-}" ]
 
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$agent_pane"
   assert_success
@@ -374,6 +381,18 @@ teardown() {
   list="$(test_tmux show -p -t "$PANE" -v @tama_pane_subagents)"
   assert_contains "$list" sub-a 'the subagent list'
   assert_contains "$list" sub-b 'the subagent list'
+}
+
+@test "an id that begins with a dash can be given after --" {
+  # Ids are opaque and the agent chooses them, so some of them will look like
+  # options; without a way to say "this is a value" they would be unusable.
+  run "$PLUGIN_ROOT/bin/tama" state --pane "$PANE" -- subagent-start -dash-id
+  assert_success
+  assert_pane_option "$PANE" subagents -dash-id
+
+  run "$PLUGIN_ROOT/bin/tama" state --pane "$PANE" -- subagent-stop -dash-id
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
 }
 
 @test "a value that tmux would read as a command separator survives intact" {

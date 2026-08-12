@@ -116,14 +116,21 @@ clear_pane() {
 # would read somebody else's concurrent start as a lost race, and rewriting the
 # list read before it would then drop *their* id.
 #
-# Under a burst this is still racy in two directions, and that is accepted rather
-# than locked. A leaked id makes the pane look busier than it is (`background`
-# where `idle` was due) and is healed by the next `state clear` or sweep; a
-# retried start can also resurrect an id a concurrent stop had just removed, which
-# lands in the same benign direction. The reverse — losing a start, so a pane with
-# a live subagent looks finished — is the one worth spending attempts against,
-# which is what the retries are for. A lock in a shell script invoked on every
-# subagent event would cost more than any of it.
+# The read-back sees only the writers that landed before it, so this is still racy
+# and deliberately not locked. What the retries buy is the interleaving where the
+# loser is still looking: it notices its id gone and puts it back. What they cannot
+# buy is the one where both writers verify before the other lands — measured at
+# 4 in 120 with three concurrent starts and 10 in 120 with four — and then an id is
+# lost, which makes a pane with a live subagent look finished until the pane is
+# cleared. Nothing puts it back, because the stop for an id that is not in the list
+# is a no-op.
+#
+# Two directions are accepted for the same reason. A leaked id makes the pane look
+# busier than it is and is healed by the next `state clear` or sweep; a retried
+# start can resurrect an id a concurrent stop had just removed, which lands in the
+# same benign direction. All of it is bookkeeping without a compare-and-swap: a lock
+# in a shell script invoked on every subagent event would cost more, on every event,
+# than a wrong glyph on a few.
 subagent() {
   local target="$1" verb="$2" id="$3" attempt=1 wanted was refresh
   while :; do
@@ -184,8 +191,10 @@ subagent_settled() { # <verb> <list> <id>
 # then never recognise itself again — so every later report would write and wake
 # every client for nothing. The rule itself belongs to the record; see lib/pane.sh.
 check_storable() { # <what> <value>
+  # The value itself is not quoted back: the characters that make it illegal are
+  # exactly the ones that would rewind the terminal over the sentence naming them.
   tama_pane_value_is_storable "$2" ||
-    die_usage "$1 cannot contain a newline or a control separator: $2"
+    die_usage "$1 cannot contain a newline or a control separator"
 }
 
 # The id is what the plugin is being asked to track, and it travels in a
@@ -208,6 +217,20 @@ main() {
         [ "$#" -ge 2 ] && [ -n "$2" ] || die_usage '--pane needs a pane id'
         pane="$2"
         shift 2
+        ;;
+      --)
+        # Everything after this is a value, so an opaque id the agent chose can
+        # begin with a dash.
+        shift
+        while [ "$#" -gt 0 ]; do
+          positional=$((positional + 1))
+          case "$positional" in
+            1) state="$1" ;;
+            2) argument="$1" ;;
+            *) die_usage "state takes at most two arguments, got: $1" ;;
+          esac
+          shift
+        done
         ;;
       -*) die_usage "unknown option: $1" ;;
       *)

@@ -223,13 +223,13 @@ tama_pane_stage() { # <pane_id> <option> <new> <stored>
 # Sends what was staged. Nothing staged sends nothing and returns non-zero — the
 # short-circuit that makes a repeated `state running` free.
 #
-# Refreshing the clients is asked for separately, because it costs far more than
-# the write: it redraws every status line, which re-runs the icon command once per
-# window on the server. Only a change the status line would show is worth that —
-# the command and path snapshots are for a later sweep, and nobody draws them.
-#
-# The refresh goes last because tmux abandons the rest of a batch when one
-# command fails, and this is the one that fails when no client is attached.
+# Whether to force the clients to redraw is asked for separately. Writing any user
+# option already redraws every attached client, so this is not about the redraw: it
+# is that tmux reruns a `#()` job at most once a second and otherwise draws the
+# output it already had, so a change nobody forced can sit on screen stale until
+# that client's own status-interval comes round — measured at over six seconds for
+# changes a third of a second apart. Only a change the status line would show is
+# worth that, and there is nothing to force for a snapshot nobody draws.
 tama_batch_flush() { # <refresh: yes|no>
   [ "$TAMA_BATCH_COUNT" -gt 0 ] || return 1
   [ "$1" = 'no' ] || tama_batch_add refresh-client -S

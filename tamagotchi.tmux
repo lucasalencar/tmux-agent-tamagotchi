@@ -86,9 +86,13 @@ main() {
   case "$TAMA_PLUGIN_DIR" in
     *[$'\n\t']*)
       warning='tamagotchi: this path has a newline or a tab in it, which a status'
-      warning="$warning line cannot express; the icons were not exported"
+      warning="$warning line cannot express; the icons are off"
       printf '%s\n' "$warning" >&2
       tmux_run display-message "$warning"
+      # Unset rather than left alone: a value from an earlier load of a different
+      # clone would otherwise keep running that clone, once per window per status
+      # interval, while this message says the icons are off.
+      tmux_run set -guq @tama_icons
       ;;
     *) tmux_run set -g @tama_icons '#(#{q:@tama_bin} icons #{window_id})' ;;
   esac

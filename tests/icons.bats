@@ -158,6 +158,13 @@ report() {
 @test "the icons are not exported for a plugin path a status line cannot express" {
   # `#{q:}` escapes what a shell acts on, but not a newline: the job would become
   # two commands, and the second would run once per window per status interval.
+  # Loaded from a good clone first, so what is asserted below is that the option
+  # was taken away rather than never set: a leftover value would keep running the
+  # other clone once per window per status interval.
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+  [ -n "$(test_tmux show -gqv @tama_icons)" ]
+
   local plugin
   plugin="$(printf '%s/one\ntwo/tamagotchi' "$BATS_TEST_TMPDIR")"
   mkdir -p "$plugin"
