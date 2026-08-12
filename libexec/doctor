@@ -791,7 +791,8 @@ doctor_cc_cost() { # <event>
 #
 # `tama --help` and examples/demo.tmux.conf are still unbound copies. Anyone adding a
 # fifth should reference an existing one rather than paste it, or bind it the way those
-# two are bound.
+# two are bound — that is the rule, written down as
+# docs/adr/0008-a-copied-recipe-is-referenced-or-tested.md.
 # ---------------------------------------------------------------------------
 
 doctor_setup() {
