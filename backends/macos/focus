@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+#
+# The macOS backend's focus: put the terminal showing this session in front of the user.
+#
+#   focus <session>
+#
+# The last step of a banner's click, and the step tmux cannot do for itself. Two levels,
+# tried in order, and the second one only because the first found nothing:
+#
+#   1. **Raise the terminal window whose title is the session.** The ordinary case: the
+#      session is already on screen somewhere, behind a browser or on another desktop.
+#      Titles carry the session name because tmux is told to put it there —
+#      `set-titles-string '#S'` — which is the same assumption backends/macos/focused
+#      rests on, and the reason `doctor` will check it.
+#
+#   2. **Steal a client from another session.** No window is showing this session, but
+#      some other terminal window is showing tmux: point its client at this session
+#      instead. That window is then showing what the user just clicked about.
+#
+# Level 2 takes a window away from whatever session it was displaying. That is
+# deliberate: the user clicked a banner, so the thing they asked for is to be looking at
+# *this* session, and a click that does nothing is the outcome that makes the feature
+# feel broken. The system this replaces protected a hardcoded session named `main` from
+# being repurposed; that is somebody's personal setup and not a rule this plugin can
+# have, so it is gone. A user who wants one back replaces this whole capability with
+# `@tama_focus_command`.
+#
+# **There is no third level, on purpose.** The original went further: when no terminal
+# window could be repurposed it synthesised Cmd+N and pasted an attach command through
+# the clipboard. It needs Accessibility permission for synthetic keystrokes, it clobbers
+# the clipboard it borrows, and every part of it is specific to one terminal. It ships
+# as a documented example for `@tama_focus_command` instead of as behaviour nobody asked
+# for — the option replaces this capability wholesale, so the example needs nothing from
+# here.
+#
+# Runs from a notification click, in a process the desktop started, so it is not on an
+# agent's turn: it may take the time it takes.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+# How long to keep trying to raise the window after a client has been switched, in
+# tenths of a second. tmux pushes the new title to the terminal asynchronously, and
+# until it arrives the window still answers to the *old* session's name, so a single
+# attempt would lose the race about as often as it won it. Polled rather than slept on
+# a number somebody guessed once.
+TAMA_MACOS_RAISE_TRIES=10
+
+# Brings the terminal window showing <session> to the front, or fails when there is
+# none. The exact title wins; a title that merely contains the session name is the
+# fallback, for a user whose `set-titles-string` decorates it. That fallback can in
+# principle raise the wrong window — `api` is contained in `rapid-api` — which is why it
+# is only ever reached after every window has been checked for an exact match, and why
+# the whole loop is written to look at all of them before it settles for one.
+tama_macos_raise() { # <session>
+  local answer
+  answer="$(
+    osascript - "${TAMA_TERMINAL_APP:-}" "$1" 2>/dev/null <<'SCRIPT'
+on run argv
+  set appName to item 1 of argv
+  set target to item 2 of argv
+  tell application "System Events"
+    if not (exists application process appName) then return "0"
+    tell application process appName
+      set fallback to missing value
+      repeat with w in windows
+        set windowTitle to name of w
+        if windowTitle is target then
+          perform action "AXRaise" of w
+          set frontmost to true
+          return "1"
+        else if windowTitle contains target and fallback is missing value then
+          set fallback to w
+        end if
+      end repeat
+      if fallback is not missing value then
+        perform action "AXRaise" of fallback
+        set frontmost to true
+        return "1"
+      end if
+    end tell
+  end tell
+  return "0"
+end run
+SCRIPT
+  )" || answer=''
+
+  [ "$answer" = '1' ]
+}
+
+# A client attached to some *other* session, in TAMA_MACOS_CLIENT; non-zero when there
+# is none. First one wins: every choice here is arbitrary and a rule for picking would
+# only be a rule to maintain.
+#
+# Clients are named by `#{client_name}`, not by `#{client_tty}` as the system this
+# replaces did. A tty is what a client on a terminal is called and `switch-client -c`
+# takes either, but a client with no tty — `tmux -C attach` reading a pipe, which is what
+# the tests attach and what a control-mode front end is — has an empty `client_tty` and
+# would be skipped, or worse, mistaken for a session name by a line reader. `client_name`
+# is never empty.
+tama_macos_other_client() { # <session>
+  local session="$1" name rest clients
+  TAMA_MACOS_CLIENT=''
+  clients="$(tmux_run list-clients -F '#{client_name} #{client_session}' 2>/dev/null)" ||
+    return 1
+
+  # The name first, because it can hold no space and a session name can hold several.
+  while IFS=' ' read -r name rest; do
+    [ -n "$name" ] || continue
+    [ "$rest" != "$session" ] || continue
+    TAMA_MACOS_CLIENT="$name"
+    return 0
+  done <<EOF
+$clients
+EOF
+  return 1
+}
+
+main() {
+  local session="${1-}" tries=0
+
+  # Nothing to look for. The core does not call it this way; a user's own caller might.
+  [ -n "$session" ] || exit 0
+
+  tama_macos_raise "$session" && exit 0
+
+  # Level 2. Nothing else to try if there is no other client — the user has no terminal
+  # window showing tmux at all, and opening one is the level this backend does not have.
+  tama_macos_other_client "$session" || exit 0
+  tmux_run switch-client -c "$TAMA_MACOS_CLIENT" -t "$session" 2>/dev/null || exit 0
+
+  # The window is now showing the session; raise it, once its title says so.
+  while [ "$tries" -lt "$TAMA_MACOS_RAISE_TRIES" ]; do
+    tries=$((tries + 1))
+    tama_macos_raise "$session" && exit 0
+    sleep 0.1
+  done
+  exit 0
+}
+
+main "$@"

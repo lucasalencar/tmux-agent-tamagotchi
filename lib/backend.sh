@@ -42,8 +42,22 @@
 # backend ship the capabilities its platform can actually do.
 
 # The bare name whose directory is inside the plugin, and the one `auto` resolves to
-# until a platform backend exists to prefer.
+# when nothing better will work here.
 TAMA_BACKEND_NONE='none'
+
+# The platform backend for Darwin, and the binary it is nothing without.
+TAMA_BACKEND_MACOS='macos'
+TAMA_MACOS_NOTIFIER_NAME='terminal-notifier'
+
+# Where a Homebrew puts a binary, for the two prefixes Homebrew itself uses: Apple
+# silicon first, then Intel. Searched only after `PATH`, because a user who has put a
+# notifier on their `PATH` has already said which one they mean.
+#
+# This list exists because `PATH` is not enough on the path that matters most: a
+# notification is raised from an agent's hook, which inherits the agent's environment,
+# and a click arrives in a process the desktop started with barely any environment at
+# all. Neither is a login shell, so neither reliably has Homebrew's bin on `PATH`.
+TAMA_MACOS_NOTIFIER_DIRS='/opt/homebrew/bin /usr/local/bin'
 
 # The status for "this capability does not exist here". 127 is what a shell reports
 # for a command it could not find, which is exactly what happened.
@@ -80,14 +94,83 @@ tama_backend_dir() {
 
 # Which backend `auto` means on this machine.
 #
-# Today: the no-op one, because it is the only one that exists. The platform backends
-# land next, and when they do this is the one function that changes — Darwin with a
-# notifier installed picks `macos`, a machine with `notify-send` picks `libnotify`,
-# and anything else stays here. It resolves only to a backend whose dependency is
-# actually installed, which is the difference between a plugin that degrades quietly
-# on a headless box and one that fails on every notification.
+# Darwin with a notifier installed picks `macos`; anything else falls through to the
+# no-op one. `libnotify` joins the list when it exists and this stays the only place
+# that changes — as another `<platform> && <its dependency is installed>` pair, and
+# checked as cheaply as this one is, because this function runs on every capability
+# invocation: a `case` on `$OSTYPE` and a `command -v`, no `uname` if it can be helped.
+#
+# It resolves only to a backend whose dependency is *actually installed*, which is the
+# difference between a plugin that degrades quietly on a headless box and one that
+# fails on every notification an agent reports. A Mac with no `terminal-notifier`
+# therefore lands on `none` and `doctor` is what explains why — never on `macos`,
+# whose every capability would be a process started to fail.
 tama_backend_auto() {
+  if tama_backend_is_darwin && tama_macos_notifier; then
+    printf '%s' "$TAMA_BACKEND_MACOS"
+    return 0
+  fi
   printf '%s' "$TAMA_BACKEND_NONE"
+}
+
+# Whether this is a Mac. `$OSTYPE` is bash's own answer and costs no process; every
+# script in this plugin is bash, so it is always there. `uname` is the fallback for a
+# shell that somehow is not — cheaper to keep than to reason about.
+tama_backend_is_darwin() {
+  case "${OSTYPE:-}" in
+    darwin*) return 0 ;;
+    '') [ "$(uname -s 2>/dev/null)" = 'Darwin' ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# The `terminal-notifier` to use, in TAMA_MACOS_NOTIFIER; non-zero when there is none,
+# which is what stops `auto` picking the macOS backend on a Mac without one.
+#
+# Resolved rather than hardcoded — the system this replaces had
+# `/opt/homebrew/bin/terminal-notifier` written into two scripts, which is wrong on an
+# Intel Mac, wrong on a MacPorts install and wrong for anyone who keeps their own
+# build. `@tama_terminal_notifier` overrides the name or gives an absolute path, then
+# `PATH`, then the Homebrew prefixes.
+#
+# Read here, in the core, rather than in backends/macos, because `auto` and the backend
+# must never disagree about which binary the backend is going to run: `auto` promising a
+# notifier the backend then cannot find would be silence with no explanation anywhere.
+# backends/macos calls this function.
+# shellcheck disable=SC2034  # TAMA_MACOS_NOTIFIER is read by the caller
+tama_macos_notifier() {
+  local name resolved dir
+  TAMA_MACOS_NOTIFIER=''
+
+  name="$(tama_opt tama_terminal_notifier '')"
+  case "$name" in
+    '') name="$TAMA_MACOS_NOTIFIER_NAME" ;;
+    # A path the user gave is used as it is, or not at all: searching for the basename
+    # of a path somebody spelled out would run a different program than they named.
+    */*)
+      if [ ! -f "$name" ] || [ ! -x "$name" ]; then
+        return 1
+      fi
+      TAMA_MACOS_NOTIFIER="$name"
+      return 0
+      ;;
+  esac
+
+  resolved="$(command -v "$name" 2>/dev/null)" || resolved=''
+  if [ -n "$resolved" ] && [ -x "$resolved" ]; then
+    TAMA_MACOS_NOTIFIER="$resolved"
+    return 0
+  fi
+
+  # A fixed list of literal paths, so the splitting has nothing to be surprised by.
+  # shellcheck disable=SC2086  # deliberate: one word per directory
+  for dir in $TAMA_MACOS_NOTIFIER_DIRS; do
+    if [ -f "$dir/$name" ] && [ -x "$dir/$name" ]; then
+      TAMA_MACOS_NOTIFIER="$dir/$name"
+      return 0
+    fi
+  done
+  return 1
 }
 
 # Runs <capability>, with the caller's arguments, and returns its exit status —

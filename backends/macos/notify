@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+#
+# The macOS backend's notify: a real banner, through `terminal-notifier`.
+#
+#   notify <title> <message>
+#
+# Grouped by `$TAMA_GROUP`, so a second banner for the same window replaces the first
+# rather than stacking, and so `dismiss` can name it later. Clicking it runs
+# `$TAMA_CLICK`, which the core composed (ADR-0006) and this file must not add to
+# beyond making it runnable — see the `PATH` note below.
+#
+# Backgrounded, deliberately. This runs inside an agent's hook, on the turn the user is
+# waiting for, and there is no timeout to save them: `terminal-notifier` talks to the
+# notification server and has been seen to take the better part of a second the first
+# time it runs after a login. The banner is worth nothing if it costs the turn, and
+# nothing here has an answer anybody waits for — the exit status of `notify` is
+# discarded by the contract.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local title="${1-}" message="${2-}"
+
+  # terminal-notifier draws nothing for an empty message and would only be a process
+  # started to do nothing. The core does not send one; a user's own caller might.
+  [ -n "$message" ] || exit 0
+
+  # No notifier, no banner, and no complaint: this is the same machine state that makes
+  # `auto` pick the no-op backend, reached here only because the user named `macos`
+  # explicitly or removed the binary since.
+  tama_macos_notifier || exit 0
+
+  set -- -title "$title" -message "$message"
+
+  # Every one of these is optional because the contract says a backend reads what it
+  # needs and ignores the rest — a caller that sends no group is asking for an
+  # ungrouped banner, not for an error.
+  [ -z "${TAMA_GROUP:-}" ] || set -- "$@" -group "$TAMA_GROUP"
+
+  # -activate brings the terminal forward on click by bundle id. It is not what makes
+  # the click land on the right pane — that is -execute — but it is what makes the
+  # terminal come forward even if the command line somehow does not run.
+  [ -z "${TAMA_TERMINAL_BUNDLE_ID:-}" ] ||
+    set -- "$@" -activate "$TAMA_TERMINAL_BUNDLE_ID"
+
+  if [ -n "${TAMA_CLICK:-}" ]; then
+    # The one thing added to the click, and not a change to it: a `PATH`. terminal-
+    # notifier is relaunched by launchd when the banner is clicked, minutes later, with
+    # launchd's own minimal environment rather than the login shell's. The click line
+    # names its tmux and its `tama` by absolute path already, but `bin/tama` starts
+    # `#!/usr/bin/env bash`, and a `PATH` that cannot find `bash` is a click that does
+    # nothing at all — the one outcome ADR-0006 exists to prevent.
+    set -- "$@" -execute \
+      "export PATH='/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin'; $TAMA_CLICK"
+  fi
+
+  "$TAMA_MACOS_NOTIFIER" "$@" >/dev/null 2>&1 &
+}
+
+main "$@"

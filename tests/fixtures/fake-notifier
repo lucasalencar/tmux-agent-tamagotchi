@@ -1,0 +1,29 @@
+#!/bin/sh
+#
+# Stands in for `terminal-notifier`, so that the macOS backend can be tested without a
+# banner appearing on the machine running the suite — and, more to the point, so that
+# what the backend put on the command line can be read back exactly as it arrived.
+#
+# Pointed at by `@tama_terminal_notifier`, which is a user option and not a testing
+# seam: a user with their own build of the notifier configures it the same way.
+#
+# Records into $TAMA_NOTIFIER_DIR:
+#
+#   calls          one line per invocation, holding its argument count
+#   <flag>         the value that followed `-<flag>`, exactly, from the last invocation
+#
+# One file per value because the interesting ones cannot survive a line-based log: the
+# click action is a whole shell command line and a message is arbitrary text an agent
+# wrote. terminal-notifier's own argument grammar is flag-then-value throughout, so
+# naming the files after the flags is what makes them readable from a test.
+
+tama_previous=''
+for tama_argument in "$@"; do
+  case "$tama_previous" in
+    -?*) printf '%s' "$tama_argument" >"$TAMA_NOTIFIER_DIR/${tama_previous#-}" ;;
+  esac
+  tama_previous="$tama_argument"
+done
+
+printf '%s\n' "$#" >>"$TAMA_NOTIFIER_DIR/calls"
+exit 0

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+#
+# The macOS backend's focused: is the user actually looking at this?
+#
+# Exit 0 means yes, and yes means the banner is dropped — so every way of not knowing
+# exits non-zero. This is the expensive half of ADR-0004's `AND`, asked only after tmux
+# has already said the window is current in its own session with somebody attached.
+# What tmux cannot see is the desktop: a terminal behind a browser, or minimized, still
+# has a "current window", and trusting tmux alone would swallow the banner exactly when
+# it was most needed.
+#
+# So this answers the one question tmux cannot: is the terminal frontmost, and is the
+# window in front of it the one showing this session. The window is identified by its
+# title, which works because tmux is told to write the session name into it:
+#
+#   set -g set-titles on
+#   set -g set-titles-string '#S'
+#
+# Without that, the title is something else, this never matches, and the user gets
+# banners for a window they are staring at. That is the fragile half of the `AND` and
+# the reason it is the half that fails toward noise — `doctor` is what will say so out
+# loud. A title that merely *contains* the session name is not accepted: the cost of a
+# wrong yes is a notification the user never sees.
+#
+# Deliberately does not source lib/common.sh. Everything it needs is already in the
+# environment, and this is the one capability on the path of every single notification,
+# suppressed or not: it should cost one process and no tmux round trip.
+#
+# The `osascript` is the one thing here that could be slow. It cannot be backgrounded —
+# it is the answer — and the first call after a login can be slow while macOS decides
+# about Automation permission. That is the risk the "return promptly" rule is about and
+# the reason `@tama_suppress_when_focused off` exists: it turns this capability off
+# entirely, at the price of being told about windows you are looking at.
+
+set -o nounset
+
+main() {
+  local app="${TAMA_TERMINAL_APP:-}" session="${TAMA_SESSION:-}" title
+
+  # Nothing to compare: not an answer, so not a suppression.
+  [ -n "$app" ] || exit 1
+  [ -n "$session" ] || exit 1
+
+  # The application name and nothing else is passed in — as an argument, never pasted
+  # into the program text, because AppleScript string literals have their own quoting
+  # and a value that is not ours has no business being spliced into a program.
+  # `osascript -` reads the script from stdin and hands the rest to `on run argv`.
+  #
+  # A single call answers both halves: an empty answer for "not frontmost", the front
+  # window's title otherwise. No permission, no such process and no windows all come
+  # back as an error or an empty line, and all of them mean deliver.
+  title="$(
+    osascript - "$app" 2>/dev/null <<'SCRIPT'
+on run argv
+  set appName to item 1 of argv
+  tell application "System Events"
+    if not (exists application process appName) then return ""
+    tell application process appName
+      if not frontmost then return ""
+      if (count of windows) is 0 then return ""
+      return name of front window
+    end tell
+  end tell
+end run
+SCRIPT
+  )" || exit 1
+
+  [ "$title" = "$session" ]
+}
+
+main "$@"

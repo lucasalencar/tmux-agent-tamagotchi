@@ -157,6 +157,15 @@ icons and the window mark carry on without them.
                                  # name is one shipped here, an absolute path is
                                  # your own and needs no fork of this plugin
 
+'auto' means 'macos' on a Mac with terminal-notifier installed and 'none' — silence,
+no errors — anywhere else, so a machine with no notifier needs no configuration to be
+quiet. The macOS backend recognises the terminal window showing a session by its
+title, which is worth setting up, because it is what stops you being notified about a
+window you are looking at:
+
+  set -g set-titles on
+  set -g set-titles-string '#S'
+
 A banner's title is a real tmux format string, expanded against the pane that
 spoke — there is no template language here to learn, and no idea of a "project":
 that is a basename modifier on the pane's path, and anything else is whatever you
@@ -188,8 +197,12 @@ thing this plugin could do to you.
   set -g @tama_dismiss_command ''   # script: same arguments, same environment
   set -g @tama_focused_command ''
   set -g @tama_focus_command ''
-  set -g @tama_terminal_app ''         # what a backend calls your terminal
-  set -g @tama_terminal_bundle_id ''
+  set -g @tama_terminal_app ''         # what a backend calls your terminal:
+  set -g @tama_terminal_bundle_id ''   # the process name and the bundle id, both
+                                       # Ghostty unless \$TERMINAL_APP_NAME and
+                                       # \$TERMINAL_BUNDLE_ID say otherwise
+  set -g @tama_terminal_notifier ''    # the macOS notifier, if PATH and the two
+                                       # Homebrew prefixes are not where yours is
 
 An agent that exits without saying so would otherwise leave its icon behind
 forever, so the state is swept: a pane is stale when it is running a different
