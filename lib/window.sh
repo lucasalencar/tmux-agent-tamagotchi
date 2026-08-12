@@ -17,14 +17,14 @@
 # it, by selecting the window — see tama_flag_clear.
 TAMA_WINDOW_FLAG_OPTION='@tama_window_flag'
 
-# Everything the flag path and, later, the notification path need to know about a
-# window, in one tmux round trip.
+# Everything the flag path and the notification path need to know about a window, in
+# one tmux round trip.
 #
-# Space separated on one line, unlike the pane record in lib/pane.sh, and safely so:
-# every field here is either a tmux-assigned id or an integer tmux counted itself.
-# None of them comes from the outside world, so none can hold a space, a newline or
-# a control character the way an agent name or a path can. The count of words is
-# still the integrity check.
+# One value per line, like the pane record — see tama_fields_read in lib/common.sh
+# for why, and for why the last field is followed by a sentinel. This record started
+# out space separated on one line, because every field in it was a tmux-assigned id
+# or an integer tmux counted itself; `#{session_name}` is neither, and a session
+# called `my project` would have shifted every field after it.
 #
 # `#{window_active}` is the whole point of this file. It is resolved against the
 # session of the *target*, not against whichever client happens to be ambient — so
@@ -33,8 +33,27 @@ TAMA_WINDOW_FLAG_OPTION='@tama_window_flag'
 # index meant an agent in `work:3` was silently not flagged while the user looked at
 # `main:3`. Indexes move under `renumber-windows` besides. Nothing here compares an
 # index, and every write below targets `#{window_id}`.
-TAMA_WINDOW_READ_FORMAT='#{window_id} #{window_active} #{session_attached}'
-TAMA_WINDOW_READ_COUNT=3
+#
+# `#{pane_id}` is here because a target may be either: a hook reporting a state has
+# a pane, a key binding has a window, and the notification path needs both — the
+# window to flag and group by, and the pane to expand a title against and to land
+# the click on. Against a window target tmux resolves it to that window's active
+# pane, which is the pane a user clicking that window's banner means.
+#
+# `#{@tama_window_flag}` is read, not only written, so that the user arriving at a
+# window can tell "there was a mark here" from "there was not" without a second
+# round trip — which is what keeps a banner from being dismissed on every window
+# selection. Reading an option through a format falls back to the window, session
+# and global scopes, the same asymmetry lib/pane.sh documents; the exported
+# `@tama_flag` format has always had it too.
+TAMA_WINDOW_READ_FIELDS='#{window_id}
+#{window_active}
+#{session_attached}
+#{session_name}
+#{pane_id}
+#{@tama_window_flag}
+.'
+TAMA_WINDOW_READ_COUNT=7
 
 # Reads the window holding <target>, which may be a pane id, a window id, or
 # anything else tmux resolves — the callers have a pane (a hook reporting a state)
@@ -43,28 +62,35 @@ TAMA_WINDOW_READ_COUNT=3
 # come back whole; every caller treats that as nothing to do.
 #
 # Sets TAMA_WINDOW_ID — the canonical `@id`, which is what every write targets —
-# plus the two facts tama_window_user_is_looking judges.
+# plus the two facts tama_window_user_is_looking judges, the session the window
+# belongs to, the pane the target resolved to, and whether the mark is already there.
 # The fields are this library's output, read by its callers rather than by it.
 # shellcheck disable=SC2034
 tama_window_read() { # <target>
-  local raw
-  raw="$(tmux_run display-message -p -t "$1" "$TAMA_WINDOW_READ_FORMAT" 2>/dev/null)" ||
-    raw=''
+  local raw field lines=0
+  raw="$(tama_fields_read "$1" "$TAMA_WINDOW_READ_FIELDS")" || raw=''
 
   TAMA_WINDOW_ID=''
   TAMA_WINDOW_IS_CURRENT=''
   TAMA_WINDOW_SESSION_CLIENTS=''
+  TAMA_WINDOW_SESSION=''
+  TAMA_WINDOW_PANE_ID=''
+  TAMA_WINDOW_FLAG=''
+  while IFS= read -r field; do
+    lines=$((lines + 1))
+    case "$lines" in
+      1) TAMA_WINDOW_ID="$field" ;;
+      2) TAMA_WINDOW_IS_CURRENT="$field" ;;
+      3) TAMA_WINDOW_SESSION_CLIENTS="$field" ;;
+      4) TAMA_WINDOW_SESSION="$field" ;;
+      5) TAMA_WINDOW_PANE_ID="$field" ;;
+      6) TAMA_WINDOW_FLAG="$field" ;;
+    esac
+  done <<EOF
+$raw
+EOF
 
-  # Globbing off: an id is not a pattern.
-  set -f
-  # shellcheck disable=SC2086  # deliberate: the record is space separated
-  set -- $raw
-  set +f
-  [ "$#" -eq "$TAMA_WINDOW_READ_COUNT" ] || return 1
-
-  TAMA_WINDOW_ID="$1"
-  TAMA_WINDOW_IS_CURRENT="$2"
-  TAMA_WINDOW_SESSION_CLIENTS="$3"
+  [ "$lines" -eq "$TAMA_WINDOW_READ_COUNT" ] || return 1
 
   # A window that is gone: tmux says so by expanding `#{window_id}` to nothing
   # rather than by failing, and writing from that would write somewhere else.
@@ -112,8 +138,22 @@ tama_window_user_is_looking() {
 tama_flag_raise() { # <target>
   tama_window_read "$1" || return 0
   tama_window_user_is_looking && return 0
-  # Targeted by id, never by the caller's target: an index could have moved to
-  # another window between the read and this write.
+  tama_flag_set
+}
+
+# The write on its own, over the window tama_window_read last read, for a caller that
+# has already made the judgement itself.
+#
+# There is one such caller and it is not a second opinion about the same question: the
+# notification path knows more than the cheap check does. When the backend reports
+# that the terminal is behind a browser, tmux calling this the current window is
+# simply wrong about the user, the banner goes out — and the mark belongs there too,
+# because something did happen while nobody was looking. Deliver and mark are the same
+# decision, so they are made once. See lib/notify.sh.
+#
+# Targeted by id, never by the caller's target: an index could have moved to another
+# window between the read and this write.
+tama_flag_set() {
   tmux_run set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" on \
     >/dev/null 2>&1 || true
 }
@@ -125,8 +165,19 @@ tama_flag_raise() { # <target>
 # Unsets rather than writing an empty string, like a cleared pane in lib/pane.sh: an
 # option set to "" is still an option that is set, and `@tama_flag` asks whether this
 # one is there at all.
+#
+# Returns zero only when there really was a mark to take off — and leaves the window
+# it read in TAMA_WINDOW_*, which libexec/on-select then has without a second round
+# trip. That answer is load-bearing rather than a nicety: a window with no mark has no
+# banner of ours pending either, because `notify` raises the mark whenever it delivers
+# one, so it is what keeps a window selection from spawning a notifier process every
+# time the user presses a key. The invariant is stated at both ends; breaking it at
+# one would leave banners on screen with nothing to say why.
+#
+# Never fails on the write: every caller is a hook or a key binding.
 tama_flag_clear() { # <target>
-  tama_window_read "$1" || return 0
+  tama_window_read "$1" || return 1
   tmux_run set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" \
     >/dev/null 2>&1 || true
+  [ -n "$TAMA_WINDOW_FLAG" ]
 }

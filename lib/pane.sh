@@ -45,18 +45,10 @@ tama_pane_derive_record() { # <record>
 # five options and no state file, the tmux server is the database — and the live
 # command and path a fresh report snapshots.
 #
-# One `display-message` per field, batched into a single invocation, so each value
-# arrives on a line of its own and nothing has to separate them. A separator was the
-# obvious thing and is not available: tmux prints to a client through an escaper, so
-# a byte like a unit separator arrives as the four characters `\037` on some versions
-# and locales and intact on others. That collapsed every field into one, and since
-# the first field is the pane every write targets, the plugin quietly wrote nothing
-# anywhere — green on one machine, dead on another. A newline cannot be smuggled
-# either; it arrives as `_`.
-#
-# The number of lines is therefore the integrity check, and a value holding a
-# control character is refused at the boundary — see tama_pane_value_is_storable —
-# rather than left to shift the record.
+# One value per line, in one tmux invocation: see tama_fields_read in lib/common.sh
+# for why a record cannot be read any other way, and why the count of lines is the
+# integrity check. A value holding a control character is refused at the boundary
+# instead — see tama_pane_value_is_storable — rather than left to shift the record.
 #
 # One asymmetry to know about: reading an option through a *format* falls back to
 # the window, session and global scopes, while `show -p` does not. Nothing sets
@@ -89,17 +81,8 @@ TAMA_PANE_READ_COUNT=9
 # The fields are this library's output, read by its callers rather than by it.
 # shellcheck disable=SC2034
 tama_pane_read() {
-  local raw field lines=0 target="$1"
-  # One tmux command per field, all in one invocation. Built here rather than kept
-  # as a constant because the target belongs in every one of them.
-  set --
-  while IFS= read -r field; do
-    [ "$#" -eq 0 ] || set -- "$@" ';'
-    set -- "$@" display-message -p -t "$target" "$field"
-  done <<EOF
-$TAMA_PANE_READ_FIELDS
-EOF
-  raw="$(tmux_run "$@" 2>/dev/null)" || raw=''
+  local raw field lines=0
+  raw="$(tama_fields_read "$1" "$TAMA_PANE_READ_FIELDS")" || raw=''
 
   TAMA_PANE_ID=''
   TAMA_PANE_STATE_MAIN=''
@@ -226,12 +209,19 @@ tama_pane_value_is_storable() { # <value>
 # Every pane option the plugin owns, in one list, because two things take a pane
 # apart again: `state clear` and the stale-state sweep. An option added to the
 # record above and not here would survive both of them, and a pane that keeps one
-# is a pane a later read can still tell from one that never ran an agent.
+# is a pane a later read can still tell from one that never ran an agent. Any new
+# pane option belongs here, whether or not the record reads it.
+#
+# `label` is the one that is not in the record: it is written by `notify` for the
+# title format to expand and is never read back by the shell, so nothing would be
+# gained by paying for a field on the hottest read path in the plugin. It is
+# cleared here all the same, because it is a pane option the plugin wrote.
 TAMA_PANE_OPTIONS='state_main
 subagents
 cmd
 agent
-cwd'
+cwd
+label'
 
 # Writes are batched into a single tmux invocation, because the alternative is
 # one round trip per option on the hottest write path in the plugin.

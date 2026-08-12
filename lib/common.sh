@@ -35,6 +35,38 @@ tmux_run() {
   "$TAMA_TMUX" -u "$@"
 }
 
+# Reads several tmux formats about one target in a single tmux invocation, one
+# value per line of output. The shape every record in this plugin is read in, and
+# the reason it is here rather than copied: the batching is where the traps are.
+#
+# One `display-message -p` per field, joined by tmux's own `;`, so each value
+# arrives on a line of its own and nothing has to separate them. A separator was
+# the obvious thing and is not available: tmux prints to a client through an
+# escaper, so a byte like a unit separator arrives as the four characters `\037`
+# on some versions and locales and intact on others, collapsing every field into
+# one. A newline cannot be smuggled either; it arrives as `_`.
+#
+# The number of lines is therefore the integrity check, which is why every caller
+# ends its field list with a sentinel: command substitution strips trailing
+# newlines, so a last field that is legitimately empty would be indistinguishable
+# from a line that never arrived.
+#
+# <fields> is newline separated. Prints the raw output; non-zero when tmux could
+# not answer at all, which every caller treats as an empty record.
+tama_fields_read() { # <target> <fields>
+  local target="$1" fields="$2" field
+  # Built here rather than kept as a constant because the target belongs in every
+  # one of the commands.
+  set --
+  while IFS= read -r field; do
+    [ "$#" -eq 0 ] || set -- "$@" ';'
+    set -- "$@" display-message -p -t "$target" "$field"
+  done <<EOF
+$fields
+EOF
+  tmux_run "$@" 2>/dev/null
+}
+
 # Usage error: loud, on stderr, exit 2. The hint carries an absolute path
 # because nothing is installed onto PATH — `tama` alone is not runnable.
 die_usage() {

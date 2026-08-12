@@ -44,7 +44,10 @@ main() {
   target="${target:-${pane:-${TMUX_PANE:-}}}"
   [ -n "$target" ] || exit 0
 
-  tama_flag_clear "$target"
+  # The status says whether there was a mark to take off, which this command has no
+  # use for and must not exit with: `tama unflag` on a window that was not marked has
+  # done what was asked of it.
+  tama_flag_clear "$target" || true
 }
 
 main "$@"
