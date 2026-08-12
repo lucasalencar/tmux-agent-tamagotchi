@@ -42,7 +42,9 @@ main() {
   # An event is what the adapter dispatches on, so an empty one is a hook whose
   # variable failed to interpolate rather than an event this version has not
   # heard of — the adapter is where the second kind stays quiet.
-  [ "$#" -gt 0 ] && [ -n "$1" ] || die_usage "hook needs an event for $agent"
+  if [ "$#" -eq 0 ] || [ -z "$1" ]; then
+    die_usage "hook needs an event for $agent"
+  fi
 
   # -x alone is true for a directory, and exec'ing one exits 126 with a shell
   # diagnostic instead of the usage error the contract promises.
