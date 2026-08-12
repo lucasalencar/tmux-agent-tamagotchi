@@ -248,15 +248,11 @@ extract_hook_recipe() {
   # bash 5 accepts — a whole-plugin failure that no amount of behavioural
   # testing under a modern bash can see. Only runs where such a bash exists,
   # which is why the macOS CI leg matters.
-  [ -x /bin/bash ] || skip 'no /bin/bash on this machine'
-  case "$(/bin/bash --version | head -1)" in
-    *'version 3.'*) ;;
-    *) skip '/bin/bash is not 3.x here' ;;
-  esac
+  tama_use_bash_32_or_skip
 
-  run /bin/bash "$PLUGIN_ROOT/bin/tama" version
+  run "$PLUGIN_ROOT/bin/tama" version
   assert_success
-  run /bin/bash "$PLUGIN_ROOT/tamagotchi.tmux"
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
   assert_plugin_wired "$PLUGIN_ROOT"
 }

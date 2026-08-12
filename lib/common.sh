@@ -44,17 +44,31 @@ require_tmux() {
 }
 
 # The configuration reader needs tmux_run, and everything that reads tmux reads
-# configuration, so the two libraries travel together. Stripping the last path
+# configuration; the state model needs both, and every command that does anything
+# at all acts on a pane. So the three travel together. Stripping the last path
 # component leaves the name untouched when there is none, so a caller that
-# sourced us by a bare relative name still finds it.
+# sourced us by a bare relative name still finds them.
 _tama_lib_dir="${BASH_SOURCE[0]%/*}"
 [ "$_tama_lib_dir" = "${BASH_SOURCE[0]}" ] && _tama_lib_dir='.'
-if [ ! -r "$_tama_lib_dir/options.sh" ]; then
-  printf 'tama: no options.sh next to %s; this plugin directory is incomplete\n' \
-    "${BASH_SOURCE[0]}" >&2
+
+# A failed `.` does not stop a script, and carrying on would leave the failure
+# policy itself undefined.
+_tama_require_lib() {
+  [ -r "$1" ] && return 0
+  printf 'tama: no %s next to %s; this plugin directory is incomplete\n' \
+    "${1##*/}" "${BASH_SOURCE[0]}" >&2
   exit 1
-fi
+}
+
+_tama_require_lib "$_tama_lib_dir/options.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=options.sh
 . "$_tama_lib_dir/options.sh"
+
+_tama_require_lib "$_tama_lib_dir/pane.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=pane.sh
+. "$_tama_lib_dir/pane.sh"
+
 unset _tama_lib_dir
+unset -f _tama_require_lib

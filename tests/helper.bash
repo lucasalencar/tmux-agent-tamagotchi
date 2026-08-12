@@ -27,8 +27,16 @@ tama_start_server() {
   export TAMA_TMUX=tmux
   export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
   test_tmux -f /dev/null new-session -d -s t
-  # The CLI only checks that $TMUX is non-empty; the socket it points at is
-  # irrelevant because every tmux call goes through TAMA_TMUX.
+  tama_point_at_server
+}
+
+# Points the CLI at this test's server, for a suite that booted its own.
+# The CLI only checks that $TMUX is non-empty; the socket it names is irrelevant
+# because every tmux call goes through TAMA_TMUX. It is exported after the server
+# is up, since a tmux client that sees it believes it is nested.
+tama_point_at_server() {
+  export TAMA_TMUX=tmux
+  export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
   export TMUX="/tmp/$TAMA_SOCKET,0,0"
 }
 
@@ -128,11 +136,49 @@ assert_usage_error() {
   [ "$#" -eq 0 ] || assert_stderr_contains "$1"
 }
 
+# A pane option as tmux stores it. Without -q so that an option which was never
+# set fails instead of reading as empty — the difference between a cleared pane
+# and an agent pane.
+assert_pane_option() {
+  local value
+  value="$(test_tmux show -p -t "$1" -v "@tama_pane_$2")" || {
+    printf 'expected @tama_pane_%s to be set on %s\n' "$2" "$1" >&2
+    return 1
+  }
+  assert_equal "$value" "$3"
+}
+
+assert_pane_option_unset() {
+  local value
+  if value="$(test_tmux show -p -t "$1" -v "@tama_pane_$2")"; then
+    printf 'expected @tama_pane_%s to be unset on %s, got: %s\n' "$2" "$1" "$value" >&2
+    return 1
+  fi
+}
+
 assert_equal() {
   if [ "$1" != "$2" ]; then
     printf 'expected %s\n     got %s\n' "$2" "$1" >&2
     return 1
   fi
+}
+
+# Makes `bash` on PATH the bash macOS ships — 3.2, which neither parses nor runs
+# everything bash 5 accepts — or skips the test where there is none. Every script
+# in the plugin starts with `#!/usr/bin/env bash`, so this reaches all of them and
+# not only the file a test invokes.
+tama_use_bash_32_or_skip() {
+  [ -x /bin/bash ] || skip 'no /bin/bash on this machine'
+  case "$(/bin/bash --version | head -1)" in
+    *'version 3.'*) ;;
+    *) skip '/bin/bash is not 3.x here' ;;
+  esac
+
+  local shim="$BATS_TEST_TMPDIR/bash32"
+  mkdir -p "$shim"
+  ln -sf /bin/bash "$shim/bash"
+  PATH="$shim:$PATH"
+  export PATH
 }
 
 # Points the tmux indirection at a fake that reports the given version string
@@ -144,6 +190,30 @@ tama_use_fake_tmux() {
   : >"$TAMA_FAKE_TMUX_LOG"
   export TAMA_TMUX="$PLUGIN_ROOT/tests/fixtures/fake-tmux"
   export TAMA_TMUX_ARGS=''
+}
+
+# Points the tmux indirection at the logging fake — reporting the real version,
+# so everything behaves as it does on this machine — and starts a fresh log.
+tama_log_tmux_calls() {
+  tama_use_fake_tmux "$(tmux -V)"
+}
+
+# Whether tmux was asked to run a command. One argument per line in the log, so
+# this matches the command word itself and not a value that happens to contain it.
+assert_tmux_command() {
+  if ! grep -qx -- "$1" "$TAMA_FAKE_TMUX_LOG"; then
+    printf 'expected tmux to be asked to %s; calls were:\n%s\n' \
+      "$1" "$(cat "$TAMA_FAKE_TMUX_LOG")" >&2
+    return 1
+  fi
+}
+
+refute_tmux_command() {
+  if grep -qx -- "$1" "$TAMA_FAKE_TMUX_LOG"; then
+    printf 'expected tmux NOT to be asked to %s; calls were:\n%s\n' \
+      "$1" "$(cat "$TAMA_FAKE_TMUX_LOG")" >&2
+    return 1
+  fi
 }
 
 # Everything the entrypoint could have wired, as one string: options at both

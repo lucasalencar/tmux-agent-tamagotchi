@@ -11,8 +11,11 @@
 
 set -o nounset
 
-if [ -n "${TAMA_FAKE_TMUX_LOG:-}" ]; then
-  printf '%s\n' "$*" >>"$TAMA_FAKE_TMUX_LOG"
+# One argument per line, so a test can assert on which tmux commands ran —
+# `grep -x set` finds a set-option and nothing that merely mentions one, and a
+# command batched behind a `;` is as visible as the first.
+if [ -n "${TAMA_FAKE_TMUX_LOG:-}" ] && [ "$#" -gt 0 ]; then
+  printf '%s\n' "$@" >>"$TAMA_FAKE_TMUX_LOG"
 fi
 
 if [ "${1:-}" = '-V' ]; then
