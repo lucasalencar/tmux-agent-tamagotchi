@@ -777,13 +777,21 @@ doctor_cc_cost() { # <event>
 # the answer to "how do I set this up", and a recipe that appears only on failure is one
 # nobody can find on purpose.
 #
-# The status-line snippet now exists in three places — `tama --help`, this file, and
-# examples/demo.tmux.conf — and the Claude Code block in two, here and
-# integrations/claude-code/README.md. Only the second pair is held together by a test
-# (tests/doctor.bats), because it is the pair doctor also *checks against*: telling
-# somebody an event is missing while documenting a different set of events is the
-# failure that costs them the most. Anyone writing a project README should reference one
-# of these rather than paste a fourth copy, or bind it the way the hook block is bound.
+# The status-line snippet exists in four places — `tama --help`, this file,
+# examples/demo.tmux.conf and README.md — and the Claude Code block in two, here and
+# integrations/claude-code/README.md. Two of those pairs are held together by a test, for
+# the same reason in each case: telling somebody an event is missing while documenting a
+# different set of events, or handing them a recipe that no longer matches the one the
+# diagnosis prints, is the failure that costs them the most.
+#
+#   * the hook block here and the integration README's — tests/doctor.bats
+#   * every `set -g` line here and the README's copy of them — tests/readme.bats, as a
+#     containment in that direction, so a change made here fails until the README
+#     follows it
+#
+# `tama --help` and examples/demo.tmux.conf are still unbound copies. Anyone adding a
+# fifth should reference an existing one rather than paste it, or bind it the way those
+# two are bound.
 # ---------------------------------------------------------------------------
 
 doctor_setup() {

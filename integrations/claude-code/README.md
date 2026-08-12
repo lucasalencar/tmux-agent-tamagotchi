@@ -1,5 +1,17 @@
 # Claude Code
 
+This page is the Claude Code half of the wiring. The tmux half — installing the plugin, and
+putting `#{E:@tama_icons}` and `#{E:@tama_flag}` somewhere in your status line, without which
+nothing appears however well these hooks are configured — is in the [project
+README](../../README.md).
+
+This adapter is **best effort and outside the version promise**: `bin/tama` is the
+compatibility promise and `integrations/` is not (ADR-0002). It tracks a product that changes
+on its own schedule, so it may break when Claude Code changes its hooks, that break does not
+hold a release of the plugin, and the fix reaches you by pulling the plugin rather than by
+editing the settings below. An event a version of this adapter does not recognise is ignored
+in silence.
+
 Paste the block below into your Claude Code settings — `~/.claude/settings.json` for every
 project, `.claude/settings.json` for one — and the icons move on their own. If you already
 have a `hooks` key, merge these entries into it; Claude Code merges hooks across settings
@@ -57,8 +69,9 @@ machine. No absolute path to the plugin appears anywhere in your settings (ADR-0
 
 `tama doctor` prints this same block, and a test asserts the two are byte-for-byte the same
 list of events — doctor is what tells you which of them you are missing, so a block here
-that had drifted from the one it checks against would be the worst of both. Whoever writes
-the project README should point at one of these two rather than paste a third copy.
+that had drifted from the one it checks against would be the worst of both. There are
+deliberately only those two copies: the project README points here instead of pasting a
+third, and `tests/readme.bats` asserts that it keeps doing so.
 
 ## What you get
 
