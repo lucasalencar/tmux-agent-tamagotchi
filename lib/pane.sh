@@ -235,10 +235,42 @@ tama_batch_reset() {
   TAMA_BATCH_COUNT=0
 }
 
-# One tmux command, as its words. tmux takes `;` as its own argument.
+# One tmux command, as its words. tmux takes `;` as its own argument, which is why
+# the separator between commands is added here and never comes from a caller.
+#
+# Every word is escaped on the way in, because tmux reads an argument that *ends* in
+# `;` as the end of a command: it strips the semicolon and starts parsing from the
+# next argument. So a value ending in one is stored without it, and the pane can then
+# never recognise itself again — every later report writes and wakes every client for
+# nothing. How much else it costs depends on where in the command that argument sits.
+# Measured on tmux 3.7b:
+#
+#   * last argument of its command, which is where every value the plugin stores
+#     sits: only that value is truncated. The separator this function already put
+#     after it becomes an empty command, which tmux skips, so the rest of the batch
+#     still runs.
+#   * anywhere else: tmux runs out of arguments for the command it thinks it is
+#     parsing, fails the whole list, and *nothing* in the batch runs at all.
+#
+# It lives here rather than at each caller because there is a caller for every value
+# the plugin stores, and one of them forgot: `notify` writes the agent's name and the
+# label straight into the batch, so both were stored truncated, with only the
+# accident of their position keeping the window mark staged behind them alive.
+#
+# Escaping only the last semicolon is deliberate and is enough: tmux leaves a `;`
+# anywhere else in an argument alone, and unescapes exactly one backslash before the
+# final one — so `a;;` goes out as `a;\;` and comes back `a;;`, and a value that
+# really ends in `\;` goes out as `a\\;` and comes back `a\;`. Both round trips are
+# covered by tests/state.bats.
 tama_batch_add() {
+  local word
   [ "$TAMA_BATCH_COUNT" -eq 0 ] || TAMA_BATCH+=(';')
-  TAMA_BATCH+=("$@")
+  for word in "$@"; do
+    case "$word" in
+      *\;) TAMA_BATCH+=("${word%;}\\;") ;;
+      *) TAMA_BATCH+=("$word") ;;
+    esac
+  done
   TAMA_BATCH_COUNT=$((TAMA_BATCH_COUNT + 1))
 }
 
@@ -249,15 +281,9 @@ tama_batch_add() {
 tama_pane_stage() { # <pane_id> <option> <new> <stored>
   [ "$3" = "$4" ] && return 0
   if [ -n "$3" ]; then
-    # tmux reads an argument that ends in `;` as the end of a command, strips it,
-    # and starts parsing the next one — so a value ending in a semicolon would be
-    # stored without it, and could take the rest of the batch with it. Escaping
-    # only the last one is deliberate: tmux leaves a `;` anywhere else alone, and
-    # would keep the backslash if we escaped it.
-    case "$3" in
-      *\;) tama_batch_add set -p -t "$1" "@tama_pane_$2" "${3%;}\\;" ;;
-      *) tama_batch_add set -p -t "$1" "@tama_pane_$2" "$3" ;;
-    esac
+    # A value that tmux would read as a command separator is escaped by
+    # tama_batch_add, for every caller rather than for this one.
+    tama_batch_add set -p -t "$1" "@tama_pane_$2" "$3"
   else
     tama_batch_add set -puq -t "$1" "@tama_pane_$2"
   fi

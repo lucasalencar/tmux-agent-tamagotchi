@@ -380,6 +380,66 @@ PROVIDER
   assert_equal "$(test_tmux show -p -t "$pane" | grep -c '^@tama_' || true)" '0'
 }
 
+@test "an agent name tmux reads as a command separator leaves the mark all the same" {
+  # tmux takes an argument ending in `;` as the end of a command, so a name like this
+  # used to be stored without its semicolon — disagreeing with what `state running`
+  # stores for the same name, which does escape it.
+  #
+  # The mark is asserted alongside because it is what the truncation puts at risk: the
+  # writes are one batch, and where in a command the mangled argument lands decides
+  # whether tmux merely truncates it or fails the whole list. A delivered banner always
+  # leaves a mark, and that is what lets the user arriving at the window take the banner
+  # down; a banner with no mark behind it stays on the desktop with nothing left to
+  # dismiss it.
+  arrange_two_windows
+  tama_attach_client t
+  test_tmux select-window -t t:0
+
+  local pane window
+  pane="$(tama_pane_of t:1)"
+  window="$(tama_window_id t:1)"
+
+  run "$PLUGIN_ROOT/bin/tama" notify 'Claude;' 'permission needed' --pane "$pane"
+  assert_success
+
+  # Stored whole, which is also what `state running 'Claude;'` stores on the same pane.
+  assert_pane_option "$pane" agent 'Claude;'
+  assert_flagged "$window"
+
+  # And the consequence the mark exists for, end to end.
+  local group
+  group="$(tama_backend_value notify env.TAMA_GROUP)"
+  test_tmux select-window -t t:1
+  wait_until_not_flagged "$window"
+  wait_until_backend_called dismiss
+  assert_backend_value dismiss argv1 "$group"
+}
+
+@test "a label tmux reads as a command separator leaves the mark all the same" {
+  # The other value `notify` writes straight into the batch, and the one the plugin has
+  # least control over: it is the first line of whatever the user's own label provider
+  # printed.
+  local provider="$BATS_TEST_TMPDIR/label"
+  cat >"$provider" <<'PROVIDER'
+#!/bin/sh
+printf 'the ; window;\n'
+PROVIDER
+  chmod +x "$provider"
+  test_tmux set -g @tama_label_command "$provider"
+
+  local pane window
+  pane="$(tama_pane_of t:0)"
+  window="$(tama_window_id t:0)"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+
+  assert_pane_option "$pane" label 'the ; window;'
+  assert_flagged "$window"
+  # The title is expanded after the writes, so it sees the label whole too.
+  assert_contains "$(tama_backend_value notify argv1)" '(the ; window;)' 'the title'
+}
+
 @test "raising and dismissing name the same banner" {
   local pane window
   pane="$(tama_pane_of t:0)"

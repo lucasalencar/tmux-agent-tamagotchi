@@ -483,6 +483,31 @@ teardown() {
   refute_tmux_command 'set'
 }
 
+@test "escaping the last semicolon is enough for any number of them" {
+  # Only the final semicolon is escaped, because that is the only one tmux acts on
+  # and the only one it unescapes — so the rule has to hold for a value ending in
+  # several, for one that is nothing but a semicolon, and for one that ends in a
+  # backslash before it. A value stored as anything other than what was passed would
+  # leave the pane unable to recognise itself, and every later report would write and
+  # wake every client for nothing.
+  local name
+  for name in 'Claude;;' 'Claude;;;' ';' 'Claude\;' 'Cla;ude;'; do
+    run "$PLUGIN_ROOT/bin/tama" state clear --pane "$PANE"
+    assert_success
+    run "$PLUGIN_ROOT/bin/tama" state running "$name" --pane "$PANE"
+    assert_success
+    assert_pane_option "$PANE" agent "$name"
+
+    # And the pane recognises itself afterwards, which is the check that a value
+    # stored as something subtly other than what was passed cannot pass.
+    tama_log_tmux_calls
+    run "$PLUGIN_ROOT/bin/tama" state running "$name" --pane "$PANE"
+    assert_success
+    refute_tmux_command 'set'
+    tama_point_at_server
+  done
+}
+
 @test "state rejects invocations a hook author has to fix" {
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" state
   assert_usage_error
