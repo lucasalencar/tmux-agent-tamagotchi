@@ -44,9 +44,14 @@ teardown() {
   # window being drawn. Rendered rather than compared as a string, because what
   # matters is that tmux and the shell agree on what it means — and reached through
   # the CLI, so it cannot pass on a value the test wrote itself.
-  run "$PLUGIN_ROOT/bin/tama" state running --pane "$(test_tmux list-panes -t t -F '#{pane_id}')"
+  local pane
+  pane="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
+  run "$PLUGIN_ROOT/bin/tama" state running --pane "$pane"
   assert_success
-  assert_equal "$(tama_render_icons t)" ' ●'
+  # Rendered against the window's own id rather than the session, because that is
+  # what the exported format passes: a session name would resolve to whatever window
+  # it is looking at, and would pass an implementation that named windows by index.
+  assert_equal "$(tama_render_icons "$(test_tmux display-message -p -t "$pane" '#{window_id}')")" ' ●'
 }
 
 @test "the exported options are reachable from a tmux format" {

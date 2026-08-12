@@ -55,7 +55,9 @@ boot_demo() {
   assert_equal "$rendered" "$plain"
 
   tama_point_at_server
-  assert_equal "$(tama_render_icons demo)" ''
+  # By window id, which is what the exported format passes: naming the session would
+  # let an index-based implementation pass too.
+  assert_equal "$(tama_render_icons "$(test_tmux display-message -p -t demo '#{window_id}')")" ''
 }
 
 @test "an agent reporting a state moves the icons in the demo status line" {
@@ -69,6 +71,7 @@ boot_demo() {
   assert_success
 
   # The whole slice, through the config a user is told to copy: the state an
-  # agent reported, drawn by the command the demo's status line runs.
-  assert_equal "$(tama_render_icons demo)" ' ●'
+  # agent reported, drawn by the command the demo's status line runs, for the window
+  # id the format hands it.
+  assert_equal "$(tama_render_icons "$(test_tmux display-message -p -t "$pane" '#{window_id}')")" ' ●'
 }
