@@ -68,13 +68,24 @@ machine. No absolute path to the plugin appears anywhere in your settings (ADR-0
 | `SubagentStart`, `SubagentStop` | the pane's subagent count, which is what renders an idle agent with live subagents as working in the background |
 | `SessionEnd` | cleared — no trace left in tmux |
 
-`Notification` is the one event whose payload is looked at, because its type is the only
-thing separating a permission prompt or a question from routine noise like `auth_success`.
-A type this version has not seen is treated as routine. `SubagentStart`/`SubagentStop` read
-one field too, `agent_id`, because the plugin counts delegated runs by the id their agent
-gives them and Claude Code offers that id nowhere but the payload — command hooks
-substitute only `${CLAUDE_PROJECT_DIR}` and its siblings into their arguments. No other
-event reads anything: the states above are decided from the event name alone.
+## The two things that depend on the payload
+
+Every state above is decided from the event name alone, except for two, which read one
+field each out of the JSON Claude Code sends the hook on stdin:
+
+- **Subagent tracking** — and with it the background icon — needs `agent_id` from
+  `SubagentStart`/`SubagentStop`. The plugin counts delegated runs by the id their agent
+  gives them, and Claude Code offers that id nowhere but the payload: command hooks
+  substitute only `${CLAUDE_PROJECT_DIR}` and its siblings into their arguments.
+- **Which notifications mean you are wanted** needs `notification_type` from
+  `Notification`, the only thing separating a permission prompt or a question from routine
+  noise like `auth_success`. A type this version has not seen is treated as routine.
+
+So if a future Claude Code renames or reshapes those fields, these two behaviours are what
+stops working — the background icon goes missing and `Notification` stops raising `waiting`
+— and nothing else changes. The reading is best effort by design: no field, a payload that
+does not arrive, or a value that is not a plain token means the plugin does without it and
+exits 0. It never fails your turn, and never prints into your transcript.
 
 ## If nothing moves
 
@@ -85,5 +96,7 @@ event reads anything: the states above are decided from the event name alone.
 - Hooks configured in a project's `.claude/settings.json` only run after you accept the
   workspace trust prompt for that folder.
 - Claude Code's `claude --debug` prints what each hook did.
+- If everything moves except the background icon, it is the `agent_id` read above that has
+  broken; everything else works without the payload.
 
 Verified against Claude Code 2.1.227.

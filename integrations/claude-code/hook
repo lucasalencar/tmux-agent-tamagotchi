@@ -75,11 +75,25 @@ TAMA_CC_AGENT='claude-code'
 # string matches with no subprocess, on two fields whose values are opaque tokens
 # with no escaping in them. A field it cannot find is a field the adapter does
 # without, quietly, which is the whole of its error handling.
+#
+# Three rules hold this to something that cannot damage a turn, because a hook
+# that misbehaves here degrades the agent rather than the plugin: one bounded
+# read that cannot hang, a bounded amount of it kept, and a value that is not the
+# opaque token it should be is treated as no value at all.
 # ---------------------------------------------------------------------------
 
 TAMA_CC_PAYLOAD=''
 TAMA_CC_PAYLOAD_READ='no'
 TAMA_CC_FIELD=''
+
+# How much of the payload is worth keeping, and how long it is worth waiting for.
+# 64 KiB is far more than the events that need a field ever carry, and small
+# enough that a hook cannot be made to eat memory by one that carries a large
+# tool result. Whole seconds because bash 3.2 — the /bin/bash every macOS ships —
+# cannot do fractional -t; two is long enough for a pipe that is being written to
+# and short enough that a pipe that never will be is not the agent's problem.
+TAMA_CC_PAYLOAD_MAX=65536
+TAMA_CC_PAYLOAD_TIMEOUT=2
 
 # Reads stdin once, into TAMA_CC_PAYLOAD. Only the events that need a field ever
 # call it, so the hot path — a tool call reporting `running` — never touches
@@ -88,15 +102,18 @@ TAMA_CC_FIELD=''
 # A terminal on stdin means a human is running this by hand rather than Claude
 # Code feeding it: reading would hang, and hanging inside a hook is worse than
 # knowing nothing. The timeout is the same bet for a pipe that was opened and
-# never written to.
+# never written to. One read, never a loop waiting for more: whatever a single
+# bounded read got is the whole of what this adapter knows.
 cc_read_payload() {
   [ "$TAMA_CC_PAYLOAD_READ" = 'no' ] || return 0
   TAMA_CC_PAYLOAD_READ='yes'
   [ -t 0 ] && return 0
-  # -d '' reads to EOF, since a JSON payload contains no NUL; the non-zero status
-  # that EOF returns is the normal case and not a failure. Whole seconds because
-  # bash 3.2 — the /bin/bash every macOS ships — cannot do fractional -t.
-  IFS= read -r -d '' -t 5 TAMA_CC_PAYLOAD || true
+  # -d '' keeps newlines, since a pretty-printed payload is still one value and
+  # contains no NUL; -n stops at the cap. Non-zero status is the normal case here
+  # — EOF, the cap, and the timeout all report it with the bytes already in the
+  # variable — so it says nothing this adapter would act on.
+  IFS= read -r -d '' -n "$TAMA_CC_PAYLOAD_MAX" -t "$TAMA_CC_PAYLOAD_TIMEOUT" \
+    TAMA_CC_PAYLOAD || true
   return 0
 }
 
@@ -106,7 +123,11 @@ cc_read_payload() {
 # Scoped to the two opaque-token fields this adapter reads, so it does not have to
 # understand escapes, numbers, or nesting: it finds the name, steps over the colon
 # and the space Claude Code may or may not print, and takes what is between the
-# next two quotes.
+# next two quotes — and then refuses anything that is not a bare token. That last
+# step is what makes not being a JSON parser safe: an escaped quote, a brace, a
+# truncated payload or a value someone hoped would be read as shell all come out
+# of the naive scan as something that is not [A-Za-z0-9_-]+, and a value this
+# cannot vouch for is treated as no value at all.
 cc_field() { # <name>
   TAMA_CC_FIELD=''
   cc_read_payload
@@ -135,7 +156,15 @@ cc_field() { # <name>
   esac
 
   TAMA_CC_FIELD="${rest%%\"*}"
-  [ -n "$TAMA_CC_FIELD" ]
+  [ -n "$TAMA_CC_FIELD" ] || return 1
+
+  # A bare token, and not one that would arrive at the CLI looking like an option.
+  case "$TAMA_CC_FIELD" in
+    -* | *[!A-Za-z0-9_-]*)
+      TAMA_CC_FIELD=''
+      return 1
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------

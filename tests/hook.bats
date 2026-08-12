@@ -380,6 +380,142 @@ PAYLOAD
   assert_equal "$(tama_icons "$WINDOW")" ' ○'
 }
 
+@test "a payload the adapter cannot make sense of leaves the pane alone" {
+  hook SessionStart
+
+  # Truncated, not JSON at all, empty, and an object with nothing in it. A hook
+  # runs inside a turn: whatever arrives, the only acceptable outcomes are no
+  # tracking, exit 0 and not a word on stderr.
+  local broken
+  for broken in '{"agent_id": "agt_cut' 'not json at all' '' '{}' '{"agent_id":}' \
+    '{"agent_id":{"nested":"agt_x"}}' '{"agent_id":12345}'; do
+    hook SubagentStart <<<"$broken"
+    assert_success
+    [ -z "$output" ] || {
+      printf 'a broken payload printed: %s\n' "$output" >&2
+      return 1
+    }
+    [ -z "$stderr" ] || {
+      printf 'a broken payload wrote to stderr: %s\n' "$stderr" >&2
+      return 1
+    }
+    hook Notification <<<"$broken"
+    assert_success
+    [ -z "$stderr" ]
+  done
+
+  assert_pane_option_unset "$PANE" subagents
+  assert_pane_option "$PANE" state_main idle
+}
+
+@test "an id that is not a plain token is not an id" {
+  hook SessionStart
+
+  # The extraction is two string matches, not a JSON parser, so a value carrying
+  # a quote, an escape or a brace is one it has no business believing it read
+  # correctly. Refusing anything but a bare token is what makes that safe.
+  local hostile
+  for hostile in '{"agent_id":"agt\"01"}' '{"agent_id":"agt\\"}' \
+    '{"agent_id":"agt}01"}' '{"agent_id":"agt 01"}' \
+    '{"agent_id":"../../etc/passwd"}' '{"agent_id":"-t"}'; do
+    hook SubagentStart <<<"$hostile"
+    assert_success
+    assert_pane_option_unset "$PANE" subagents
+  done
+}
+
+@test "an id that looks like shell is inert" {
+  hook SessionStart
+
+  # Nothing in the payload is ever eval'd or word-split, so this is expansion
+  # that never happens rather than a value that is filtered out — but the file it
+  # would create is the only proof that reads the same in a year.
+  local canary="$BATS_TEST_TMPDIR/pwned"
+  hook SubagentStart <<<"{\"agent_id\":\"\$(touch $canary)\"}"
+  assert_success
+  hook SubagentStart <<<"{\"agent_id\":\"; touch $canary\"}"
+  assert_success
+  hook SubagentStart <<<'{"agent_id":"$(id -u)"}'
+  assert_success
+
+  [ ! -e "$canary" ] || {
+    printf 'a payload ran a command: %s exists\n' "$canary" >&2
+    return 1
+  }
+  assert_pane_option_unset "$PANE" subagents
+}
+
+@test "a payload larger than the adapter will hold does not stop it reporting" {
+  hook SessionStart
+
+  # A payload is whatever an agent's own event carries, which is not a size this
+  # plugin controls. It reads a bounded amount: the id near the front is found,
+  # and one behind a megabyte of filler is simply an id it does not have.
+  local filler
+  filler="$(printf '%080000d' 0)"
+
+  hook SubagentStart <<<"{\"agent_id\":\"agt_big\",\"filler\":\"$filler\"}"
+  assert_success
+  hook Stop
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+
+  hook SubagentStop <<<"{\"agent_id\":\"agt_big\"}"
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
+
+  hook SubagentStart <<<"{\"filler\":\"$filler\",\"agent_id\":\"agt_beyond\"}"
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
+}
+
+@test "a terminal on stdin is not a payload to wait for" {
+  # Run by hand from a shell — or by anything that hands the hook the user's
+  # terminal — reading stdin would block on a keyboard, inside a turn. A tmux
+  # pane is a real terminal, so this is that situation rather than a stand-in
+  # for it.
+  local statusfile="$BATS_TEST_TMPDIR/tty.status"
+  local target
+  target="$(test_tmux new-window -t t: -P -F '#{pane_id}' \
+    "$PLUGIN_ROOT/bin/tama hook claude-code SubagentStart; \
+     printf '%s' \$? >'$statusfile'; exec sleep 60")"
+
+  local waited=0
+  until [ -s "$statusfile" ]; do
+    waited=$((waited + 1))
+    [ "$waited" -lt 50 ] || {
+      printf 'the hook never came back with a terminal on stdin\n' >&2
+      return 1
+    }
+    sleep 0.1
+  done
+
+  assert_equal "$(cat "$statusfile")" 0
+  assert_pane_option_unset "$target" subagents
+}
+
+@test "a payload that never arrives is given up on" {
+  # An open pipe nothing is written to. The adapter has to come back from that:
+  # a hook that blocks forever stalls the agent's turn, which is worse than any
+  # icon it could have got right.
+  local fifo="$BATS_TEST_TMPDIR/silence.fifo"
+  mkfifo "$fifo"
+  sleep 30 >"$fifo" &
+  local holder=$!
+
+  local start=$SECONDS
+  TMUX_PANE="$PANE" run --separate-stderr \
+    "$PLUGIN_ROOT/bin/tama" hook claude-code SubagentStart <"$fifo"
+  local elapsed=$((SECONDS - start))
+  kill "$holder" 2>/dev/null || true
+
+  assert_success
+  [ -z "$stderr" ]
+  assert_pane_option_unset "$PANE" subagents
+  [ "$elapsed" -lt 10 ] || {
+    printf 'SubagentStart waited %ss for a payload that never came\n' "$elapsed" >&2
+    return 1
+  }
+}
+
 @test "the hot path never waits on stdin" {
   # `running` is reported on every tool call. A hook that read stdin there would
   # sit inside the turn waiting for a payload it does not need, and a writer that
