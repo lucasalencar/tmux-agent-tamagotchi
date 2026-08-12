@@ -12,11 +12,13 @@
 #   * it is an executable file, run with the subcommand name already shifted off
 #   * $TMUX is non-empty (the dispatcher has already made an absent tmux a no-op),
 #     unless it is one of the subcommands exempted in main() — `focus-window`, which
-#     runs from a notification click where there is no $TMUX to have. `doctor`, which
-#     has to be able to say that there is no server, will want the same exemption.
+#     runs from a notification click where there is no $TMUX to have, and `doctor`,
+#     which has to be able to say that there is no server
 #   * $TAMA_PLUGIN_DIR and $TAMA_BIN are exported; it must source lib/common.sh
 #     itself, since it runs as its own process
-#   * exit 2 is reserved for usage errors; every other failure exits 0 silently
+#   * exit 2 is reserved for usage errors; every other failure exits 0 silently —
+#     with one deliberate exception, `doctor`, which nothing runs from a hook and
+#     which exits non-zero precisely so it can be used as a check
 
 set -o nounset
 
@@ -107,6 +109,14 @@ Subcommands:
                         window, so its flag goes and its panes are swept. With
                         --all the sweep covers the whole server, which is what
                         the client-focus-in and client-attached hooks ask for.
+  doctor                Say what this installation is doing and why it is not doing
+                        the rest — the tmux version, which backend was chosen and for
+                        what reason, which notifier binary and from where, and what
+                        your configuration would defeat. Prints the setup recipes too,
+                        and exits non-zero when something is broken, so it can be
+                        dropped into a script. The one command here that reports a
+                        failure rather than exiting 0 quietly, and it runs with no
+                        tmux server, because that is one of the answers it gives.
   hook <agent> <event>  Hand an event to the adapter shipped for that agent, in
                         integrations/<agent>/hook, which is where everything
                         particular to it lives. Claude Code users wire this and
@@ -253,6 +263,8 @@ Behaviour agent hooks rely on:
     loudly while you are editing it.
   * Anything else that goes wrong — no such pane, missing notifier, a banner
     that would not appear — exits 0 silently and never fails an agent's turn.
+    'doctor' is the deliberate exception: nothing runs it from a hook, and it
+    exits 1 when it found something broken so a script can act on it.
   * No subcommand reads stdin. All input is arguments; jq is not a dependency.
 
 Nothing is installed onto \$PATH. Hooks find this file by asking tmux, which is
@@ -301,16 +313,21 @@ main() {
     die_usage "unknown subcommand: $subcommand"
   fi
 
-  # From here on the command acts on tmux, so an absent server is a no-op — with one
-  # exemption, which is the promise made in the header above.
+  # From here on the command acts on tmux, so an absent server is a no-op — with two
+  # exemptions, which are the promise made in the header above.
   #
   # `focus-window` is the last step of a notification's click action, and a click
   # arrives in a process the desktop started: no $TMUX anywhere in its environment.
   # Making it a no-op there would make every click do nothing at all, silently, on the
   # one path a user judges the whole feature by. It needs no tmux server of its own —
   # it hands a session name to the backend and nothing else.
+  #
+  # `doctor` is the other, for the opposite reason: "there is no tmux server here" is
+  # one of the answers it exists to give, and a user whose plugin never loaded has no
+  # server to run it from. A doctor that goes quiet outside tmux is silent exactly when
+  # it is needed.
   case "$subcommand" in
-    focus-window) ;;
+    focus-window | doctor) ;;
     *) require_tmux ;;
   esac
 

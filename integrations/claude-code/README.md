@@ -55,6 +55,11 @@ follows and the reason it survives you moving the plugin: bail out when there is
 talk to, ask tmux where the plugin is, bail out again if it is not installed on this
 machine. No absolute path to the plugin appears anywhere in your settings (ADR-0003).
 
+`tama doctor` prints this same block, and a test asserts the two are byte-for-byte the same
+list of events — doctor is what tells you which of them you are missing, so a block here
+that had drifted from the one it checks against would be the worst of both. Whoever writes
+the project README should point at one of these two rather than paste a third copy.
+
 ## What you get
 
 | Event | What the pane shows | Banner |
@@ -134,6 +139,13 @@ the plugin does without it and exits 0. It never fails your turn, and never prin
 transcript.
 
 ## If nothing moves
+
+**Run `tama doctor` first.** It answers most of what follows without you having to guess
+which one it is: which backend was chosen and why, which notifier binary it resolved to and
+from where, whether your status line ever asks for the icons, whether your title
+configuration can match, and whether the events below are wired — including `Notification`,
+whose absence is checked by name because it is the one that leaves everything else looking
+healthy. It exits non-zero when something is broken and prints the setup recipes either way.
 
 - The plugin has to be loaded in the tmux server the agent is running in — `tmux show -gqv
   @tama_bin` from that pane must print a path.

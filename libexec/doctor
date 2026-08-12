@@ -1,0 +1,896 @@
+#!/usr/bin/env bash
+#
+# doctor — what this installation is doing, and why it is not doing the rest.
+#
+#   tama doctor
+#
+# The command a user runs when they were not notified. It answers, in order, every
+# question that stands between an agent's hook and a banner on the screen: is this tmux
+# new enough, is the plugin loaded in this server, is the status line asking for the
+# icons, which backend was chosen and *why*, which binary that backend will run and
+# where it was found, whether the focus check can ever match, and whether the agent's
+# own hooks are wired. Then it prints the setup recipes, so the same command that says
+# what is missing also says what to paste.
+#
+# Two rules hold the rest of this file together.
+#
+# **It runs without a tmux server.** bin/tama exempts it from `require_tmux` alongside
+# `focus-window`, because a doctor that is a silent no-op outside tmux is useless
+# exactly when it is needed — a user whose plugin never loaded has no server to run it
+# from. Everything here therefore treats an unreachable tmux as an answer ("there is no
+# server, so the values below are the defaults") rather than as a reason to stop.
+#
+# **It is the one command that exits non-zero, and the split is deliberate**:
+#
+#   * `fail` — *broken*: the plugin cannot do what this machine's own configuration
+#     says it should. A tmux too old for the entrypoint to wire anything; a plugin
+#     absent from the server every hook asks; a backend the user *named* that cannot
+#     run. Exit 1, so `tama doctor` works as a CI check of the installation.
+#   * `warn` — *worth knowing*: the plugin will do exactly what it was configured to,
+#     and that is probably not what the user wanted. No icons in the status line, a
+#     title configuration the focus check can never match, a Claude Code hook that was
+#     not wired. Exit status unaffected.
+#   * `ok` — including the deliberate silences. `@tama_backend ''` is a configuration
+#     and not a fault, and neither is a `none` backend on a machine with no notifier,
+#     though that one is worth a warning since it is usually the answer to "why was I
+#     not told anything".
+#
+# The rest of the CLI exits 0 on everything except a usage error, because the rest of
+# the CLI runs inside an agent's turn (see bin/tama). Nothing runs this from a hook.
+
+# Almost every string in this file is prose printed at the user, and prose about a shell
+# plugin is full of `$PATH`, `$DBUS_SESSION_BUS_ADDRESS` and `set -g` in backticks. They
+# are single-quoted precisely so they are *not* expanded, which is what SC2016 exists to
+# ask about; file-wide rather than per-line because there are a few dozen of them.
+# shellcheck disable=SC2016
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+# The version comparison lives in lib/version.sh rather than in the entrypoint precisely
+# so that this file can reach the same verdict the entrypoint did; two implementations
+# of "supported" would eventually disagree. A failed `.` does not stop a script, so it
+# is checked the way lib/common.sh checks its own siblings.
+if [ ! -r "$TAMA_PLUGIN_DIR/lib/version.sh" ]; then
+  printf 'tama: no lib/version.sh under %s; this plugin directory is incomplete\n' \
+    "$TAMA_PLUGIN_DIR" >&2
+  exit 1
+fi
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/version.sh
+. "$TAMA_PLUGIN_DIR/lib/version.sh"
+
+TAMA_DOCTOR_PROBLEMS=0
+TAMA_DOCTOR_WARNINGS=0
+
+# Whether tmux answered at all, decided once. Everything that reads configuration says
+# so when the answer is a default rather than this server's.
+TAMA_DOCTOR_SERVER='no'
+
+# ---------------------------------------------------------------------------
+# Saying things
+#
+# One stream — stdout — for every verdict, including the failures, so that the order
+# the checks ran in survives being piped into a file or a CI log. stderr is reserved
+# for the usage error, which is the one thing here that is the user's mistake rather
+# than their machine's state.
+# ---------------------------------------------------------------------------
+
+doctor_section() { # <name>
+  printf '\n%s\n' "$1"
+}
+
+doctor_line() { # <marker> <text>
+  printf '  %-5s%s\n' "$1" "$2"
+}
+
+# A continuation, under the verdict it belongs to. An empty one is a blank line and not
+# seven spaces: this output is meant to be pasted out of, and trailing whitespace comes
+# with it.
+doctor_more() { # <text>
+  if [ -z "$1" ]; then
+    printf '\n'
+    return 0
+  fi
+  printf '       %s\n' "$1"
+}
+
+doctor_ok() { # <text>
+  doctor_line ok "$1"
+}
+
+doctor_warn() { # <text>
+  TAMA_DOCTOR_WARNINGS=$((TAMA_DOCTOR_WARNINGS + 1))
+  doctor_line warn "$1"
+}
+
+doctor_fail() { # <text>
+  TAMA_DOCTOR_PROBLEMS=$((TAMA_DOCTOR_PROBLEMS + 1))
+  doctor_line fail "$1"
+}
+
+# ---------------------------------------------------------------------------
+# tmux, and whether the plugin is in it
+# ---------------------------------------------------------------------------
+
+# Whether a tmux server answered. `list-sessions` is a read: tmux reports "no server
+# running" and exits non-zero rather than starting one, which matters because a doctor
+# that booted a server to look at it would be reporting on a server it created.
+doctor_server_reachable() {
+  tmux_run list-sessions >/dev/null 2>&1
+}
+
+doctor_tmux() {
+  doctor_section 'tmux'
+
+  local version
+  version="$(tama_tmux_version)"
+
+  if [ -z "$version" ]; then
+    doctor_fail "no tmux: '$TAMA_TMUX -V' said nothing, so there is nothing to install into"
+    return 0
+  fi
+
+  if tama_version_at_least "$version" "$TAMA_MIN_TMUX_VERSION"; then
+    doctor_ok "tmux $version, and the minimum is $TAMA_MIN_TMUX_VERSION"
+  else
+    doctor_fail "tmux $version is older than the minimum $TAMA_MIN_TMUX_VERSION"
+    doctor_more 'Below the minimum the entrypoint wires nothing at all, on purpose: a'
+    doctor_more 'half-installed plugin produces symptoms that are harder to read than'
+    doctor_more 'this sentence. Nothing else below will work until tmux is newer.'
+  fi
+
+  if doctor_server_reachable; then
+    TAMA_DOCTOR_SERVER='yes'
+    doctor_ok 'a tmux server answered, so the configuration below is really yours'
+  else
+    doctor_warn 'no tmux server is running, so every option below is its default'
+    doctor_more 'and not what your server has. Run this again from inside tmux to see'
+    doctor_more 'your own configuration.'
+  fi
+}
+
+doctor_plugin() {
+  doctor_section 'the plugin'
+
+  doctor_ok "$(doctor_version_line), at $TAMA_PLUGIN_DIR"
+
+  if [ "$TAMA_DOCTOR_SERVER" = 'no' ]; then
+    doctor_more 'Whether it is loaded into a tmux server cannot be told from here.'
+    return 0
+  fi
+
+  local wired
+  wired="$(tama_opt tama_bin '')"
+
+  if [ -z "$wired" ]; then
+    doctor_fail 'the plugin is not loaded in this tmux server: @tama_bin is not set'
+    doctor_more 'Every hook recipe and the icon format find this plugin by asking tmux'
+    doctor_more 'for @tama_bin, so with it unset nothing runs at all — no icons, no'
+    doctor_more 'flags, no banners. The setup section below has the line to add.'
+    return 0
+  fi
+
+  if [ "$wired" = "$TAMA_BIN" ]; then
+    doctor_ok "loaded: @tama_bin is $wired"
+  else
+    doctor_warn "@tama_bin is $wired, which is not this clone"
+    doctor_more "This file is $TAMA_BIN. Your hooks and your status line are running"
+    doctor_more 'the other one, so a change made here changes nothing you can see.'
+  fi
+
+  if [ "$(tama_opt tama_manage_hooks on)" != 'on' ]; then
+    doctor_ok '@tama_manage_hooks is off: tmux hooks are yours to wire'
+    doctor_more 'Nothing here wires after-select-window, after-select-pane,'
+    doctor_more 'client-focus-in or client-attached, so whatever clears a window mark'
+    doctor_more 'and sweeps dead agents has to be in your own configuration.'
+    return 0
+  fi
+
+  # Looked for by the option name the recipes are written in terms of rather than by
+  # the recipes themselves: the entrypoint owns that list, and a copy of it here would
+  # be a second list to keep in step.
+  if tmux_run show-hooks -g 2>/dev/null | grep -qF -- '@tama_bin'; then
+    doctor_ok "the plugin's tmux hooks are wired in this server"
+  else
+    doctor_warn "the plugin's tmux hooks are not wired in this server"
+    doctor_more 'A window mark is cleared by you selecting the window and by nothing'
+    doctor_more 'else, and dead agents are swept from the same events, so without the'
+    doctor_more 'hooks a flag raised once stays up. Reload your tmux configuration.'
+  fi
+}
+
+# What `tama version` says, asked rather than duplicated: the version is bin/tama's own
+# and this is the one place that would go stale.
+doctor_version_line() {
+  local line
+  line="$("$TAMA_BIN" version 2>/dev/null)" || line=''
+  printf '%s' "${line:-tama (version unknown)}"
+}
+
+# ---------------------------------------------------------------------------
+# The status line
+#
+# The plugin never writes one (ADR-0003): the entrypoint exports @tama_icons and
+# @tama_flag and the user interpolates them wherever they want. So the commonest way to
+# see nothing at all is a status line that never mentions them, and it looks exactly
+# like a plugin that is not working.
+# ---------------------------------------------------------------------------
+
+doctor_status_line() {
+  doctor_section 'the status line'
+
+  if [ "$TAMA_DOCTOR_SERVER" = 'no' ]; then
+    doctor_more 'No server to read window-status-format from; see the setup section.'
+    return 0
+  fi
+
+  local normal current
+  normal="$(tmux_run show -gv window-status-format 2>/dev/null)" || normal=''
+  current="$(tmux_run show -gv window-status-current-format 2>/dev/null)" || current=''
+
+  doctor_status_line_option 'window-status-format' "$normal" \
+    'the windows you are not looking at'
+  doctor_status_line_option 'window-status-current-format' "$current" \
+    'the window you are looking at'
+}
+
+doctor_status_line_option() { # <option> <value> <what it draws>
+  local has_icons='no' has_flag='no'
+  case "$2" in *'@tama_icons'*) has_icons='yes' ;; esac
+  case "$2" in *'@tama_flag'*) has_flag='yes' ;; esac
+
+  if [ "$has_icons" = 'yes' ] && [ "$has_flag" = 'yes' ]; then
+    doctor_ok "$1 draws both the icons and the flag"
+    return 0
+  fi
+
+  if [ "$has_icons" = 'no' ] && [ "$has_flag" = 'no' ]; then
+    doctor_warn "$1 mentions neither @tama_icons nor @tama_flag"
+    doctor_more "so nothing at all is drawn on $3. The plugin never rewrites a"
+    doctor_more 'status line for you; the setup section below has the lines to paste.'
+    return 0
+  fi
+
+  if [ "$has_icons" = 'no' ]; then
+    doctor_warn "$1 does not mention @tama_icons: no icons on $3"
+  else
+    doctor_warn "$1 does not mention @tama_flag: no attention mark on $3"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Notifications: which backend, and why that one
+# ---------------------------------------------------------------------------
+
+# The capabilities a backend may ship, and what the absence of each one costs. Read out
+# of the resolved directory rather than assumed, because a backend is a directory of up
+# to four executables and shipping fewer is the documented way to say "this platform
+# cannot" (backends/README.md).
+TAMA_DOCTOR_CAPABILITIES='notify
+dismiss
+focused
+focus'
+
+doctor_notifications() {
+  doctor_section 'notifications'
+
+  if [ "$(tama_opt tama_notifications on)" = 'on' ]; then
+    doctor_ok '@tama_notifications is on'
+  else
+    doctor_ok '@tama_notifications is off: no banners, deliberately'
+    doctor_more 'The icons and the window mark are unaffected — they are inside tmux'
+    doctor_more 'and cost nothing. Everything below still describes what would happen.'
+  fi
+
+  local configured
+  configured="$(tama_opt tama_backend auto)"
+
+  case "$configured" in
+    '')
+      doctor_ok "@tama_backend is the empty string: every capability is off, deliberately"
+      doctor_more 'That is a configuration and not a fault — it is how you turn banners'
+      doctor_more 'off without touching the four capability overrides.'
+      doctor_backend_overrides
+      return 0
+      ;;
+    auto) doctor_backend_auto ;;
+    /*) doctor_backend_named 'an absolute path, so it is taken as it is' ;;
+    */* | .*)
+      doctor_fail "@tama_backend is '$configured', which cannot name a backend"
+      doctor_more 'A name with a slash or a leading dot would reach out of backends/,'
+      doctor_more 'so it is refused the way a subcommand of that shape is, and every'
+      doctor_more 'capability is off. Use a bare name or an absolute path.'
+      doctor_backend_overrides
+      return 0
+      ;;
+    *) doctor_backend_named "the bare name '$configured', looked up in backends/" ;;
+  esac
+
+  doctor_backend_capabilities
+  doctor_backend_overrides
+}
+
+# `@tama_backend auto`, and the whole of why it landed where it did.
+#
+# There are four distinct ways this can end at `none`, and collapsing them into "no
+# backend found" is precisely what would leave a user hunting. The one that looks most
+# like a bug is a Mac with `notify-send` installed: Homebrew's glib ships one, macOS has
+# no notification daemon for it to talk to, and `auto` refuses it on purpose. That is
+# said out loud below rather than left to be discovered.
+doctor_backend_auto() {
+  if tama_backend_is_darwin; then
+    if tama_macos_notifier; then
+      doctor_ok "backend: $TAMA_BACKEND_MACOS — 'auto' on a Mac with $TAMA_MACOS_NOTIFIER_NAME"
+      doctor_binary tama_terminal_notifier "$TAMA_MACOS_NOTIFIER_NAME" \
+        "$TAMA_MACOS_NOTIFIER_DIRS"
+      tama_backend_dir
+      return 0
+    fi
+
+    doctor_warn "backend: $TAMA_BACKEND_NONE — no banners on this machine"
+    doctor_more "This is a Mac, so 'auto' wants the $TAMA_BACKEND_MACOS backend, and:"
+    doctor_binary tama_terminal_notifier "$TAMA_MACOS_NOTIFIER_NAME" \
+      "$TAMA_MACOS_NOTIFIER_DIRS"
+    doctor_more "Install it — 'brew install $TAMA_MACOS_NOTIFIER_NAME' — or point"
+    doctor_more '@tama_terminal_notifier at your own build. Set @tama_backend to the'
+    doctor_more 'empty string if you meant to have no banners at all.'
+    doctor_backend_auto_darwin_libnotify
+    tama_backend_dir
+    return 0
+  fi
+
+  if tama_libnotify_send; then
+    doctor_ok "backend: $TAMA_BACKEND_LIBNOTIFY — 'auto' off a Mac with $TAMA_LIBNOTIFY_SEND_NAME"
+    doctor_binary tama_notify_send "$TAMA_LIBNOTIFY_SEND_NAME" \
+      "$TAMA_LIBNOTIFY_SEND_DIRS"
+    tama_backend_dir
+    return 0
+  fi
+
+  doctor_warn "backend: $TAMA_BACKEND_NONE — no banners on this machine"
+  doctor_more "This is not a Mac, so 'auto' asks about $TAMA_LIBNOTIFY_SEND_NAME and"
+  doctor_more 'nothing else — a BSD or a WSL with a freedesktop daemon counts. And:'
+  doctor_binary tama_notify_send "$TAMA_LIBNOTIFY_SEND_NAME" "$TAMA_LIBNOTIFY_SEND_DIRS"
+  doctor_more "Install libnotify, or point @tama_notify_send at your own build. Set"
+  doctor_more '@tama_backend to the empty string if you meant to have no banners.'
+  tama_backend_dir
+}
+
+# The reason that reads as a bug: a Mac that *does* have `notify-send`.
+doctor_backend_auto_darwin_libnotify() {
+  tama_libnotify_send || return 0
+  doctor_more "You do have $TAMA_LIBNOTIFY_SEND_NAME here ($TAMA_LIBNOTIFY_SEND), and"
+  doctor_more "'auto' deliberately did not pick the $TAMA_BACKEND_LIBNOTIFY backend"
+  doctor_more 'with it: macOS has no freedesktop notification daemon, so the banner'
+  doctor_more 'would be sent into nothing with no error anywhere. This is not a bug.'
+}
+
+# A backend the user named, by bare name or by absolute path. Named is the word that
+# matters: `auto` choosing silence on a machine with no notifier is a working
+# configuration, while a backend somebody asked for that cannot run is broken.
+doctor_backend_named() { # <how it was named>
+  tama_backend_dir
+
+  if [ ! -d "$TAMA_BACKEND_DIR" ]; then
+    doctor_fail "@tama_backend resolves to $TAMA_BACKEND_DIR, which is not a directory"
+    doctor_more "You gave $1, and a backend is a directory of up to four executables."
+    doctor_more 'Nothing there means no capabilities at all: no banners, no dismissal,'
+    doctor_more 'no focus check, and a click that does not raise your terminal.'
+    return 0
+  fi
+
+  doctor_ok "backend: $TAMA_BACKEND_DIR"
+  doctor_more "Named by $1."
+
+  # The two that ship here have a binary they are nothing without, and naming one on a
+  # machine that has not got it is a promise the backend cannot keep.
+  case "$TAMA_BACKEND_DIR" in
+    "$TAMA_PLUGIN_DIR/backends/$TAMA_BACKEND_MACOS")
+      if tama_macos_notifier; then
+        doctor_binary tama_terminal_notifier "$TAMA_MACOS_NOTIFIER_NAME" \
+          "$TAMA_MACOS_NOTIFIER_DIRS"
+      else
+        doctor_fail "you named the $TAMA_BACKEND_MACOS backend and its notifier is missing"
+        doctor_binary tama_terminal_notifier "$TAMA_MACOS_NOTIFIER_NAME" \
+          "$TAMA_MACOS_NOTIFIER_DIRS"
+        doctor_more 'Every capability is a process started to fail. `auto` would have'
+        doctor_more 'chosen silence here instead; naming the backend overrides that.'
+      fi
+      ;;
+    "$TAMA_PLUGIN_DIR/backends/$TAMA_BACKEND_LIBNOTIFY")
+      if tama_libnotify_send; then
+        doctor_binary tama_notify_send "$TAMA_LIBNOTIFY_SEND_NAME" \
+          "$TAMA_LIBNOTIFY_SEND_DIRS"
+      else
+        doctor_fail "you named the $TAMA_BACKEND_LIBNOTIFY backend and its binary is missing"
+        doctor_binary tama_notify_send "$TAMA_LIBNOTIFY_SEND_NAME" \
+          "$TAMA_LIBNOTIFY_SEND_DIRS"
+        doctor_more 'Every banner is a process started to fail. `auto` would have chosen'
+        doctor_more 'silence here instead; naming the backend overrides that.'
+      fi
+      doctor_backend_session_bus
+      ;;
+  esac
+}
+
+# Which binary a platform backend will run, and where it came from — resolved through
+# lib/backend.sh's own resolver rather than searched again here, because `auto` and the
+# backend agreeing about that is the whole reason that function is shared. What is added
+# here is only the classification of the answer: an override, `$PATH`, or one of the
+# install directories `$PATH` did not cover.
+doctor_binary() { # <option> <name> <dirs>
+  local configured on_path
+  configured="$(tama_opt "$1" '')"
+
+  if ! tama_resolve_binary "$1" "$2" "$3"; then
+    case "$configured" in
+      */*)
+        doctor_more "@$1 names $configured, which is not an executable file. A path you"
+        doctor_more 'give is used as given or not at all — searching for the basename of'
+        doctor_more 'a path you spelled out would run a different program than you named.'
+        ;;
+      '')
+        doctor_more "$2 is not on \$PATH and not in $3."
+        ;;
+      *)
+        doctor_more "@$1 names '$configured', which is not on \$PATH and not in $3."
+        ;;
+    esac
+    return 1
+  fi
+
+  case "$configured" in
+    */*)
+      doctor_more "$2: $TAMA_BINARY, named outright by @$1."
+      return 0
+      ;;
+  esac
+
+  on_path="$(command -v "${configured:-$2}" 2>/dev/null)" || on_path=''
+  if [ -n "$on_path" ] && [ "$on_path" = "$TAMA_BINARY" ]; then
+    doctor_more "$2: $TAMA_BINARY, found on \$PATH."
+    return 0
+  fi
+
+  doctor_more "$2: $TAMA_BINARY, found in ${TAMA_BINARY%/*} — not on this \$PATH."
+  doctor_more 'That is why those directories are searched: neither an agent hook nor a'
+  doctor_more 'process the desktop starts for a click is a login shell.'
+}
+
+# `notify-send` finds the notification daemon through the session bus and through
+# nothing else. Reported whenever the libnotify backend is in play, on any platform,
+# because that is when it decides whether a banner appears.
+doctor_backend_session_bus() {
+  if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+    doctor_ok '$DBUS_SESSION_BUS_ADDRESS is set, so notify-send has a bus to reach'
+    return 0
+  fi
+  doctor_warn '$DBUS_SESSION_BUS_ADDRESS is not set in this shell'
+  doctor_more 'notify-send reaches the notification daemon over the session bus and has'
+  doctor_more 'no other way to; without one every banner fails silently. An agent hook'
+  doctor_more "inherits the agent's environment, not this one, so check it there too:"
+  doctor_more 'a systemd unit, an ssh session, or a tmux server that outlived the'
+  doctor_more 'desktop session it was started in are the usual ways to lose it.'
+}
+
+# Which of the four a resolved backend actually ships, and what each absence costs. An
+# absence is not an error — it is how a backend says its platform cannot do something.
+doctor_backend_capabilities() {
+  [ -n "${TAMA_BACKEND_DIR:-}" ] || return 0
+  [ -d "$TAMA_BACKEND_DIR" ] || return 0
+
+  local capability present='' missing=''
+  while IFS= read -r capability; do
+    [ -n "$capability" ] || continue
+    if [ -f "$TAMA_BACKEND_DIR/$capability" ] && [ -x "$TAMA_BACKEND_DIR/$capability" ]; then
+      present="$present $capability"
+    else
+      missing="$missing $capability"
+    fi
+  done <<EOF
+$TAMA_DOCTOR_CAPABILITIES
+EOF
+
+  if [ -z "$present" ]; then
+    doctor_fail 'that backend ships none of the four capabilities'
+    doctor_more 'A backend is a directory holding up to four executables named notify,'
+    doctor_more 'dismiss, focused and focus. With none of them nothing happens at all.'
+    return 0
+  fi
+
+  doctor_ok "capabilities:$present"
+  [ -n "$missing" ] || return 0
+
+  doctor_more "not shipped:$missing — each absence degrades rather than failing:"
+  for capability in $missing; do
+    case "$capability" in
+      notify)
+        doctor_more '  no notify: there are no banners at all.'
+        ;;
+      dismiss)
+        doctor_more '  no dismiss: a banner waits for the desktop to retire it.'
+        ;;
+      focused)
+        doctor_more '  no focused: nothing is ever suppressed, so you are told about'
+        doctor_more '  windows you are looking at. Noise, never silence.'
+        ;;
+      focus)
+        doctor_more '  no focus: a click selects the window and the pane but does not'
+        doctor_more '  bring the terminal forward.'
+        ;;
+    esac
+  done
+}
+
+# A capability replaced wholesale by the user's own command line, which happens before
+# the backend is consulted at all — so a backend that looks broken above may be beside
+# the point.
+doctor_backend_overrides() {
+  local capability override any='no'
+  while IFS= read -r capability; do
+    [ -n "$capability" ] || continue
+    override="$(tama_opt "tama_${capability}_command" '')"
+    [ -n "$override" ] || continue
+    any='yes'
+    doctor_ok "@tama_${capability}_command replaces the $capability capability"
+    doctor_more "  $override"
+  done <<EOF
+$TAMA_DOCTOR_CAPABILITIES
+EOF
+  [ "$any" = 'no' ] || doctor_more 'The backend is not consulted for those.'
+}
+
+# ---------------------------------------------------------------------------
+# The focus check
+#
+# ADR-0004: a banner is suppressed only when tmux says the window is current in its own
+# session with somebody attached *and* the backend says the terminal really is in front.
+# The backend half identifies the terminal window by its title, which is why the title
+# configuration is worth a warning — and worth saying which way it fails.
+# ---------------------------------------------------------------------------
+
+doctor_focus() {
+  doctor_section 'the focus check'
+
+  if [ "$(tama_opt tama_suppress_when_focused on)" != 'on' ]; then
+    doctor_ok '@tama_suppress_when_focused is off: every banner is delivered'
+    doctor_more 'Including for the window you are looking at. Deliberate, and the way'
+    doctor_more 'to stop the backend being asked a question that costs a process.'
+    return 0
+  fi
+
+  tama_backend_export_terminal
+  doctor_ok "terminal: $TAMA_TERMINAL_APP (@tama_terminal_app), bundle id $TAMA_TERMINAL_BUNDLE_ID"
+  doctor_more 'Neither tmux nor this plugin can tell which application is displaying a'
+  doctor_more 'session, so that is a guess unless you set it. Wrong, and the focus'
+  doctor_more 'check never matches and a click never raises your window.'
+
+  # The title check is about the backend that matches on titles: the one shipped here.
+  # A third-party backend's `focused` may identify a window any way it likes.
+  if [ "${TAMA_BACKEND_DIR:-}" != "$TAMA_PLUGIN_DIR/backends/$TAMA_BACKEND_MACOS" ]; then
+    return 0
+  fi
+
+  if [ "$TAMA_DOCTOR_SERVER" = 'no' ]; then
+    doctor_more 'No server to read set-titles from; see the setup section.'
+    return 0
+  fi
+
+  local titles string
+  titles="$(tmux_run show -gv set-titles 2>/dev/null)" || titles=''
+  string="$(tmux_run show -gv set-titles-string 2>/dev/null)" || string=''
+
+  if [ "$titles" != 'on' ]; then
+    doctor_warn "set-titles is '$titles', so tmux never writes your terminal's title"
+    doctor_focus_title_cost
+    return 0
+  fi
+
+  case "$string" in
+    '#S' | '#{session_name}')
+      doctor_ok "set-titles is on and set-titles-string is '$string'"
+      ;;
+    *)
+      doctor_warn "set-titles-string is '$string', which is not the session name alone"
+      doctor_more 'The backend compares the front window title against the session name'
+      doctor_more "for equality, not containment — a title that merely has #S in it"
+      doctor_more "will not match. Set it to '#S' exactly."
+      doctor_focus_title_cost
+      ;;
+  esac
+}
+
+# Which way it fails, said out loud, because a warning that implies silence sends people
+# hunting the wrong bug entirely.
+doctor_focus_title_cost() {
+  doctor_more 'What this costs is **extra banners, never missing ones**: the check can'
+  doctor_more 'never recognise the window you are looking at, so it answers "not'
+  doctor_more 'focused" and the banner is delivered. That is the direction ADR-0004'
+  doctor_more 'fails in on purpose. Fix it with:'
+  doctor_more '  set -g set-titles on'
+  doctor_more "  set -g set-titles-string '#S'"
+}
+
+# ---------------------------------------------------------------------------
+# Claude Code
+#
+# The adapter is best effort and outside the version promise (ADR-0002), and a user who
+# does not run Claude Code is not misconfigured. But one specific way of wiring it is a
+# silent, total loss of banners that leaves every other symptom looking healthy, and it
+# is the reason this section exists at all: see the note at the top of
+# integrations/claude-code/hook.
+# ---------------------------------------------------------------------------
+
+# The events the README's block wires, in its order. A test asserts this list and that
+# block are the same list, so printing the recipe below cannot drift from checking it.
+TAMA_DOCTOR_CC_EVENTS='SessionStart
+UserPromptSubmit
+PostToolUse
+PostToolUseFailure
+PermissionRequest
+Notification
+Stop
+StopFailure
+SubagentStart
+SubagentStop
+SessionEnd'
+
+# Where Claude Code reads settings from, most general first. Only the files that exist;
+# a user with none of them has simply not wired anything.
+doctor_cc_dir() {
+  printf '%s' "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
+}
+
+doctor_cc_settings() {
+  local dir
+  dir="$(doctor_cc_dir)"
+  TAMA_DOCTOR_CC_FILES=''
+  doctor_cc_settings_file "$dir/settings.json"
+  doctor_cc_settings_file "$dir/settings.local.json"
+  doctor_cc_settings_file "$PWD/.claude/settings.json"
+  doctor_cc_settings_file "$PWD/.claude/settings.local.json"
+}
+
+doctor_cc_settings_file() { # <path>
+  [ -f "$1" ] || return 0
+  [ -r "$1" ] || return 0
+  TAMA_DOCTOR_CC_FILES="$TAMA_DOCTOR_CC_FILES$1
+"
+}
+
+# Whether any settings file wires this plugin for that event. Deliberately a search for
+# the adapter invocation rather than a JSON parse — `jq` is not a dependency of this
+# plugin (ADR-0001) and a hook command is a shell line the user may have edited. The
+# trailing boundary is what keeps `PostToolUse` from matching `PostToolUseFailure`.
+doctor_cc_wired() { # <event>
+  local file
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    if grep -qE -- "claude-code $1([^A-Za-z0-9_-]|\$)" "$file" 2>/dev/null; then
+      return 0
+    fi
+  done <<EOF
+$TAMA_DOCTOR_CC_FILES
+EOF
+  return 1
+}
+
+doctor_claude_code() {
+  doctor_section 'claude code'
+
+  doctor_cc_settings
+
+  if [ -z "$TAMA_DOCTOR_CC_FILES" ]; then
+    doctor_ok 'no Claude Code settings file found, so nothing is wired here'
+    doctor_more "Looked in $(doctor_cc_dir) and $PWD/.claude. If you do not run Claude"
+    doctor_more 'Code that is the whole answer; the setup section below has the block'
+    doctor_more 'if you do.'
+    return 0
+  fi
+
+  local file
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    doctor_more "read: $file"
+  done <<EOF
+$TAMA_DOCTOR_CC_FILES
+EOF
+
+  if ! doctor_cc_any; then
+    doctor_ok 'those settings do not wire this plugin at all'
+    doctor_more 'Nothing in them calls `tama hook claude-code`. The setup section below'
+    doctor_more 'has the block to merge in.'
+    return 0
+  fi
+
+  # The one worth checking by name. Everything else can be missing and produce a partial
+  # symptom; this one produces a healthy-looking installation with no banners in it.
+  if doctor_cc_wired Notification; then
+    doctor_ok 'the Notification event is wired'
+  else
+    doctor_warn 'the Notification event is NOT wired, and that is a total loss of banners'
+    doctor_more 'PermissionRequest deliberately raises no banner — Claude Code sends a'
+    doctor_more 'Notification for the same interruption a few seconds later, and that is'
+    doctor_more "the event carrying the sentence the agent wrote. Without it a permission"
+    doctor_more 'prompt moves the icon and marks the window and never says a word, while'
+    doctor_more 'every other symptom looks perfectly healthy. This is what a hand-merged'
+    doctor_more '`hooks` key usually drops.'
+  fi
+
+  local event
+  while IFS= read -r event; do
+    [ -n "$event" ] || continue
+    [ "$event" != 'Notification' ] || continue
+    doctor_cc_wired "$event" && continue
+    doctor_warn "the $event event is not wired: $(doctor_cc_cost "$event")"
+  done <<EOF
+$TAMA_DOCTOR_CC_EVENTS
+EOF
+  return 0
+}
+
+# Whether anything at all in those files reaches this plugin.
+doctor_cc_any() {
+  local file
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    if grep -qF -- 'hook claude-code' "$file" 2>/dev/null; then
+      return 0
+    fi
+  done <<EOF
+$TAMA_DOCTOR_CC_FILES
+EOF
+  return 1
+}
+
+# What a missing event costs, in the user's terms.
+doctor_cc_cost() { # <event>
+  case "$1" in
+    SessionStart) printf '%s' 'a pane shows no agent until its first prompt' ;;
+    UserPromptSubmit) printf '%s' 'the icon does not move when you submit a prompt' ;;
+    PostToolUse | PostToolUseFailure)
+      printf '%s' 'the icon does not follow the agent through its turn'
+      ;;
+    PermissionRequest)
+      printf '%s' 'the icon and the mark wait for the banner instead of arriving first'
+      ;;
+    Stop) printf '%s' 'no banner when a turn ends, which is what most people install this for' ;;
+    StopFailure) printf '%s' 'no banner when a turn dies on an API error' ;;
+    SubagentStart | SubagentStop)
+      printf '%s' 'no background icon: an idle agent with live subagents reads as finished'
+      ;;
+    SessionEnd) printf '%s' 'an agent that exits leaves its icon until something sweeps the pane' ;;
+    *) printf '%s' 'that event is not handed to the plugin' ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# The setup recipe
+#
+# Printed every time rather than only when something is missing: this command is also
+# the answer to "how do I set this up", and a recipe that appears only on failure is one
+# nobody can find on purpose.
+#
+# The status-line snippet now exists in three places — `tama --help`, this file, and
+# examples/demo.tmux.conf — and the Claude Code block in two, here and
+# integrations/claude-code/README.md. Only the second pair is held together by a test
+# (tests/doctor.bats), because it is the pair doctor also *checks against*: telling
+# somebody an event is missing while documenting a different set of events is the
+# failure that costs them the most. Anyone writing a project README should reference one
+# of these rather than paste a fourth copy, or bind it the way the hook block is bound.
+# ---------------------------------------------------------------------------
+
+doctor_setup() {
+  doctor_section 'setup — loading the plugin'
+  tama_shell_quote "$TAMA_PLUGIN_DIR/tamagotchi.tmux"
+  doctor_more 'With TPM, the usual `set -g @plugin` line. Without it, in tmux.conf:'
+  doctor_more ''
+  doctor_more "  run-shell $TAMA_QUOTED"
+
+  doctor_section 'setup — the status line'
+  doctor_more 'Nothing writes your status line for you. Put the two formats the'
+  doctor_more 'entrypoint exports wherever you want them — both lines, or the window'
+  doctor_more 'you are looking at is the one without icons. Keeping window_flags keeps'
+  doctor_more "tmux's own zoom and bell markers, without the space it pads with, since"
+  doctor_more 'the icons bring their own:'
+  doctor_more ''
+  doctor_more "  set -g window-status-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'"
+  doctor_more "  set -g window-status-current-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'"
+  doctor_more ''
+  doctor_more 'A window with no agent in it renders as just its name — the icons are'
+  doctor_more 'empty because there is nothing to draw. That is correct, and it is the'
+  doctor_more 'thing most often mistaken for the plugin not working: open an agent in a'
+  doctor_more 'pane and the icon appears on the next redraw.'
+
+  doctor_section 'setup — the title, for the focus check'
+  doctor_more 'The macOS backend recognises the terminal window showing a session by its'
+  doctor_more 'title, and compares it to the session name exactly:'
+  doctor_more ''
+  doctor_more '  set -g set-titles on'
+  doctor_more "  set -g set-titles-string '#S'"
+
+  doctor_setup_claude_code
+}
+
+doctor_setup_claude_code() {
+  doctor_section 'setup — the Claude Code hooks'
+  doctor_more 'For every project, merge this into'
+  doctor_more "  $(doctor_cc_dir)/settings.json"
+  doctor_more 'or, for one project, into its own .claude/settings.json. If you already'
+  doctor_more 'have a `hooks` key, merge these entries into it — and keep Notification.'
+  doctor_more "Full notes: $TAMA_PLUGIN_DIR/integrations/claude-code/README.md"
+  printf '\n'
+  printf '%s\n' '{'
+  printf '%s\n' '  "hooks": {'
+
+  local event first='yes'
+  while IFS= read -r event; do
+    [ -n "$event" ] || continue
+    [ "$first" = 'yes' ] || printf '%s\n' '    ],'
+    first='no'
+    printf '    "%s": [\n' "$event"
+    printf '      { "hooks": [ { "type": "command", "command": "%s%s" } ] }\n' \
+      '[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code ' \
+      "$event"
+  done <<EOF
+$TAMA_DOCTOR_CC_EVENTS
+EOF
+
+  printf '%s\n' '    ]'
+  printf '%s\n' '  }'
+  printf '%s\n' '}'
+  printf '\n'
+  doctor_more 'No path to this plugin appears in there: each command asks tmux for'
+  doctor_more '@tama_bin, which is what keeps it working when you move the clone and'
+  doctor_more 'quiet on a machine where the plugin is not installed (ADR-0003).'
+}
+
+# ---------------------------------------------------------------------------
+
+doctor_summary() {
+  printf '\n'
+  if [ "$TAMA_DOCTOR_PROBLEMS" -gt 0 ]; then
+    printf '%s and %s: something here is broken.\n' \
+      "$(doctor_count "$TAMA_DOCTOR_PROBLEMS" problem)" \
+      "$(doctor_count "$TAMA_DOCTOR_WARNINGS" warning)"
+    return 1
+  fi
+  if [ "$TAMA_DOCTOR_WARNINGS" -gt 0 ]; then
+    printf 'no problems and %s: nothing is broken, but read them.\n' \
+      "$(doctor_count "$TAMA_DOCTOR_WARNINGS" warning)"
+    return 0
+  fi
+  printf 'no problems and no warnings.\n'
+}
+
+doctor_count() { # <n> <noun>
+  if [ "$1" -eq 1 ]; then
+    printf '1 %s' "$2"
+    return 0
+  fi
+  printf '%s %ss' "$1" "$2"
+}
+
+main() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --) shift ;;
+      *) die_usage "doctor takes no arguments, got: $1" ;;
+    esac
+  done
+
+  doctor_tmux
+  doctor_plugin
+  doctor_status_line
+  doctor_notifications
+  doctor_focus
+  doctor_claude_code
+  doctor_setup
+  doctor_summary
+}
+
+main "$@"

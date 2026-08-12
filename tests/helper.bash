@@ -264,6 +264,15 @@ assert_output_contains() {
   assert_contains "$output" "$1" 'stdout'
 }
 
+refute_output_contains() {
+  case "$output" in
+    *"$1"*)
+      printf 'expected stdout NOT to contain %s\ngot: %s\n' "$1" "$output" >&2
+      return 1
+      ;;
+  esac
+}
+
 assert_stderr_contains() {
   assert_contains "$stderr" "$1" 'stderr'
 }
