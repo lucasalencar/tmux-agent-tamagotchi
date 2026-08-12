@@ -4,6 +4,18 @@
 # `tama hook <agent> <event>`. The adapter's own file is never invoked directly —
 # it is only reachable through the CLI, which is the only surface a user's
 # settings.json ever names.
+#
+# Everything here is a synthesised payload, which is the only way any of it is worth
+# running in CI. Two notes for whoever checks this against a *live* agent instead,
+# both learned the hard way:
+#
+#   * point the agent at a throwaway server (`tmux -L <name>`) with the backend off or
+#     set to a recording stand-in, or the first event puts a real banner on somebody's
+#     desktop — `@tama_backend auto` resolves to a real notifier on a developer's
+#     machine
+#   * `tmux send-keys -t <pane> '<prompt>' Enter` in one call intermittently leaves the
+#     prompt sitting unsubmitted in the agent's input box. Send the text and the Enter
+#     as two separate calls
 
 bats_require_minimum_version 1.7.0
 
