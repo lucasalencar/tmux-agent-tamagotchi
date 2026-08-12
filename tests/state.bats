@@ -346,19 +346,29 @@ teardown() {
   # exists for. Losing a start is the failure that matters: a pane with a live
   # subagent would look finished.
   #
-  # The race is driven rather than raced for. Both calls read the empty list; `b`
-  # writes first; `a`'s write is held up long enough to land on top of it and drop
-  # it; and `b`'s read-back is held up until after that, so it is `b` that has to
-  # notice its id is gone and put it back.
+  # The race is driven rather than raced for, and by events rather than by clocks,
+  # so a slow machine cannot turn it into two calls that never overlap. Both calls
+  # read the empty list; `b` writes first; `a`'s write waits for that and lands on
+  # top of it, dropping it; and `b`'s read-back waits for *that*, so it is `b` that
+  # has to notice its id is gone and put it back.
   tama_log_tmux_calls
+  local wrote_a="$BATS_TEST_TMPDIR/a-wrote" wrote_b="$BATS_TEST_TMPDIR/b-wrote"
 
   TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-a" \
-    TAMA_FAKE_TMUX_DELAY_BEFORE=2 TAMA_FAKE_TMUX_DELAY=0.4 \
+    TAMA_FAKE_TMUX_WAIT_BEFORE=2 TAMA_FAKE_TMUX_WAIT_FOR="$wrote_b" \
+    TAMA_FAKE_TMUX_TOUCH_AFTER=2 TAMA_FAKE_TMUX_TOUCH="$wrote_a" \
     "$PLUGIN_ROOT/bin/tama" state subagent-start sub-a --pane "$PANE" &
   TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-b" \
-    TAMA_FAKE_TMUX_DELAY_BEFORE=3 TAMA_FAKE_TMUX_DELAY=0.8 \
+    TAMA_FAKE_TMUX_TOUCH_AFTER=2 TAMA_FAKE_TMUX_TOUCH="$wrote_b" \
+    TAMA_FAKE_TMUX_WAIT_BEFORE=3 TAMA_FAKE_TMUX_WAIT_FOR="$wrote_a" \
     "$PLUGIN_ROOT/bin/tama" state subagent-start sub-b --pane "$PANE" &
   wait
+
+  # The race really happened: both wrote, and somebody had to write again. Without
+  # that third write this test would be asserting nothing.
+  [ -e "$wrote_a" ]
+  [ -e "$wrote_b" ]
+  [ "$(grep -cx set "$TAMA_FAKE_TMUX_LOG")" -ge 3 ]
 
   local list
   list="$(test_tmux show -p -t "$PANE" -v @tama_pane_subagents)"
@@ -410,6 +420,14 @@ teardown() {
   # it would come back empty on every later read.
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" state running "$(printf 'Cla\nude')" --pane "$PANE"
   assert_usage_error 'newline'
+  assert_pane_option_unset "$PANE" state_main
+
+  # And the separator the record is packed with, which would shift every field
+  # after it and leave the pane unable to recognise itself.
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" state running "$(printf 'Cla\037ude')" --pane "$PANE"
+  assert_usage_error
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" state subagent-start "$(printf 'su\037b')" --pane "$PANE"
+  assert_usage_error
   assert_pane_option_unset "$PANE" state_main
 
   # A hook that failed to interpolate its variable, rather than a state from a

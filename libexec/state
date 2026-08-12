@@ -18,6 +18,11 @@
 # A state this plugin does not know is not a hook author's mistake to shout
 # about: agents grow event types, and a hook wired to a newer plugin must stay
 # quiet on an older one.
+#
+# Note for whoever adds the window flag: nothing here writes when nothing changed,
+# so anything that must happen on the *event* rather than on the change — raising a
+# flag for a question the user has already dismissed once — cannot live behind that
+# short-circuit.
 
 set -o nounset
 
@@ -32,35 +37,38 @@ TAMA_SUBAGENT_ATTEMPTS=5
 TAMA_SUBAGENT_RETRY_DELAY=0.05
 
 # Records a state, plus the snapshot that stale-state detection needs later to
-# notice the agent is gone.
-#
-# Note for whoever adds the window flag: this writes nothing when nothing changed,
-# so anything that must happen on the *event* rather than on the change — raising a
-# flag for a question the user has already dismissed once — cannot live behind the
-# short-circuit below. Writes only what changed, and nothing at all when nothing did: the
-# `running` state is reported on every tool call, which makes this the one
-# genuinely hot write path in the plugin. Skipping the write skips the client
-# refresh with it, which is the expensive half.
+# notice the agent is gone. Writes only what changed, and nothing at all when
+# nothing did: the `running` state is reported on every tool call, which makes this
+# the one genuinely hot write path in the plugin. Skipping the write skips the
+# client refresh with it, which is the expensive half.
 report() {
-  local pane="$1" main="$2" name="$3" was refresh='no'
+  local pane="$1" state_main="$2" name="$3" refresh='no'
   tama_pane_read "$pane" || exit 0
 
   # Only a different icon is worth redrawing every client for; a pane whose command
-  # or path merely moved is a cheap write and nothing a user can see. Both sides go
-  # through the derivation, so what is compared is what a user would see.
-  tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS"
-  was="$TAMA_PANE_DERIVED"
-  tama_pane_derive "$main" "$TAMA_PANE_SUBAGENTS"
-  tama_pane_display_changed "$was" "$TAMA_PANE_DERIVED" && refresh='yes'
+  # or path merely moved is a cheap write and nothing a user can see.
+  tama_pane_derive "$state_main" "$TAMA_PANE_SUBAGENTS"
+  tama_pane_display_changed "$TAMA_PANE_DISPLAY" "$TAMA_PANE_DERIVED" && refresh='yes'
 
-  # Staged as <new> then <stored>: the CURRENT_ values are what the pane is doing
+  # The snapshot comes from tmux, not from the hook, so a value the record cannot
+  # hold is nobody's mistake to be told about — but storing it would shift every
+  # field after it on the next read and leave the pane unable to recognise itself.
+  # A pane in a directory named like that simply has no snapshot.
+  local snapshot_cmd="$TAMA_PANE_CURRENT_CMD" snapshot_cwd="$TAMA_PANE_CURRENT_PATH"
+  tama_pane_value_is_storable "$snapshot_cmd" || snapshot_cmd=''
+  tama_pane_value_is_storable "$snapshot_cwd" || snapshot_cwd=''
+
+  # Staged as <new> then <stored>: the snapshot_ values are what the pane is doing
   # now, the others what it last said. Swapping the pair in the `cmd` or `cwd` line
   # would silently invert the comparison stale-state detection makes.
   tama_batch_reset
-  tama_pane_stage "$TAMA_PANE_ID" state_main "$main" "$TAMA_PANE_STATE_MAIN"
-  tama_pane_stage "$TAMA_PANE_ID" cmd "$TAMA_PANE_CURRENT_CMD" "$TAMA_PANE_CMD"
+  tama_pane_stage "$TAMA_PANE_ID" state_main "$state_main" "$TAMA_PANE_STATE_MAIN"
+  tama_pane_stage "$TAMA_PANE_ID" cmd "$snapshot_cmd" "$TAMA_PANE_CMD"
   tama_pane_stage "$TAMA_PANE_ID" agent "${name:-$TAMA_PANE_AGENT}" "$TAMA_PANE_AGENT"
-  tama_pane_stage "$TAMA_PANE_ID" cwd "$TAMA_PANE_CURRENT_PATH" "$TAMA_PANE_CWD"
+  tama_pane_stage "$TAMA_PANE_ID" cwd "$snapshot_cwd" "$TAMA_PANE_CWD"
+  # Not error handling: a flush with nothing staged says so by its status, and this
+  # is the last command of the script, so without this the hot path — a repeated
+  # `state running` — would exit non-zero out of an agent's hook.
   tama_batch_flush "$refresh" || true
 }
 
@@ -77,8 +85,7 @@ clear_pane() {
   tama_pane_read "$pane" || exit 0
 
   # Clearing an agent pane takes an icon away, which is a change a user sees.
-  tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS"
-  tama_pane_display_changed "$TAMA_PANE_DERIVED" '' && refresh='yes'
+  tama_pane_display_changed "$TAMA_PANE_DISPLAY" '' && refresh='yes'
 
   tama_batch_reset
   tama_pane_stage "$TAMA_PANE_ID" state_main '' "$TAMA_PANE_STATE_MAIN"
@@ -86,6 +93,7 @@ clear_pane() {
   tama_pane_stage "$TAMA_PANE_ID" cmd '' "$TAMA_PANE_CMD"
   tama_pane_stage "$TAMA_PANE_ID" agent '' "$TAMA_PANE_AGENT"
   tama_pane_stage "$TAMA_PANE_ID" cwd '' "$TAMA_PANE_CWD"
+  # As in report(): nothing staged is not a failure, and this is the exit status.
   tama_batch_flush "$refresh" || true
 }
 
@@ -99,9 +107,9 @@ clear_pane() {
 #
 # tmux has no atomic read-modify-write, so the list is maintained optimistically:
 # read, modify, write, read back, and try again from a fresh read if the list no
-# longer says what this call needed it to say. The recomputation is inside the
-# loop deliberately — a retry that recomputed from the list it lost the race with
-# would store a display state that contradicts the list next to it.
+# longer says what this call needed it to say. Everything an attempt decides — what
+# the list should become, whether the screen changes — is decided inside the loop,
+# from the read that attempt made.
 #
 # What "worked" means is the caller's own id, not the list: a start is done when
 # its id is there and a stop when its id is gone. Comparing the whole list instead
@@ -117,13 +125,13 @@ clear_pane() {
 # which is what the retries are for. A lock in a shell script invoked on every
 # subagent event would cost more than any of it.
 subagent() {
-  local target="$1" verb="$2" id="$3" attempt=1 pane wanted was refresh
+  local target="$1" verb="$2" id="$3" attempt=1 wanted was refresh
   while :; do
     tama_pane_read "$target" || exit 0
     # From here on the pane is addressed by its own id: a target given by index
     # could come to mean another pane while this loop is still running.
-    pane="$TAMA_PANE_ID"
-    target="$pane"
+    target="$TAMA_PANE_ID"
+    was="$TAMA_PANE_DISPLAY"
 
     case "$verb" in
       subagent-start) tama_subagents_add "$TAMA_PANE_SUBAGENTS" "$id" ;;
@@ -131,19 +139,28 @@ subagent() {
     esac
     wanted="$TAMA_SUBAGENTS_NEW"
 
-    tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS"
-    was="$TAMA_PANE_DERIVED"
     tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$wanted"
     refresh='no'
     tama_pane_display_changed "$was" "$TAMA_PANE_DERIVED" && refresh='yes'
 
     tama_batch_reset
-    tama_pane_stage "$pane" subagents "$wanted" "$TAMA_PANE_SUBAGENTS"
+    tama_pane_stage "$target" subagents "$wanted" "$TAMA_PANE_SUBAGENTS"
     # Nothing to write: a duplicate start, or a stop for an id that is not there.
     tama_batch_flush "$refresh" || return 0
 
-    tama_pane_read "$pane" || return 0
-    subagent_settled "$verb" "$TAMA_PANE_SUBAGENTS" "$id" && return 0
+    tama_pane_read "$target" || return 0
+    if subagent_settled "$verb" "$TAMA_PANE_SUBAGENTS" "$id"; then
+      # The read-back is also the one chance to notice that the other half of the
+      # pane moved underneath this write. A state report and a subagent event each
+      # judge the refresh from the half they did not write, and the pair an agent
+      # ends a turn with — its own `idle` and its last subagent stopping — arrives
+      # together. Whoever finishes second and finds the screen owed an update pays
+      # for it here, rather than leaving it wrong until the next status tick.
+      [ "$refresh" = 'yes' ] ||
+        ! tama_pane_display_changed "$was" "$TAMA_PANE_DISPLAY" ||
+        tmux_run refresh-client -S >/dev/null 2>&1 || true
+      return 0
+    fi
 
     attempt=$((attempt + 1))
     [ "$attempt" -le "$TAMA_SUBAGENT_ATTEMPTS" ] || return 0
@@ -205,9 +222,8 @@ main() {
     esac
   done
 
-  [ "$positional" -ge 1 ] || die_usage 'state needs a state'
-  # A hook that failed to interpolate its variable, not a state from a version
-  # that does not exist yet.
+  # An empty one counts as missing: that is a hook that failed to interpolate its
+  # variable, not a state from a version that does not exist yet.
   [ -n "$state" ] || die_usage 'state needs a state'
 
   # --pane overrides the pane the hook happens to run in, which wrappers lose and

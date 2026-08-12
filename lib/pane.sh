@@ -17,17 +17,27 @@
 # Sourced by lib/common.sh, so every command has it.
 #
 # Why one round trip: `state running` is reported on every tool call of every
-# agent, and a tmux round trip costs a few milliseconds. Reading six options with
-# six `show -p` calls would cost more than the event being reported.
+# agent, and a tmux round trip costs a few milliseconds. Reading the pane's five
+# options one `show -p` at a time would cost more than the event being reported.
 
 # Field separator for the batched read and write. A unit separator appears in no
 # pane id, state name, agent name or path anybody will ever have.
 TAMA_US=$'\037'
 
-# What the icons read, as a format. Written here, next to the writer of the values,
-# because a rename on one side and not the other would leave every status line
-# empty with nothing to say why.
+# Everything a status line needs about one pane, as a format, and the one function
+# that takes such a record apart. Both live here, next to the writer of the values:
+# a rename or a reordering on one side and not the other would leave every status
+# line empty with nothing to say why.
 TAMA_PANE_RENDER_FORMAT="#{@tama_pane_state_main}$TAMA_US#{@tama_pane_subagents}"
+
+# Derives the state of one such record. Parameter expansion rather than `read`,
+# because the caller is the icon command and it must not fork.
+tama_pane_derive_record() { # <record>
+  local main="${1%%"$TAMA_US"*}" rest="${1#*"$TAMA_US"}"
+  # Everything after the first separator is the subagent list, so a record that
+  # grows a field cannot quietly turn every idle pane into a busy one.
+  tama_pane_derive "$main" "${rest%%"$TAMA_US"*}"
+}
 
 # The read: the pane's identity, everything it last said about itself — there are
 # five options and no state file, the tmux server is the database — and the live
@@ -51,9 +61,11 @@ TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{pane_current_path}"
 # pane: display-message reports that by expanding #{pane_id} to nothing rather
 # than by failing, so the id is what gets checked.
 #
-# Sets TAMA_PANE_ID and one variable per field. TAMA_PANE_ID is the canonical
-# `%id`, which is what every write below targets — the caller may well have been
-# given a pane by index, and an index moves.
+# Sets TAMA_PANE_ID and one variable per field, plus TAMA_PANE_DISPLAY: what this
+# pane draws as of this read, since every writer needs it to decide whether a
+# refresh is owed. TAMA_PANE_ID is the canonical `%id`, which is what every write
+# below targets — the caller may well have been given a pane by index, and an index
+# moves.
 # The fields are this library's output, read by its callers rather than by it.
 # shellcheck disable=SC2034
 tama_pane_read() {
@@ -75,6 +87,8 @@ $raw
 EOF
   # The last field ends at the newline the here-document adds, not at a separator.
   TAMA_PANE_CURRENT_PATH="${TAMA_PANE_CURRENT_PATH%$'\n'}"
+  tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS"
+  TAMA_PANE_DISPLAY="$TAMA_PANE_DERIVED"
   [ -n "$TAMA_PANE_ID" ]
 }
 

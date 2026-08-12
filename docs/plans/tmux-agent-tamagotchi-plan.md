@@ -15,9 +15,10 @@ on their current scripts and keep working; the plugin is developed and verified 
 against a throwaway tmux server. Migrating the dotfiles over is a separate, later effort,
 sketched at the end.
 
-Domain vocabulary is in [`CONTEXT.md`](../../CONTEXT.md). Four decisions carry their own
+Domain vocabulary is in [`CONTEXT.md`](../../CONTEXT.md). Five decisions carry their own
 rationale in [`docs/adr/`](../adr/): argv instead of hook payloads, integrations outside the
-contract, no writes outside the plugin directory, focus suppression as an `AND`.
+contract, no writes outside the plugin directory, focus suppression as an `AND`, and the
+derived state not being stored — the one place where the code has overruled this plan.
 
 Source of truth for behavior to port (read, don't modify):
 `tmux/scripts/tmux-agent-state`, `tmux-agent-icon`, `tmux-clear-stale-status`,
@@ -90,8 +91,8 @@ except `icons` and `doctor`.
 
 | Subcommand | Effect |
 | --- | --- |
-| `state <running\|waiting\|idle\|error\|clear> [agent_name]` | Write `…_state_main`, recompute derived `…_state`, record `…_cmd`/`_agent`/`_cwd`. `waiting` and `error` also raise the window flag. |
-| `state subagent-start <id>` / `subagent-stop <id>` | Add/remove from `…_subagents`, recompute |
+| `state <running\|waiting\|idle\|error\|clear> [agent_name]` | Write `…_state_main`, record `…_cmd`/`_agent`/`_cwd`. `waiting` and `error` also raise the window flag. |
+| `state subagent-start <id>` / `subagent-stop <id>` | Add/remove from `…_subagents` |
 | `flag [target]` / `unflag [target]` | Raise/clear the flag directly (integrations rarely need these) |
 | `notify <agent_name> <message>` | Suppression check → title expansion → backend `notify`; also raises the flag |
 | `dismiss [target]` | Backend `dismiss` for that window's group id |
@@ -124,7 +125,7 @@ The tmux server *is* the database — no files.
 | --- | --- | --- |
 | `@pane_status_main` | `@tama_pane_state_main` | pane |
 | `@pane_agent_ids` | `@tama_pane_subagents` | pane |
-| `@pane_status` | `@tama_pane_state` (derived) | pane |
+| `@pane_status` | *gone* — derived where it is read (ADR-0005) | — |
 | `@pane_command` | `@tama_pane_cmd` | pane |
 | `@pane_name` | `@tama_pane_agent` | pane |
 | `@pane_cwd` | `@tama_pane_cwd` | pane |
@@ -133,10 +134,12 @@ The tmux server *is* the database — no files.
 **Derivation**: `state_main == idle` with at least one subagent renders as `background`
 (`⚙`), not `running` — this is the state that was rendered but never produced in the current
 system. With `@tama_show_background off` it renders as `running` (i.e. "don't distinguish",
-not "hide").
+not "hide"). It is **not stored**: two writers of a stored derived value raced in the
+ordinary end-of-turn event pair, so `icons` derives it from `state_main` + `subagents`, read
+together in the one call it already makes (ADR-0005).
 
-**Writes**: if the recomputed display state equals the stored one, skip the write *and* the
-`refresh-client -S`. `state running` fires on every `PostToolUse`, so this is the highest-
+**Writes**: if what a write would change is invisible, skip the `refresh-client -S`; if
+nothing changed at all, skip the write too. `state running` fires on every `PostToolUse`, so this is the highest-
 value optimization in the port. `clear` **unsets** options (`set -pu`) rather than writing
 empty strings — a cleared pane is not an agent pane.
 
@@ -280,7 +283,7 @@ states the best-effort promise (ADR-0002).
   backend, `@tama_refresh off`. Requires the `$TMUX_CMD` indirection (default `tmux`,
   overridable via `TAMA_TMUX`) in every script.
 - Cases worth locking down: `idle` + subagent → `background`; `show_background off` renders
-  `running`; `clear` unsets all three pane options; duplicate `subagent-start` is idempotent;
+  `running`; `clear` unsets every pane option; duplicate `subagent-start` is idempotent;
   `subagent-stop` on an unknown id is a no-op; a second `state running` writes nothing and
   refreshes nothing; `icons` respects `show_idle off` and emits nothing (not a bare space)
   with no agent panes; `gc` clears when `…_pane_cmd` differs and preserves when it matches;
@@ -326,7 +329,7 @@ tmux -L tama-demo attach -t demo     # in a spare window
 1. `doctor` prints tmux version, resolved backend and why, dependencies, the status-line
    snippet and the hook recipe; exits non-zero if anything is broken.
 2. `state running Test` → `●`; `waiting` → `◐` **and** `*` if not the active window;
-   `state clear` → gone, and `tmux show -p @tama_pane_state` reports nothing at all.
+   `state clear` → gone, and `tmux show -p` reports no `@tama_` option on the pane at all.
 3. Subagents: `state subagent-start a`, then `state idle` → `⚙`; `subagent-stop a` → `○`.
 4. Short-circuit: `state running` twice in a row → the second writes nothing (assert via a
    `TAMA_TMUX` wrapper that logs calls).

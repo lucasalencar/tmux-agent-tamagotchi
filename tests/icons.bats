@@ -139,6 +139,36 @@ report() {
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" icons "$WINDOW" extra
   assert_usage_error
+
+  # A format that failed to expand, rather than a request for whichever window
+  # tmux would have picked — which would draw one window's icons onto another.
+  report "$PANE" running
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" icons ''
+  assert_usage_error
+}
+
+@test "a pane with subagents but no state of its own is not an agent pane" {
+  # Reachable from an agent whose subagent hook fires before any state hook: the
+  # pane has a subagent list and nothing else, and a list alone is not a state.
+  report "$PANE" subagent-start sub-1
+
+  assert_equal "$(tama_icons "$WINDOW")" ''
+}
+
+@test "the icons are not exported for a plugin path a status line cannot express" {
+  # `#{q:}` escapes what a shell acts on, but not a newline: the job would become
+  # two commands, and the second would run once per window per status interval.
+  local plugin
+  plugin="$(printf '%s/one\ntwo/tamagotchi' "$BATS_TEST_TMPDIR")"
+  mkdir -p "$plugin"
+  tama_copy_plugin "$plugin"
+
+  run --separate-stderr "$plugin/tamagotchi.tmux"
+  assert_success
+  [ -n "$stderr" ]
+  assert_equal "$(test_tmux show -gqv @tama_icons)" ''
+  # Everything else still loads: the icons are one feature, not the plugin.
+  assert_equal "$(test_tmux show -gqv @tama_bin)" "$(cd -P "$plugin" && pwd)/bin/tama"
 }
 
 @test "the exported format renders the icons the way a status line would" {

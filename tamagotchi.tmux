@@ -78,7 +78,20 @@ main() {
   # same byte-for-byte escape list since well before the tmux this plugin
   # requires, and the value of an option is not expanded again, so a `#` or a `%`
   # in the path is inert.
-  tmux_run set -g @tama_icons '#(#{q:@tama_bin} icons #{window_id})'
+  #
+  # `#{q:}` escapes what a shell would act on, but not a newline or a tab: a path
+  # holding either would turn one command into two, and the second would run once
+  # per window per status interval. Nothing can quote that, so a clone living at
+  # such a path gets everything except the icons, and is told why.
+  case "$TAMA_PLUGIN_DIR" in
+    *[$'\n\t']*)
+      warning='tamagotchi: this path has a newline or a tab in it, which a status'
+      warning="$warning line cannot express; the icons were not exported"
+      printf '%s\n' "$warning" >&2
+      tmux_run display-message "$warning"
+      ;;
+    *) tmux_run set -g @tama_icons '#(#{q:@tama_bin} icons #{window_id})' ;;
+  esac
 
   # A failed write is not worth failing a config reload over.
   return 0

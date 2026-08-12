@@ -11,13 +11,16 @@
 #                                agent's hook firing and this running
 #   TAMA_FAKE_TMUX_LOG           file the calls are appended to
 #   TAMA_FAKE_TMUX_SOCKET        socket name of the test server
-#   TAMA_FAKE_TMUX_COUNTER       file counting this caller's calls, for the delay below
-#   TAMA_FAKE_TMUX_DELAY_BEFORE  which of that caller's calls to hold up
-#   TAMA_FAKE_TMUX_DELAY         how long to hold it up, in seconds
+#   TAMA_FAKE_TMUX_COUNTER       file counting this caller's calls, for the two below
+#   TAMA_FAKE_TMUX_WAIT_BEFORE   which of that caller's calls waits for the file …
+#   TAMA_FAKE_TMUX_WAIT_FOR      … named here to exist
+#   TAMA_FAKE_TMUX_TOUCH_AFTER   which of that caller's calls creates the file …
+#   TAMA_FAKE_TMUX_TOUCH         … named here, once it has run
 #
-# The delay exists so that a test can *drive* a race between two CLI processes
-# instead of starting them at once and hoping: holding up one call at a known point
-# puts the two in a known order.
+# Those exist so that a test can *drive* a race between two CLI processes instead
+# of starting them at once and hoping. Holding one call until the other side has
+# reached a known point puts the two in a known order however slow the machine is,
+# which a sleep cannot promise.
 
 set -o nounset
 
@@ -28,12 +31,21 @@ if [ -n "${TAMA_FAKE_TMUX_LOG:-}" ] && [ "$#" -gt 0 ]; then
   printf '%s\n' "$@" >>"$TAMA_FAKE_TMUX_LOG"
 fi
 
+tama_call_number=0
 if [ -n "${TAMA_FAKE_TMUX_COUNTER:-}" ]; then
   # One line per call, so the count survives across these short-lived processes.
   printf 'x\n' >>"$TAMA_FAKE_TMUX_COUNTER"
-  if [ "$(wc -l <"$TAMA_FAKE_TMUX_COUNTER")" -eq "${TAMA_FAKE_TMUX_DELAY_BEFORE:-0}" ]; then
-    sleep "${TAMA_FAKE_TMUX_DELAY:-0}"
-  fi
+  tama_call_number="$(wc -l <"$TAMA_FAKE_TMUX_COUNTER")"
+fi
+
+if [ "$tama_call_number" -eq "${TAMA_FAKE_TMUX_WAIT_BEFORE:-0}" ] &&
+  [ -n "${TAMA_FAKE_TMUX_WAIT_FOR:-}" ]; then
+  # Bounded, so a test that gets the ordering wrong fails instead of hanging.
+  tama_waited=0
+  while [ ! -e "$TAMA_FAKE_TMUX_WAIT_FOR" ] && [ "$tama_waited" -lt 100 ]; do
+    sleep 0.1
+    tama_waited=$((tama_waited + 1))
+  done
 fi
 
 if [ -n "${TAMA_FAKE_TMUX_FAIL_ALL:-}" ]; then
@@ -44,6 +56,14 @@ if [ "${1:-}" = '-V' ]; then
   [ -z "${TAMA_FAKE_TMUX_FAIL_VERSION:-}" ] || exit 1
   printf '%s\n' "${TAMA_FAKE_TMUX_VERSION:-$(tmux -V)}"
   exit 0
+fi
+
+if [ "$tama_call_number" -eq "${TAMA_FAKE_TMUX_TOUCH_AFTER:-0}" ] &&
+  [ -n "${TAMA_FAKE_TMUX_TOUCH:-}" ]; then
+  tmux -L "$TAMA_FAKE_TMUX_SOCKET" "$@"
+  tama_status=$?
+  : >"$TAMA_FAKE_TMUX_TOUCH"
+  exit "$tama_status"
 fi
 
 exec tmux -L "$TAMA_FAKE_TMUX_SOCKET" "$@"
