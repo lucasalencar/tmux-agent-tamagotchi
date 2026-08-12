@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#
+# hook — hand one agent's event to that agent's adapter.
+#
+#   tama hook <agent> <event> [args]
+#
+# The whole subcommand is a router: `tama hook claude-code Stop` runs
+# `integrations/claude-code/hook Stop`. It routes by directory name and holds no
+# list of known agents, which is the point — adding an agent is adding a
+# directory, and this file never learns about it. A name with no directory behind
+# it is a wrong hook configuration, so it exits 2 like any other usage error.
+#
+# Why the adapter is a separate process rather than a sourced file: it is the one
+# part of the plugin that tracks something outside this repo, so ADR-0002 keeps it
+# outside the compatibility promise. It talks to the core through $TAMA_BIN — the
+# same public CLI a user wires by hand for an agent with no adapter — so nothing
+# it does is a capability the documented interface lacks.
+#
+# The event is passed through untranslated, along with everything after it: what
+# an event is called belongs to the agent, and what to do about it belongs to the
+# adapter. This file knows neither.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  [ "$#" -gt 0 ] || die_usage 'hook needs an agent'
+
+  local agent="$1"
+  shift
+
+  # An agent is a plain directory name: never a path, a dotfile, or an option.
+  # Without this, `tama hook ../../bin state` would reach anything executable on
+  # the machine, from a config file the user pasted.
+  case "$agent" in
+    '' | */* | .* | -*) die_usage "not an agent name: $agent" ;;
+  esac
+
+  # An event is what the adapter dispatches on, so an empty one is a hook whose
+  # variable failed to interpolate rather than an event this version has not
+  # heard of — the adapter is where the second kind stays quiet.
+  [ "$#" -gt 0 ] && [ -n "$1" ] || die_usage "hook needs an event for $agent"
+
+  # -x alone is true for a directory, and exec'ing one exits 126 with a shell
+  # diagnostic instead of the usage error the contract promises.
+  local integration="$TAMA_PLUGIN_DIR/integrations/$agent/hook"
+  if [ ! -f "$integration" ] || [ ! -x "$integration" ]; then
+    die_usage "no integration for agent: $agent"
+  fi
+
+  exec "$integration" "$@"
+}
+
+main "$@"

@@ -95,6 +95,22 @@ STUB
   chmod +x "$1/libexec/stub"
 }
 
+# Stands in for any agent's adapter: `tama hook` routes by directory name, so what
+# it does with a real integration it does with this. Reports what it received the
+# way an adapter would have to read it, including how it reaches the core.
+tama_add_stub_integration() { # <plugin_dir> <agent>
+  mkdir -p "$1/integrations/$2"
+  cat >"$1/integrations/$2/hook" <<'STUB'
+#!/usr/bin/env bash
+printf 'argc: %s\n' "$#"
+printf 'arg: %s\n' "$@"
+printf 'plugin_dir: %s\n' "${TAMA_PLUGIN_DIR:-unset}"
+printf 'tama_bin: %s\n' "${TAMA_BIN:-unset}"
+exit "${TAMA_STUB_EXIT:-0}"
+STUB
+  chmod +x "$1/integrations/$2/hook"
+}
+
 # Puts a `tmux` on PATH that talks to this test's server, so a snippet written
 # for a user's shell — a hook recipe — can be run verbatim without reaching the
 # real tmux.

@@ -96,6 +96,10 @@ Subcommands:
                         window, so its flag goes and its panes are swept. With
                         --all the sweep covers the whole server, which is what
                         the client-focus-in and client-attached hooks ask for.
+  hook <agent> <event>  Hand an event to the adapter shipped for that agent, in
+                        integrations/<agent>/hook, which is where everything
+                        particular to it lives. Claude Code users wire this and
+                        nothing else; see integrations/claude-code/README.md.
   version               Print the plugin version.
   --help, -h, help      Print this message.
 
@@ -157,6 +161,13 @@ own assignments before the TPM line, or append them too. Mouse bindings cannot
 be appended at all, which is why the plugin installs none.
 
   set -g @tama_manage_hooks off   # wire the hooks yourself, from your own config
+
+An agent whose adapter ships here needs one block of hook configuration and
+nothing else — a call to 'tama hook <agent> <event>' per event, with no payload
+knowledge and no path to this plugin in it. Claude Code's block is in
+$TAMA_PLUGIN_DIR/integrations/claude-code/README.md. Adapters are best effort and
+outside the version promise, which integrations/README.md explains, along with
+the recipe for driving this CLI from an agent that has no adapter yet.
 
 Common options:
   --pane <pane_id>      Act on this pane instead of \$TMUX_PANE (on the
