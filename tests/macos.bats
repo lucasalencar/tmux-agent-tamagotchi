@@ -119,9 +119,6 @@ run_click() { # <click command line>
 }
 
 @test "a banner is handed to terminal-notifier with its title, message and group" {
-  # Under the bash macOS actually ships, which is the bash this backend will run under
-  # on the machine it exists for.
-  tama_use_bash_32_or_skip
   use_macos_backend
   local pane window
   pane="$(agent_pane_elsewhere)"
@@ -142,6 +139,30 @@ run_click() { # <click command line>
   assert_notifier_flag group "tmux-window-$window"
   # And the terminal comes forward on click even if the command line does not run.
   assert_notifier_flag activate com.mitchellh.ghostty
+}
+
+@test "the macOS backend runs under the bash macOS ships" {
+  # bash 3.2.57 is /bin/bash on every Mac, and a Mac is the only machine this backend
+  # exists for: whatever else this claim is worth elsewhere in the suite, here it is the
+  # only bash that matters. A diagnostic on stderr would be a broken backend even with
+  # the right result, so this is a claim about stderr as much as about the banner.
+  tama_use_bash_32_or_skip
+  use_macos_backend
+
+  local pane
+  pane="$(agent_pane_elsewhere)"
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code "it's waiting" \
+    --pane "$pane"
+  assert_success
+  [ -z "$stderr" ]
+
+  wait_for_notifier
+  assert_notifier_flag message "it's waiting"
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" dismiss \
+    "$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  assert_success
+  [ -z "$stderr" ]
 }
 
 @test "the terminal a banner activates is configuration, not a hardcoded app" {
