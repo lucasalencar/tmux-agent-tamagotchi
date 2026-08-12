@@ -30,8 +30,10 @@
 # the clipboard. It needs Accessibility permission for synthetic keystrokes, it clobbers
 # the clipboard it borrows, and every part of it is specific to one terminal. It ships
 # as a documented example for `@tama_focus_command` instead of as behaviour nobody asked
-# for — the option replaces this capability wholesale, so the example needs nothing from
-# here.
+# for: examples/focus-open-window. That option replaces this capability wholesale, so the
+# example owes this file nothing — it delegates the two levels here back to it anyway,
+# since they need no permission and it would rather not reimplement them, and it types the
+# attach command instead of borrowing the clipboard.
 #
 # Runs from a notification click, in a process the desktop started, so it is not on an
 # agent's turn: it may take the time it takes.

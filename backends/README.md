@@ -129,7 +129,10 @@ shows what you clicked about. The second level takes a window away from whatever
 displaying — deliberately, because you clicked a banner. The third level the system this
 was ported from had, synthesising Cmd+N to open a new terminal window, is not here: it
 needs Accessibility permission, borrows the clipboard, and is specific to one terminal.
-`@tama_focus_command` is how you wire something like it back in.
+`@tama_focus_command` is how you wire something like it back in, and
+`examples/focus-open-window` is that level written out: it delegates the first two levels
+back to this backend, types the `attach` rather than pasting it through the clipboard, and
+lists in its own header the four costs that keep it an example rather than behaviour.
 
 Any one capability can also be replaced without replacing the backend, by
 `@tama_notify_command`, `@tama_dismiss_command`, `@tama_focused_command` or

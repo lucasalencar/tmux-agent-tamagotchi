@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+#
+# A `focus` capability with one more level than the one that ships: when no terminal
+# window can be found or repurposed, open a new one and attach it to the session.
+#
+#   set -g @tama_focus_command '/path/to/tmux-agent-tamagotchi/examples/focus-open-window'
+#
+# `@tama_focus_command` replaces the focus capability wholesale, so this file is the
+# whole of what a banner's click does about the terminal — and why it can delegate the
+# easy part back to the backend that ships. Levels, in order:
+#
+#   1. `backends/macos/focus`, unchanged: raise the terminal window whose title is the
+#      session, and failing that point some other session's tmux client at this one.
+#   2. Synthesise Cmd+N in the terminal, then type an `attach` into the shell that
+#      opens in the new window.
+#
+# Level 2 is the level the plugin deliberately does not ship (see backends/macos/focus),
+# and this file is what that decision points at. Read the four costs before wiring it:
+#
+#   * **It needs Accessibility permission.** Synthetic keystrokes are what macOS gates
+#     behind it, and the terminal running this — an agent's hook, or the process the
+#     desktop starts for a click — is the application that has to hold it. Without it
+#     `osascript` fails and this level does nothing, silently, the way a backend must.
+#   * **It types into whatever Cmd+N opened.** If your terminal binds Cmd+N to something
+#     other than a new window, or opens one whose shell is not ready to read a command,
+#     the keystrokes land somewhere you did not choose. That is the reason this is an
+#     example and not behaviour: it is a guess about one terminal's configuration.
+#   * **It is specific to one terminal**, the one `@tama_terminal_app` names. There is
+#     nothing portable about Cmd+N.
+#   * **It is slow by design.** Opening a window and typing at it takes the best part of
+#     a second, which is fine here — a click arrives long after the agent's turn ended,
+#     in a process nothing is waiting on — and would not be fine anywhere else in this
+#     plugin.
+#
+# It does **not** borrow the clipboard. The system this plugin was ported from pasted
+# the attach command through it, and clobbering somebody's clipboard to raise a window
+# is a worse trade than typing the command out. Typing costs the `attach` line arriving
+# one character at a time, which is why the shell is given a moment first.
+#
+# Environment, all of it exported by the core for every capability: TAMA_PLUGIN_DIR,
+# TAMA_BIN, TAMA_SESSION, TAMA_TERMINAL_APP, TAMA_TERMINAL_BUNDLE_ID. The session also
+# arrives as $1, which is what this reads — an override is called with the same
+# arguments as the capability it replaces.
+
+set -o nounset
+
+# How long to give a freshly opened window before typing at it, in tenths of a second,
+# and how long to keep asking whether the window is there at all. A shell that has not
+# drawn its prompt yet drops what it was sent, so this is polled on the window existing
+# rather than slept on a number somebody guessed once.
+TAMA_EXAMPLE_WINDOW_TRIES=20
+
+# Whether the terminal has a window whose title is <session>. Also the answer to "did
+# level 1 work", which `focus` itself cannot report: a backend capability exits 0
+# whatever happened, on purpose, so a caller that needs to know has to look.
+example_window_exists() { # <session>
+  local answer
+  answer="$(
+    osascript - "${TAMA_TERMINAL_APP:-}" "$1" 2>/dev/null <<'SCRIPT'
+on run argv
+  set appName to item 1 of argv
+  set target to item 2 of argv
+  tell application "System Events"
+    if not (exists application process appName) then return "0"
+    tell application process appName
+      repeat with w in windows
+        if name of w contains target then return "1"
+      end repeat
+    end tell
+  end tell
+  return "0"
+end run
+SCRIPT
+  )" || answer=''
+
+  [ "$answer" = '1' ]
+}
+
+# Cmd+N in the terminal, then the attach command typed into what it opened.
+#
+# The session name is passed to osascript as an argument and quoted for the shell by
+# tmux's own `#{q:}` equivalent here — `printf %q` is bash's, and a session name can
+# hold a space or a quote as easily as a window title can. What reaches the keyboard is
+# one line ending in a return.
+example_open_window() { # <session>
+  local attach
+  attach="$(printf 'tmux attach -t %q' "$1")"
+
+  osascript - "${TAMA_TERMINAL_APP:-}" "$attach" >/dev/null 2>&1 <<'SCRIPT'
+on run argv
+  set appName to item 1 of argv
+  set attachLine to item 2 of argv
+  tell application "System Events"
+    if not (exists application process appName) then return
+    tell application process appName
+      set frontmost to true
+      keystroke "n" using command down
+    end tell
+  end tell
+  delay 0.6
+  tell application "System Events"
+    keystroke attachLine
+    key code 36
+  end tell
+end run
+SCRIPT
+}
+
+main() {
+  local session="${1-}" tries=0
+
+  # The core does not call it this way; a user's own caller might.
+  [ -n "$session" ] || exit 0
+
+  # Level 1, delegated whole. It exits 0 whether or not it found anything, so the
+  # question is asked afterwards rather than read off its status.
+  if [ -x "${TAMA_PLUGIN_DIR:-}/backends/macos/focus" ]; then
+    "$TAMA_PLUGIN_DIR/backends/macos/focus" "$session" || true
+    example_window_exists "$session" && exit 0
+  fi
+
+  example_open_window "$session"
+
+  # Raise whatever it opened, once the title says which session it is showing. tmux
+  # pushes the title asynchronously, so a single attempt would lose the race about as
+  # often as it won it.
+  while [ "$tries" -lt "$TAMA_EXAMPLE_WINDOW_TRIES" ]; do
+    tries=$((tries + 1))
+    if example_window_exists "$session"; then
+      if [ -x "${TAMA_PLUGIN_DIR:-}/backends/macos/focus" ]; then
+        "$TAMA_PLUGIN_DIR/backends/macos/focus" "$session" >/dev/null 2>&1 || true
+      fi
+      exit 0
+    fi
+    sleep 0.1
+  done
+
+  # Nothing worked, and there is nothing to say about it: the terminal not coming
+  # forward has already told the user everything this could.
+  exit 0
+}
+
+main "$@"

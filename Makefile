@@ -1,6 +1,10 @@
 # Development entry points. CI runs exactly these targets.
 
-SHELL_DIRS := $(wildcard bin lib libexec backends integrations tests/fixtures)
+# examples/ is in here because what ships as a documented example is code a user
+# pastes a path to, and an example shellcheck never saw is one that breaks on them.
+# examples/demo.tmux.conf is tmux configuration rather than shell and is not
+# executable, so the find below leaves it alone.
+SHELL_DIRS := $(wildcard bin lib libexec backends integrations examples tests/fixtures)
 SHELL_FILES := tamagotchi.tmux tests/helper.bash \
 	$(shell find $(SHELL_DIRS) -type f \( -perm -u+x -o -name '*.sh' \) | sort)
 
