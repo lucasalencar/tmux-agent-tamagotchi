@@ -31,8 +31,8 @@ set -o nounset
 TAMA_SUBAGENT_ATTEMPTS=5
 TAMA_SUBAGENT_RETRY_DELAY=0.05
 
-# Records a state, plus the snapshot that a later sweep needs to notice the agent
-# is gone. Writes only what changed, and nothing at all when nothing did: the
+# Records a state, plus the snapshot that stale-state detection needs later to
+# notice the agent is gone. Writes only what changed, and nothing at all when nothing did: the
 # `running` state is reported on every tool call, which makes this the one
 # genuinely hot write path in the plugin. Skipping the write skips the client
 # refresh with it, which is the expensive half.
@@ -45,6 +45,9 @@ report() {
   # command or path merely moved is a cheap write and nothing a user can see.
   [ "$TAMA_PANE_DERIVED" = "$TAMA_PANE_STATE" ] || refresh='yes'
 
+  # Staged as <new> then <stored>: the CURRENT_ values are what the pane is doing
+  # now, the others what it last said. Swapping the pair in either of the two
+  # lines below would silently invert the comparison stale-state detection makes.
   tama_batch_reset
   tama_pane_stage "$TAMA_PANE_ID" state_main "$main" "$TAMA_PANE_STATE_MAIN"
   tama_pane_stage "$TAMA_PANE_ID" state "$TAMA_PANE_DERIVED" "$TAMA_PANE_STATE"
@@ -57,6 +60,11 @@ report() {
 # Removes every trace of the agent from the pane. Unsetting rather than emptying
 # is the whole point: a cleared pane must be indistinguishable from a pane that
 # never ran an agent, and it is also what heals a subagent id that leaked.
+#
+# The options are listed rather than looped over TAMA_PANE_OPTIONS because each
+# needs the value already read for it, which is what keeps clearing a pane that
+# was never an agent pane free. The test asks the pane whether anything of ours
+# is left, so an option added later and forgotten here fails there.
 clear_pane() {
   local pane="$1" refresh='no'
   tama_pane_read "$pane" || exit 0
@@ -74,6 +82,11 @@ clear_pane() {
 
 # Adds or removes a subagent id, and recomputes the display state with it, since
 # whether any subagent is live is what tells `background` from `idle`.
+#
+# Note for whoever adds the window flag: `report` writes nothing when nothing
+# changed, so anything that must happen on the *event* rather than on the change —
+# raising a flag for a question the user has already dismissed once — cannot live
+# behind that short-circuit.
 #
 # tmux has no atomic read-modify-write, so the list is maintained optimistically:
 # read, modify, write, read back, and try again from a fresh read if the list no
