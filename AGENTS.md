@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues tracked as GitHub Issues via `gh` CLI (no remote configured yet — set one up before using). See `docs/agents/issue-tracker.md`.
+Issues tracked as GitHub Issues via `gh` CLI, against `lucasalencar/tmux-agent-tamagotchi`. See `docs/agents/issue-tracker.md`.
 
 ### Domain docs
 
