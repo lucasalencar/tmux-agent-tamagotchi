@@ -10,31 +10,68 @@ permissions:
 
 jobs:
   lint:
-    name: shellcheck
-    # Pinned rather than ubuntu-latest: the suite needs bats >= 1.7, and which
-    # bats `apt` has is a property of the image.
-    runs-on: ubuntu-24.04
+    name: shellcheck (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both platforms, because the two shellchecks disagree: the version Ubuntu
+        # ships and the version Homebrew ships flag different things, and code that
+        # only ever saw one of them acquires warnings the other rejects.
+        os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@v4
-      - name: Install shellcheck
+      - name: Install shellcheck (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
+      - name: Install shellcheck (macOS)
+        if: runner.os == 'macOS'
+        run: brew install shellcheck
+      - name: Report versions
+        run: shellcheck --version
       - run: make lint
 
   test:
-    name: bats
-    # Pinned rather than ubuntu-latest: the suite needs bats >= 1.7, and which
-    # bats `apt` has is a property of the image.
-    runs-on: ubuntu-24.04
+    name: bats (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Pinned rather than a -latest: the suite needs bats >= 1.7, and which bats a
+        # package manager has is a property of the image.
+        #
+        # The macOS leg is not a portability nicety. Every script here is written for
+        # bash 3.2.57 — the bash macOS ships and the one an agent's hook will run under
+        # there — and `tama_use_bash_32_or_skip` is how the suite checks it. There is no
+        # bash 3.2 on a Linux runner, so those tests *skip* on the Linux leg: without
+        # this leg nothing anywhere verifies the constraint the whole codebase is
+        # written for. It is also the only leg that can run the macOS backend's tests.
+        #
+        # What it deliberately does not verify is a desktop. A runner has no terminal
+        # application and no Notification Center, so the two capabilities that talk to
+        # one — `focused` saying the terminal is in front, `focus` bringing a window
+        # forward — are only exercised in the direction that needs no GUI. The other
+        # direction is verified by hand; see tests/macos.bats.
+        os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@v4
-      - name: Install tmux and bats
+      - name: Install tmux and bats (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y tmux bats
+      - name: Install tmux and bats (macOS)
+        # No terminal-notifier: `auto` must resolve to the no-op backend on a machine
+        # with no notifier, and that is a claim the suite makes. The macOS backend's own
+        # tests point `@tama_terminal_notifier` at a fixture instead.
+        if: runner.os == 'macOS'
+        run: brew install tmux bats-core
       - name: Report versions
         run: |
           tmux -V
           bats --version
+          bash --version | head -1
+          /bin/bash --version | head -1
       - run: make test
