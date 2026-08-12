@@ -40,6 +40,9 @@ tama_point_at_server() {
   export TAMA_TMUX=tmux
   export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
   export TMUX="/tmp/$TAMA_SOCKET,0,0"
+  # Whatever tmux the suite is being run from must not reach into it: a test that
+  # means "no pane was given" has to mean that on a developer's machine too.
+  unset TMUX_PANE
 }
 
 tama_kill_server() {

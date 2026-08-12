@@ -214,7 +214,9 @@ main() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --pane)
-        [ "$#" -ge 2 ] && [ -n "$2" ] || die_usage '--pane needs a pane id'
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--pane needs a pane id'
+        fi
         pane="$2"
         shift 2
         ;;
@@ -249,6 +251,18 @@ main() {
   # variable, not a state from a version that does not exist yet.
   [ -n "$state" ] || die_usage 'state needs a state'
 
+  # The shape of the call is checked before anything about the environment, because
+  # a wrong hook must be loud wherever it runs, while the environment being wrong is
+  # one of the quiet no-ops.
+  case "$state" in
+    running | waiting | idle | error)
+      # The name is stored and later expanded into a notification title, so it must
+      # survive the round trip through a tmux option intact.
+      check_storable "an agent name" "$argument"
+      ;;
+    subagent-start | subagent-stop) check_subagent_id "$state" "$argument" ;;
+  esac
+
   # --pane overrides the pane the hook happens to run in, which wrappers lose and
   # tests never have. Having neither is one of the quiet no-ops — there is no pane
   # to write state on, and an agent's turn must not fail over it.
@@ -256,22 +270,12 @@ main() {
   [ -n "$pane" ] || exit 0
 
   case "$state" in
-    running | waiting | idle | error)
-      # The name is stored and later expanded into a notification title, so it
-      # must survive the round trip through a tmux option intact.
-      check_storable "an agent name" "$argument"
-      report "$pane" "$state" "$argument"
-      ;;
-    clear)
-      clear_pane "$pane"
-      ;;
-    subagent-start | subagent-stop)
-      check_subagent_id "$state" "$argument"
-      subagent "$pane" "$state" "$argument"
-      ;;
-    # Not a state this version knows. Quiet on purpose: agents grow event types,
-    # and a hook written for a newer plugin has to stay silent on an older one
-    # rather than fail the turn it is reporting on.
+    running | waiting | idle | error) report "$pane" "$state" "$argument" ;;
+    clear) clear_pane "$pane" ;;
+    subagent-start | subagent-stop) subagent "$pane" "$state" "$argument" ;;
+    # Not a state this version knows. Quiet on purpose: agents grow event types, and
+    # a hook written for a newer plugin has to stay silent on an older one rather
+    # than fail the turn it is reporting on.
     *) exit 0 ;;
   esac
 }

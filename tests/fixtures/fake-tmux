@@ -52,7 +52,18 @@ if [ -n "${TAMA_FAKE_TMUX_FAIL_ALL:-}" ]; then
   exit 1
 fi
 
-if [ "${1:-}" = '-V' ]; then
+# The plugin passes `-u` before the command, so the version request is not
+# necessarily the first argument.
+tama_wants_version=''
+for tama_arg in "$@"; do
+  case "$tama_arg" in
+    -V) tama_wants_version=1 ;;
+    -*) ;;
+    *) break ;;
+  esac
+done
+
+if [ -n "$tama_wants_version" ]; then
   [ -z "${TAMA_FAKE_TMUX_FAIL_VERSION:-}" ] || exit 1
   printf '%s\n' "${TAMA_FAKE_TMUX_VERSION:-$(tmux -V)}"
   exit 0

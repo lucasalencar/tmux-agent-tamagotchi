@@ -18,6 +18,12 @@ set -o nounset
 TAMA_TMUX="${TAMA_TMUX:-tmux}"
 
 # tmux, wherever it is. Never quote-mangles the caller's arguments.
+#
+# `-u` says this client speaks UTF-8. Without it tmux decides from the ambient
+# locale, and a server whose locale is C — a CI runner, a systemd unit, a cron job —
+# hands back `_` for every byte of every multibyte character it prints. That would
+# turn an agent name or a path with an accent in it into a value that never equals
+# itself, so the pane would be rewritten on every tool call.
 tmux_run() {
   if [ -n "${TAMA_TMUX_ARGS:-}" ]; then
     # Split into words, but with globbing off: a socket name is not a pattern.
@@ -26,7 +32,7 @@ tmux_run() {
     set -- $TAMA_TMUX_ARGS "$@"
     set +f
   fi
-  "$TAMA_TMUX" "$@"
+  "$TAMA_TMUX" -u "$@"
 }
 
 # Usage error: loud, on stderr, exit 2. The hint carries an absolute path

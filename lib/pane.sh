@@ -20,46 +20,66 @@
 # agent, and a tmux round trip costs a few milliseconds. Reading the pane's five
 # options one `show -p` at a time would cost more than the event being reported.
 
-# Field separator for the batched read and write. A unit separator appears in no
-# pane id, state name, agent name or path anybody will ever have.
-TAMA_US=$'\037'
-
 # Everything a status line needs about one pane, as a format, and the one function
 # that takes such a record apart. Both live here, next to the writer of the values:
 # a rename or a reordering on one side and not the other would leave every status
 # line empty with nothing to say why.
-TAMA_PANE_RENDER_FORMAT="#{@tama_pane_state_main}$TAMA_US#{@tama_pane_subagents}"
+#
+# The fields are separated by a space, because a state is one of five words and
+# nothing else is read from this: whatever follows the first one is the subagent
+# list, and only whether it is empty matters. It cannot be a control character —
+# see tama_pane_read.
+# shellcheck disable=SC2034  # read by libexec/icons, which sources this file
+TAMA_PANE_RENDER_FORMAT='#{@tama_pane_state_main} #{@tama_pane_subagents}'
 
 # Derives the state of one such record. Parameter expansion rather than `read`,
 # because the caller is the icon command and it must not fork.
 tama_pane_derive_record() { # <record>
-  local main="${1%%"$TAMA_US"*}" rest="${1#*"$TAMA_US"}"
-  # Everything after the first separator is the subagent list, so a record that
+  # Everything after the first space is the subagent list, whole, so a record that
   # grows a field cannot quietly turn every idle pane into a busy one.
-  tama_pane_derive "$main" "${rest%%"$TAMA_US"*}"
+  local main="${1%% *}"
+  tama_pane_derive "$main" "${1#* }"
 }
 
 # The read: the pane's identity, everything it last said about itself — there are
 # five options and no state file, the tmux server is the database — and the live
-# command and path a fresh report snapshots. Spelled out field by field, in the
-# order the variables below are: a loop over a list of names would look like it
-# enforced that order without doing it, since the unpack has to name them anyway.
+# command and path a fresh report snapshots.
+#
+# One `display-message` per field, batched into a single invocation, so each value
+# arrives on a line of its own and nothing has to separate them. A separator was the
+# obvious thing and is not available: tmux prints to a client through an escaper, so
+# a byte like a unit separator arrives as the four characters `\037` on some versions
+# and locales and intact on others. That collapsed every field into one, and since
+# the first field is the pane every write targets, the plugin quietly wrote nothing
+# anywhere — green on one machine, dead on another. A newline cannot be smuggled
+# either; it arrives as `_`.
+#
+# The number of lines is therefore the integrity check, and a value holding a
+# control character is refused at the boundary — see tama_pane_value_is_storable —
+# rather than left to shift the record.
 #
 # One asymmetry to know about: reading an option through a *format* falls back to
 # the window, session and global scopes, while `show -p` does not. Nothing sets
 # these names at any other scope, and a user who set `@tama_pane_state_main`
 # globally would give every pane on the server an icon — which is why the names are
 # specific enough that nobody will.
-TAMA_PANE_READ_FORMAT="#{pane_id}$TAMA_US$TAMA_PANE_RENDER_FORMAT"
-TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{@tama_pane_cmd}"
-TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{@tama_pane_agent}"
-TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{@tama_pane_cwd}"
-TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{pane_current_command}"
-TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{pane_current_path}"
+TAMA_PANE_READ_FIELDS='#{pane_id}
+#{@tama_pane_state_main}
+#{@tama_pane_subagents}
+#{@tama_pane_cmd}
+#{@tama_pane_agent}
+#{@tama_pane_cwd}
+#{pane_current_command}
+#{pane_current_path}
+.'
+# Nine, not eight: the sentinel at the end is there because command substitution
+# strips trailing newlines, so a last field that is legitimately empty — tmux cannot
+# always tell what a pane's directory is — would be indistinguishable from a line
+# that never arrived.
+TAMA_PANE_READ_COUNT=9
 
 # Reads everything about a pane at once. Returns non-zero when there is no such
-# pane: display-message reports that by expanding #{pane_id} to nothing rather
-# than by failing, so the id is what gets checked.
+# pane, or when the record did not come back whole.
 #
 # Sets TAMA_PANE_ID and one variable per field, plus TAMA_PANE_DISPLAY: what this
 # pane draws as of this read, since every writer needs it to decide whether a
@@ -69,27 +89,49 @@ TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{pane_current_path}"
 # The fields are this library's output, read by its callers rather than by it.
 # shellcheck disable=SC2034
 tama_pane_read() {
-  local raw
-  raw="$(tmux_run display-message -p -t "$1" "$TAMA_PANE_READ_FORMAT" 2>/dev/null)" || raw=''
-  # Checked before the unpack rather than after: the separator is not whitespace,
-  # so `read` would hand the newline of an empty read to the first field and every
-  # caller's "no such pane" guard would be dead code.
-  [ -n "$raw" ] || return 1
-  # `-d ''` reads to the end of the input rather than to the end of the first
-  # line, so a newline inside a value is data instead of the end of the record.
-  # Without it a directory — or an agent name — containing one truncates the read:
-  # the command snapshot silently comes back empty, and the pane then differs from
-  # itself on every report, which defeats the write short-circuit for good.
-  IFS="$TAMA_US" read -r -d '' TAMA_PANE_ID TAMA_PANE_STATE_MAIN TAMA_PANE_SUBAGENTS \
-    TAMA_PANE_CMD TAMA_PANE_AGENT TAMA_PANE_CWD \
-    TAMA_PANE_CURRENT_CMD TAMA_PANE_CURRENT_PATH <<EOF
+  local raw field lines=0 target="$1"
+  # One tmux command per field, all in one invocation. Built here rather than kept
+  # as a constant because the target belongs in every one of them.
+  set --
+  while IFS= read -r field; do
+    [ "$#" -eq 0 ] || set -- "$@" ';'
+    set -- "$@" display-message -p -t "$target" "$field"
+  done <<EOF
+$TAMA_PANE_READ_FIELDS
+EOF
+  raw="$(tmux_run "$@" 2>/dev/null)" || raw=''
+
+  TAMA_PANE_ID=''
+  TAMA_PANE_STATE_MAIN=''
+  TAMA_PANE_SUBAGENTS=''
+  TAMA_PANE_CMD=''
+  TAMA_PANE_AGENT=''
+  TAMA_PANE_CWD=''
+  TAMA_PANE_CURRENT_CMD=''
+  TAMA_PANE_CURRENT_PATH=''
+  while IFS= read -r field; do
+    lines=$((lines + 1))
+    case "$lines" in
+      1) TAMA_PANE_ID="$field" ;;
+      2) TAMA_PANE_STATE_MAIN="$field" ;;
+      3) TAMA_PANE_SUBAGENTS="$field" ;;
+      4) TAMA_PANE_CMD="$field" ;;
+      5) TAMA_PANE_AGENT="$field" ;;
+      6) TAMA_PANE_CWD="$field" ;;
+      7) TAMA_PANE_CURRENT_CMD="$field" ;;
+      8) TAMA_PANE_CURRENT_PATH="$field" ;;
+    esac
+  done <<EOF
 $raw
 EOF
-  # The last field ends at the newline the here-document adds, not at a separator.
-  TAMA_PANE_CURRENT_PATH="${TAMA_PANE_CURRENT_PATH%$'\n'}"
+
   tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS"
   TAMA_PANE_DISPLAY="$TAMA_PANE_DERIVED"
-  [ -n "$TAMA_PANE_ID" ]
+
+  # A short read is a pane that is gone — tmux says so by expanding #{pane_id} to
+  # nothing rather than by failing — or a record that did not survive the trip, and
+  # writing from either would write somewhere else.
+  [ "$lines" -eq "$TAMA_PANE_READ_COUNT" ] && [ -n "$TAMA_PANE_ID" ]
 }
 
 # The plugin's one derivation, in the one place everything that renders or compares
@@ -170,14 +212,15 @@ tama_pane_display_changed() { # <derived_before> <derived_after>
 }
 
 # Whether a value can survive being stored in a pane option and read back as one
-# field of the record above. A newline would be kept by the read but lost from the
-# last field, and the separator itself would shift every field after it — which
-# corrupts the command snapshot and leaves the pane unable to recognise itself, so
-# every later report writes and refreshes for nothing.
+# line of the record above. A control character cannot: a newline adds a line and
+# shifts every field after it, and the others come back escaped into several
+# characters on some tmux versions and locales — so the value would never equal
+# itself again, and every later report would write and refresh for nothing.
 tama_pane_value_is_storable() { # <value>
   case "$1" in
-    *[$'\n\r']* | *"$TAMA_US"*) return 1 ;;
+    *[[:cntrl:]]*) return 1 ;;
   esac
+  return 0
 }
 
 # Writes are batched into a single tmux invocation, because the alternative is
