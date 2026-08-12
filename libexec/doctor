@@ -250,8 +250,9 @@ doctor_status_line_option() { # <option> <value> <what it draws>
 
   if [ "$has_icons" = 'no' ] && [ "$has_flag" = 'no' ]; then
     doctor_warn "$1 mentions neither @tama_icons nor @tama_flag"
-    doctor_more "so nothing at all is drawn on $3. The plugin never rewrites a"
-    doctor_more 'status line for you; the setup section below has the lines to paste.'
+    doctor_more "so nothing at all is drawn on $3."
+    doctor_more 'The plugin never rewrites a status line for you; the setup section'
+    doctor_more 'below has the lines to paste.'
     return 0
   fi
 
@@ -686,9 +687,10 @@ doctor_claude_code() {
 
   if [ -z "$TAMA_DOCTOR_CC_FILES" ]; then
     doctor_ok 'no Claude Code settings file found, so nothing is wired here'
-    doctor_more "Looked in $(doctor_cc_dir) and $PWD/.claude. If you do not run Claude"
-    doctor_more 'Code that is the whole answer; the setup section below has the block'
-    doctor_more 'if you do.'
+    doctor_more "Looked in $(doctor_cc_dir)"
+    doctor_more "and in $PWD/.claude"
+    doctor_more 'If you do not run Claude Code that is the whole answer; the setup'
+    doctor_more 'section below has the block if you do.'
     return 0
   fi
 
