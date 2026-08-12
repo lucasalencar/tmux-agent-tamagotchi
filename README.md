@@ -326,7 +326,9 @@ back at a shell prompt but its state says an agent is working there — `@tama_g
 the list of shells. A pane running some other program is left alone: what tmux reports is
 whatever holds the pane's tty, so an agent whose tool call opened an editor or a pager looks
 exactly like one that walked out, and taking a live agent's icon away is the expensive
-mistake.
+mistake. A pane carrying the plugin's leftovers but no state at all — a `notify` from a pane
+whose state hooks were never wired — is swept whatever it is running, since it draws nothing
+and nothing else will ever clear it.
 The sweep runs on window and pane selection for the window you are looking at, and over the
 whole server when you come back to the terminal. Coming back by *attaching* needs nothing
 from you; coming back because your terminal regained focus needs tmux's own `set -g

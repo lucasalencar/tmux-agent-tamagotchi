@@ -30,9 +30,19 @@
 # The comparisons are made by tmux rather than by the shell, and that is the point
 # of the shape: a record read as fields cannot hold a value with a space in it
 # without shifting everything after it, and both a recorded command and a live one
-# are strings from outside. So tmux answers three yes/no questions as digits — is
-# this an agent pane, does it have a snapshot, does the snapshot still match — and
-# the only free-form value is the live command, which comes last and is taken whole.
+# are strings from outside. So tmux answers four yes/no questions as digits — is
+# this an agent pane, does it have a snapshot, does the snapshot still match, is
+# there anything else of ours on the pane — and the only free-form value is the live
+# command, which comes last and is taken whole.
+#
+# The fourth digit is what makes a pane with no main state reachable at all. `notify`
+# writes the agent's name and the label without ever writing a state, and a subagent
+# event can arrive before anything reports one; those panes draw no icon — a pane
+# with no main state has no display state, see tama_pane_derive — but they keep a
+# dead agent's name for `@tama_title_format` and any user status-line format to
+# expand, forever, because the first digit alone said "not ours, skip". It is
+# deliberately every *other* option in one question rather than one digit each: what
+# the sweep needs to know is whether there is residue, not which.
 #
 # `#{==:a,b}` splits its arguments at the literal comma in *this* string, before
 # either side is expanded, so a comma inside a command name is not a delimiter.
@@ -40,7 +50,7 @@
 # Reading a pane option through a format falls back to the window, session and
 # global scopes, the same asymmetry lib/pane.sh documents for the pane record. The
 # names are specific enough that nothing else sets them.
-TAMA_STALE_READ_FORMAT='#{pane_id} #{?@tama_pane_state_main,1,0}#{?@tama_pane_cmd,1,0}#{==:#{@tama_pane_cmd},#{pane_current_command}} #{pane_current_command}'
+TAMA_STALE_READ_FORMAT='#{pane_id} #{?@tama_pane_state_main,1,0}#{?@tama_pane_cmd,1,0}#{==:#{@tama_pane_cmd},#{pane_current_command}}#{?#{@tama_pane_subagents}#{@tama_pane_cmd}#{@tama_pane_agent}#{@tama_pane_cwd}#{@tama_pane_label},1,0} #{pane_current_command}'
 
 # What the sweep will accept as evidence that nobody's agent is in a pane: it is
 # running one of these, which is what a pane left behind by an agent that exited
@@ -118,16 +128,24 @@ _tama_stale_sweep() { # <list-panes …>
     current="${flags#* }"
     flags="${flags%% *}"
 
-    # Three digits: is this an agent pane, does it have a snapshot, does the
-    # snapshot still match what the pane is running.
+    # Four digits: is this an agent pane, does it have a snapshot, does the
+    # snapshot still match what the pane is running, is there anything else of
+    # ours on the pane.
     case "$flags" in
-      # Not an agent pane: nothing of ours to sweep. The overwhelming majority.
-      0??) continue ;;
+      # Nothing of ours at all: the overwhelming majority.
+      0??0) continue ;;
+      # No state, but something of ours left on the pane — a `notify` on a pane
+      # whose state hooks were never wired, or a subagent event that arrived
+      # before anything reported a state. It draws no icon, so nothing about it
+      # can heal, and it keeps a dead agent's name for every format that expands
+      # `@tama_pane_agent`. There is no live agent to protect here and no
+      # snapshot to judge one by, so it goes unconditionally.
+      0??1) ;;
       # A snapshot that still matches: the agent that reported this is still what
       # is running in there. Preserved, and that is half of what this command is
       # for — a sweep that cleared a live agent would be worse than one that
       # cleared nothing at all.
-      111) continue ;;
+      111?) continue ;;
       # Everything else with a state on it: the pane is running something other
       # than the snapshot, or there was never a snapshot to compare. Either way
       # the live command is all there is to go on, and only the allowlist is
@@ -138,7 +156,7 @@ _tama_stale_sweep() { # <list-panes …>
       # user is waiting on the thing that took the tty, and no later event puts
       # them back. An agent that really has gone leaves its pane at a shell
       # prompt, which is the case this still clears.
-      1??) tama_stale_is_shell "$current" || continue ;;
+      1???) tama_stale_is_shell "$current" || continue ;;
       # A record that did not come back in the shape this asked for. Leaving the
       # pane alone is the direction that cannot take a live agent's icon away.
       *) continue ;;

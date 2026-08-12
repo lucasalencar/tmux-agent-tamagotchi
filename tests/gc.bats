@@ -146,6 +146,51 @@ wait_until_no_icons() { # <window>
   assert_pane_option "$PANE" subagents sub-a
 }
 
+@test "a pane that only ever notified is swept" {
+  # `notify` writes the agent's name and the label without ever writing a state — a
+  # pane whose state hooks were never wired, which the hand-wiring recipe and the
+  # `tama notify` key binding both allow. Such a pane draws no icon, so nothing about
+  # it can ever heal, and it keeps a dead agent's name for `@tama_title_format` and any
+  # status-line format of the user's to expand. The sweep could not see it at all: the
+  # first thing it asked was whether there was a state, and there was not.
+  run "$PLUGIN_ROOT/bin/tama" notify Claude 'permission needed' --pane "$PANE"
+  assert_success
+  assert_pane_option "$PANE" agent Claude
+  assert_equal "$(tama_icons "$WINDOW")" ''
+
+  run "$PLUGIN_ROOT/bin/tama" gc --window "$WINDOW"
+  assert_success
+  assert_no_trace "$PANE"
+}
+
+@test "a pane that only ever reported a subagent is swept" {
+  # The same leak from the other direction: a `SubagentStart` that arrives before
+  # anything reports a state leaves a subagent list on a pane with no state on it.
+  # There is nothing for that list to qualify and nothing that will ever clear it.
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start sub-a --pane "$PANE"
+  assert_success
+  assert_pane_option "$PANE" subagents sub-a
+  assert_equal "$(tama_icons "$WINDOW")" ''
+
+  run "$PLUGIN_ROOT/bin/tama" gc --all
+  assert_success
+  assert_no_trace "$PANE"
+}
+
+@test "a pane with residue and no state is swept whatever it is running" {
+  # Unconditionally, and not through the shell allowlist: there is no live agent to
+  # protect — a pane with no main state draws nothing — and no snapshot to judge one
+  # by, so waiting for a prompt would only mean the residue outlives the pane's next
+  # occupant.
+  run "$PLUGIN_ROOT/bin/tama" notify Claude 'permission needed' --pane "$PANE"
+  assert_success
+
+  # Still on `sleep 300`, which is neither a shell nor anything the plugin recorded.
+  run "$PLUGIN_ROOT/bin/tama" gc --window "$WINDOW"
+  assert_success
+  assert_no_trace "$PANE"
+}
+
 @test "a pane still running what it reported is left alone" {
   # The other half, and the more important one: a sweep that took a live agent's icon
   # away would be worse than one that took nothing.

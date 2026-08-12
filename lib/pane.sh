@@ -210,7 +210,9 @@ tama_pane_value_is_storable() { # <value>
 # apart again: `state clear` and the stale-state sweep. An option added to the
 # record above and not here would survive both of them, and a pane that keeps one
 # is a pane a later read can still tell from one that never ran an agent. Any new
-# pane option belongs here, whether or not the record reads it.
+# pane option belongs here, whether or not the record reads it — and, unless it is
+# `state_main` itself, in TAMA_STALE_READ_FORMAT's residue digit too, or the sweep
+# will not notice a pane that carries only that one.
 #
 # `label` is the one that is not in the record: it is written by `notify` for the
 # title format to expand and is never read back by the shell, so nothing would be
