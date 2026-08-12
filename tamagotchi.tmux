@@ -11,11 +11,18 @@
 
 set -o nounset
 
+# The directory this file lives in, symlinked directories resolved.
 case "${BASH_SOURCE[0]}" in
   */*) PLUGIN_DIR="$(cd -P "${BASH_SOURCE[0]%/*}" && pwd)" ;;
   *) PLUGIN_DIR="$PWD" ;;
 esac
 
+# A failed `.` does not stop a script, and carrying on from here produces a
+# cascade of bash diagnostics instead of one sentence naming the real problem.
+if [ ! -r "$PLUGIN_DIR/lib/common.sh" ] || [ ! -r "$PLUGIN_DIR/lib/version.sh" ]; then
+  printf 'tamagotchi: no lib/ under %s; the plugin was not loaded\n' "$PLUGIN_DIR" >&2
+  exit 1
+fi
 # shellcheck source=lib/common.sh
 . "$PLUGIN_DIR/lib/common.sh"
 # shellcheck source=lib/version.sh
@@ -39,8 +46,16 @@ main() {
   # The only way anything finds this plugin: hook recipes and the user's status
   # line ask tmux where it lives. Nothing is written outside this directory and
   # nothing is installed onto PATH (ADR-0003).
+  #
+  # `set -g` is a global user option, which is how every tmux plugin is
+  # configured and what both `show -gv` and `#{@tama_bin}` read. Whoever
+  # interpolates this path into a `#()` format later owns quoting it and
+  # escaping any `#` in it.
   tmux_run set -g @tama_bin "$PLUGIN_DIR/bin/tama"
   tmux_run set -g @tama_bin_dir "$PLUGIN_DIR/bin"
+
+  # A failed write is not worth failing a config reload over.
+  return 0
 }
 
 main "$@"

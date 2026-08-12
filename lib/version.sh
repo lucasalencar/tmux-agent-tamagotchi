@@ -9,19 +9,25 @@
 # shellcheck disable=SC2034
 TAMA_MIN_TMUX_VERSION='3.1a'
 
-# What `tmux -V` says, with the prefixes stripped: "tmux 3.7b" and "tmux
-# next-3.4" both become a bare version. An "openbsd-7.5" build loses its prefix
-# too and is then read as version 7.5 — the OS release rather than tmux's, which
-# happens to always clear the minimum, so those builds are effectively given the
-# benefit of the doubt.
+# What `tmux -V` says, with the build prefix stripped: "tmux 3.7b" and "tmux
+# next-3.4" both become a bare version. Only a prefix is dropped, never a suffix
+# — stripping at the last dash would turn "2.9-rc" into "rc", which then reads as
+# unparseable and would wave an old tmux through. An "openbsd-7.5" build is read
+# as version 7.5 — the OS release rather than tmux's, which happens to always
+# clear the minimum, so those builds get the benefit of the doubt.
 tama_tmux_version() {
   local raw
   raw="$(tmux_run -V 2>/dev/null)" || raw=''
   raw="${raw#tmux }"
-  printf '%s' "${raw##*-}"
+  case "$raw" in
+    [0-9]*) ;;
+    *-*) raw="${raw#*-}" ;;
+  esac
+  printf '%s' "$raw"
 }
 
-# The minor component, defaulting to 0 for a version with no dot at all.
+# The minor component of a purely numeric version ("3.1" → 1, "3" → 0). The
+# bugfix letter must already be stripped off — "3.1a" would yield "1a".
 tama_version_minor() {
   local rest
   case "$1" in
@@ -44,8 +50,9 @@ tama_version_at_least() {
   local version_bugfix="${version#"$version_number"}"
   local minimum_bugfix="${minimum#"$minimum_number"}"
 
+  # Nothing we can read as a number: benefit of the doubt.
   case "$version_number" in
-    '' | .* | *. | *[!0-9.]*) return 0 ;;
+    '' | .* | *. | *..* | *[!0-9.]*) return 0 ;;
   esac
 
   local version_major="${version_number%%.*}" minimum_major="${minimum_number%%.*}"
@@ -62,11 +69,12 @@ tama_version_at_least() {
     return
   fi
 
-  # Same major.minor. A third component — which only distro builds produce — is
-  # newer than any bugfix letter. Otherwise compare the letters, where no letter
-  # sorts before "a", so 3.1 is older than 3.1a.
+  # Same major.minor, so the bugfix letter decides. A third component — which
+  # only distro builds produce — outranks any letter, and the patch number itself
+  # is never compared.
   case "$version_number" in
     *.*.*) return 0 ;;
   esac
+  # No letter sorts before "a", which is what makes 3.1 older than 3.1a.
   [[ ! "$version_bugfix" < "$minimum_bugfix" ]]
 }

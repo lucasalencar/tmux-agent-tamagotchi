@@ -9,7 +9,9 @@
 #
 # What a libexec/ script may assume, and nothing more:
 #   * it is an executable file, run with the subcommand name already shifted off
-#   * $TMUX is non-empty (the dispatcher has already made an absent tmux a no-op)
+#   * $TMUX is non-empty (the dispatcher has already made an absent tmux a no-op).
+#     A subcommand that must run outside tmux — `doctor`, which has to say that
+#     there is no server — needs an explicit exemption here; there is none yet.
 #   * $TAMA_PLUGIN_DIR and $TAMA_BIN are exported; it must source lib/common.sh
 #     itself, since it runs as its own process
 #   * exit 2 is reserved for usage errors; every other failure exits 0 silently
@@ -23,29 +25,37 @@ TAMA_VERSION='0.1.0-dev'
 # it ends on a cd. Note that `case` inside a command substitution does not parse
 # on bash 3.2, which is the /bin/bash every macOS ships, so this stays a function.
 tama_resolve_plugin_dir() {
-  local src="$1" dir
+  local src="$1" link_dir target_dir
   while [ -L "$src" ]; do
+    # A relative link target is relative to the directory holding the link.
     case "$src" in
-      */*) dir="$(cd -P "${src%/*}" && pwd)" ;;
-      *) dir="$PWD" ;;
+      */*) link_dir="$(cd -P "${src%/*}" && pwd)" ;;
+      *) link_dir="$PWD" ;;
     esac
     src="$(readlink "$src")"
     case "$src" in
       /*) ;;
-      *) src="$dir/$src" ;;
+      *) src="$link_dir/$src" ;;
     esac
   done
   case "$src" in
-    */*) dir="${src%/*}" ;;
-    *) dir='.' ;;
+    */*) target_dir="${src%/*}" ;;
+    *) target_dir='.' ;;
   esac
-  cd -P "$dir/.." && pwd
+  cd -P "$target_dir/.." && pwd
 }
 
 TAMA_PLUGIN_DIR="$(tama_resolve_plugin_dir "${BASH_SOURCE[0]}")"
 TAMA_BIN="$TAMA_PLUGIN_DIR/bin/tama"
 export TAMA_PLUGIN_DIR TAMA_BIN
 
+# A failed `.` does not stop a script, and continuing would leave the failure
+# policy itself undefined — no die_usage, no require_tmux.
+if [ ! -r "$TAMA_PLUGIN_DIR/lib/common.sh" ]; then
+  printf 'tama: no lib/ under %s; this plugin directory is incomplete\n' \
+    "$TAMA_PLUGIN_DIR" >&2
+  exit 1
+fi
 # shellcheck source=lib/common.sh
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 

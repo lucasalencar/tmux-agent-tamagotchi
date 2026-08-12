@@ -7,7 +7,9 @@
 # Every test that needs tmux boots its own server on a private socket and points
 # the CLI at it through TAMA_TMUX, so nothing touches the user's tmux.
 
-PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# -P because every script under test reports its own location with symlinks
+# resolved, and the plugin's own documented dev setup is a symlinked clone.
+PLUGIN_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PLUGIN_ROOT
 
 # Names a socket for this test without booting anything on it.
@@ -20,7 +22,10 @@ tama_reserve_socket() {
 # indirection every script uses to reach it.
 tama_start_server() {
   tama_reserve_socket
-  export TAMA_TMUX="tmux -L $TAMA_SOCKET"
+  # Exported before the server boots, so jobs the server itself spawns — status
+  # line `#()` formats, hooks — inherit it and cannot reach the user's tmux.
+  export TAMA_TMUX=tmux
+  export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
   test_tmux -f /dev/null new-session -d -s t
   # The CLI only checks that $TMUX is non-empty; the socket it points at is
   # irrelevant because every tmux call goes through TAMA_TMUX.
@@ -43,7 +48,7 @@ test_tmux() {
 # cannot silently lag behind the real plugin as directories are added.
 tama_copy_plugin() {
   local dest="$1"
-  mkdir -p "$dest/libexec"
+  mkdir -p "$dest"
   find "$PLUGIN_ROOT" -maxdepth 1 -mindepth 1 \
     ! -name .git ! -name .reviews \
     -exec cp -R {} "$dest/" \;
@@ -53,6 +58,7 @@ tama_copy_plugin() {
 # does with a real one it does with this. Reports what it received the way a real
 # subcommand would have to read it.
 tama_add_stub_subcommand() {
+  mkdir -p "$1/libexec"
   cat >"$1/libexec/stub" <<'STUB'
 #!/usr/bin/env bash
 printf 'argc: %s\n' "$#"
@@ -73,14 +79,37 @@ assert_status() {
   fi
 }
 
-assert_output_contains() {
-  case "$output" in
-    *"$1"*) ;;
+assert_contains() {
+  case "$1" in
+    *"$2"*) ;;
     *)
-      printf 'expected output to contain %s\noutput: %s\n' "$1" "$output" >&2
+      printf 'expected %s to contain %s\ngot: %s\n' "${3:-the value}" "$2" "$1" >&2
       return 1
       ;;
   esac
+}
+
+assert_output_contains() {
+  assert_contains "$output" "$1" 'stdout'
+}
+
+assert_stderr_contains() {
+  assert_contains "$stderr" "$1" 'stderr'
+}
+
+# The whole usage-error invariant in one place: exit 2, nothing on stdout, and a
+# message on stderr naming what the user got wrong.
+assert_usage_error() {
+  assert_status 2 || return 1
+  if [ -n "$output" ]; then
+    printf 'expected nothing on stdout, got: %s\n' "$output" >&2
+    return 1
+  fi
+  [ -n "$stderr" ] || {
+    printf 'expected a message on stderr\n' >&2
+    return 1
+  }
+  [ "$#" -eq 0 ] || assert_stderr_contains "$1"
 }
 
 assert_equal() {
@@ -98,6 +127,7 @@ tama_use_fake_tmux() {
   export TAMA_FAKE_TMUX_LOG="$BATS_TEST_TMPDIR/tmux-calls.log"
   : >"$TAMA_FAKE_TMUX_LOG"
   export TAMA_TMUX="$PLUGIN_ROOT/tests/fixtures/fake-tmux"
+  export TAMA_TMUX_ARGS=''
 }
 
 # Everything the entrypoint could have wired, as one string: options at both
@@ -108,4 +138,33 @@ tama_server_state() {
   test_tmux show -s
   test_tmux show-hooks -g
   test_tmux list-keys
+}
+
+# Both discovery options point at the given clone (this one by default).
+assert_plugin_wired() {
+  local root="${1:-$PLUGIN_ROOT}"
+  assert_equal "$(test_tmux show -gqv @tama_bin)" "$root/bin/tama" || return 1
+  assert_equal "$(test_tmux show -gqv @tama_bin_dir)" "$root/bin"
+}
+
+assert_plugin_not_wired() {
+  assert_equal "$(test_tmux show -gqv @tama_bin)" '' || return 1
+  assert_equal "$(test_tmux show -gqv @tama_bin_dir)" ''
+}
+
+# Loads the plugin against a tmux that reports the given version, and says
+# whether that version is supported. Keeps the version matrix readable as a
+# table of version -> verdict.
+assert_version_supported() {
+  tama_use_fake_tmux "$1"
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success || return 1
+  assert_plugin_wired
+}
+
+assert_version_rejected() {
+  tama_use_fake_tmux "$1"
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success || return 1
+  assert_plugin_not_wired
 }

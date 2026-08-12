@@ -1,6 +1,8 @@
 # shellcheck shell=bash
 #
 # Shared helpers, sourced by bin/tama and by every script under libexec/.
+# Sourcing this file turns on `nounset` for the caller, deliberately: every
+# script in the plugin runs under it.
 #
 # Failure policy (see the CLI contract in bin/tama): usage errors exit 2 with a
 # message on stderr, because a wrong hook is the user's fault and must be visible
@@ -10,12 +12,19 @@
 set -o nounset
 
 # Every script reaches tmux through this indirection so tests can point it at
-# their own server. TAMA_TMUX is a command line, not a path: "tmux -L socket".
-IFS=' ' read -r -a TAMA_TMUX_ARGV <<<"${TAMA_TMUX:-tmux}"
+# their own server. TAMA_TMUX is the path to the binary — it may contain spaces,
+# so it is never split — and TAMA_TMUX_ARGS holds leading arguments, which may
+# not.
+TAMA_TMUX="${TAMA_TMUX:-tmux}"
 
 # tmux, wherever it is. Never quote-mangles the caller's arguments.
 tmux_run() {
-  "${TAMA_TMUX_ARGV[@]}" "$@"
+  if [ -n "${TAMA_TMUX_ARGS:-}" ]; then
+    # shellcheck disable=SC2086  # deliberate: "-L socket" is two arguments
+    "$TAMA_TMUX" $TAMA_TMUX_ARGS "$@"
+  else
+    "$TAMA_TMUX" "$@"
+  fi
 }
 
 # Usage error: loud, on stderr, exit 2. The hint carries an absolute path
@@ -33,7 +42,12 @@ require_tmux() {
 }
 
 # The configuration reader needs tmux_run, and everything that reads tmux reads
-# configuration, so the two libraries travel together.
+# configuration, so the two libraries travel together. Stripping the last path
+# component leaves the name untouched when there is none, so a caller that
+# sourced us by a bare relative name still finds it.
+_tama_lib_dir="${BASH_SOURCE[0]%/*}"
+[ "$_tama_lib_dir" = "${BASH_SOURCE[0]}" ] && _tama_lib_dir='.'
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=options.sh
-. "${BASH_SOURCE[0]%/*}/options.sh"
+. "$_tama_lib_dir/options.sh"
+unset _tama_lib_dir

@@ -4,9 +4,10 @@
 # Everything except `-V` is forwarded to the test's real server, so the script
 # under test still observes real tmux behaviour.
 #
-#   TAMA_FAKE_TMUX_VERSION   what `tmux -V` prints (default: the real version)
-#   TAMA_FAKE_TMUX_LOG       file the calls are appended to
-#   TAMA_FAKE_TMUX_SOCKET    socket name of the test server
+#   TAMA_FAKE_TMUX_VERSION       what `tmux -V` prints (default: the real version)
+#   TAMA_FAKE_TMUX_FAIL_VERSION  set to make `tmux -V` fail instead
+#   TAMA_FAKE_TMUX_LOG           file the calls are appended to
+#   TAMA_FAKE_TMUX_SOCKET        socket name of the test server
 
 set -o nounset
 
@@ -15,6 +16,7 @@ if [ -n "${TAMA_FAKE_TMUX_LOG:-}" ]; then
 fi
 
 if [ "${1:-}" = '-V' ]; then
+  [ -z "${TAMA_FAKE_TMUX_FAIL_VERSION:-}" ] || exit 1
   printf '%s\n' "${TAMA_FAKE_TMUX_VERSION:-$(tmux -V)}"
   exit 0
 fi

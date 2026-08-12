@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 
-bats_require_minimum_version 1.5.0
+bats_require_minimum_version 1.7.0
 
 load helper
 
@@ -18,8 +18,21 @@ teardown() {
   [ -z "$output" ]
   [ -z "$stderr" ]
 
-  assert_equal "$(test_tmux show -gqv @tama_bin)" "$PLUGIN_ROOT/bin/tama"
-  assert_equal "$(test_tmux show -gqv @tama_bin_dir)" "$PLUGIN_ROOT/bin"
+  assert_plugin_wired
+}
+
+@test "loading the plugin changes nothing else about the server" {
+  local before
+  before="$(tama_server_state)"
+
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+
+  # Only the two discovery options may differ: the plugin must not touch the
+  # status line, the hooks or the key bindings the user configured.
+  local after
+  after="$(tama_server_state | grep -v '^@tama_bin')"
+  assert_equal "$after" "$(printf '%s\n' "$before" | grep -v '^@tama_bin')"
 }
 
 @test "the exported options are reachable from a tmux format" {
@@ -63,11 +76,10 @@ teardown() {
   run "$link/tamagotchi.tmux"
   assert_success
 
+  assert_plugin_wired
   local bin
   bin="$(test_tmux show -gqv @tama_bin)"
   [ -x "$bin" ]
-  run "$bin" version
-  assert_success
 }
 
 @test "loading works from a clone at any other path" {
@@ -81,8 +93,18 @@ teardown() {
   run "$plugin/tamagotchi.tmux"
   assert_success
 
-  assert_equal "$(test_tmux show -gqv @tama_bin)" "$plugin/bin/tama"
-  assert_equal "$(test_tmux show -gqv @tama_bin_dir)" "$plugin/bin"
+  assert_plugin_wired "$plugin"
+}
+
+@test "a plugin directory without its libraries says so and wires nothing" {
+  local broken="$BATS_TEST_TMPDIR/broken"
+  mkdir -p "$broken"
+  cp "$PLUGIN_ROOT/tamagotchi.tmux" "$broken/"
+
+  run --separate-stderr "$broken/tamagotchi.tmux"
+  [ "$status" -ne 0 ]
+  assert_stderr_contains 'lib/'
+  assert_plugin_not_wired
 }
 
 @test "below the minimum tmux version it warns, naming both versions" {
@@ -93,24 +115,22 @@ teardown() {
 
   # The warning has to reach the user whether or not a client is attached, so it
   # goes to stderr as well as to tmux.
-  case "$stderr" in
-    *'2.9'*'3.1a'*) ;;
-    *) printf 'expected a warning naming both versions, got: %s\n' "$stderr" >&2; return 1 ;;
-  esac
-  run grep -q 'display-message.*2\.9.*3\.1a' "$TAMA_FAKE_TMUX_LOG"
+  assert_stderr_contains '2.9'
+  assert_stderr_contains '3.1a'
+  run grep -q 'display-message' "$TAMA_FAKE_TMUX_LOG"
   assert_success
 }
 
 @test "below the minimum tmux version it wires nothing at all" {
-  tama_use_fake_tmux 'tmux 3.0a'
+  local before
+  before="$(tama_server_state)"
 
+  tama_use_fake_tmux 'tmux 3.0a'
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
 
-  assert_equal "$(test_tmux show -gqv @tama_bin)" ""
-  assert_equal "$(test_tmux show -gqv @tama_bin_dir)" ""
-  run grep -q '^set' "$TAMA_FAKE_TMUX_LOG"
-  assert_status 1
+  assert_plugin_not_wired
+  assert_equal "$(tama_server_state)" "$before"
 }
 
 @test "the minimum tmux version itself is supported, and warns about nothing" {
@@ -119,55 +139,53 @@ teardown() {
   run --separate-stderr "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
   [ -z "$stderr" ]
-  assert_equal "$(test_tmux show -gqv @tama_bin)" "$PLUGIN_ROOT/bin/tama"
+  assert_plugin_wired
   run grep -q 'display-message' "$TAMA_FAKE_TMUX_LOG"
   assert_status 1
 }
 
 @test "a version without the bugfix letter is older than one with it" {
-  tama_use_fake_tmux 'tmux 3.1'
-
-  run "$PLUGIN_ROOT/tamagotchi.tmux"
-  assert_success
-  assert_equal "$(test_tmux show -gqv @tama_bin)" ""
+  assert_version_rejected 'tmux 3.1'
 }
 
 @test "a later bugfix release of the minimum version is supported" {
-  tama_use_fake_tmux 'tmux 3.1b'
-
-  run "$PLUGIN_ROOT/tamagotchi.tmux"
-  assert_success
-  assert_equal "$(test_tmux show -gqv @tama_bin)" "$PLUGIN_ROOT/bin/tama"
+  assert_version_supported 'tmux 3.1b'
 }
 
 @test "a two-digit minor version is compared numerically, not lexically" {
-  tama_use_fake_tmux 'tmux 3.10'
+  assert_version_supported 'tmux 3.10'
+}
 
-  run "$PLUGIN_ROOT/tamagotchi.tmux"
-  assert_success
-  assert_equal "$(test_tmux show -gqv @tama_bin)" "$PLUGIN_ROOT/bin/tama"
+@test "a newer major version is supported" {
+  assert_version_supported 'tmux 4.0'
+}
+
+@test "an older major version is rejected" {
+  assert_version_rejected 'tmux 2.8'
 }
 
 @test "a distro build with a third version component is supported" {
-  tama_use_fake_tmux 'tmux 3.1.2'
+  assert_version_supported 'tmux 3.1.2'
+}
 
-  run "$PLUGIN_ROOT/tamagotchi.tmux"
-  assert_success
-  assert_equal "$(test_tmux show -gqv @tama_bin)" "$PLUGIN_ROOT/bin/tama"
+@test "a release candidate of an old version is still rejected" {
+  # The suffix must not be mistaken for a build prefix and strip the version.
+  assert_version_rejected 'tmux 2.9-rc'
 }
 
 @test "a development build of a supported version is supported" {
-  tama_use_fake_tmux 'tmux next-3.4'
-
-  run "$PLUGIN_ROOT/tamagotchi.tmux"
-  assert_success
-  assert_equal "$(test_tmux show -gqv @tama_bin)" "$PLUGIN_ROOT/bin/tama"
+  assert_version_supported 'tmux next-3.4'
 }
 
 @test "an unparseable tmux version is given the benefit of the doubt" {
-  tama_use_fake_tmux 'tmux master'
+  assert_version_supported 'tmux master'
+}
+
+@test "a tmux that cannot report its version is given the benefit of the doubt" {
+  tama_use_fake_tmux ''
+  export TAMA_FAKE_TMUX_FAIL_VERSION=1
 
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
-  assert_equal "$(test_tmux show -gqv @tama_bin)" "$PLUGIN_ROOT/bin/tama"
+  assert_plugin_wired
 }
