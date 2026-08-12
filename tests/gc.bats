@@ -52,6 +52,12 @@ pane_command() { # <pane>
 # Puts <pane> back on a plain shell, the way a pane whose agent exited ends up. Which
 # shell that turns out to be is the machine's business, so this waits for the command
 # to change rather than for a name — `sh` is bash on macOS and dash on Debian.
+#
+# This is what "the agent has gone" looks like to the sweep, and the only thing it
+# accepts as evidence: a pane running some other *program* is at least as likely to be
+# a tool call that opened an editor as an agent that exited, and clearing that would
+# take a live agent's icon and subagent list away. So every test here that expects a
+# sweep leaves the pane at a prompt.
 pane_running_shell() { # <pane>
   local before waited=0
   before="$(pane_command "$1")"
@@ -64,6 +70,7 @@ pane_running_shell() { # <pane>
     fi
     sleep 0.05
   done
+  assert_shell_in_default_allowlist "$1"
 }
 
 # The default allowlist, for the one test that depends on this machine's own shell
@@ -101,19 +108,42 @@ wait_until_no_icons() { # <window>
   done
 }
 
-@test "a pane running something else than when it reported is swept" {
+@test "a pane back at a prompt after reporting is swept" {
   # The whole point: an agent that exited without saying so leaves an icon claiming
   # it is working. The pane is still there, running a plain shell now.
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
   assert_equal "$(tama_icons "$WINDOW")" ' ●'
 
-  pane_running "$PANE" 'cat'
+  pane_running_shell "$PANE"
   run "$PLUGIN_ROOT/bin/tama" gc --window "$WINDOW"
   assert_success
 
   assert_equal "$(tama_icons "$WINDOW")" ''
   assert_no_trace "$PANE"
+}
+
+@test "a pane whose agent shelled out to something is left alone" {
+  # `pane_current_command` is not the process the agent runs in — it is whatever holds
+  # the pane's tty — so a tool call that opens an editor or a pager stops matching the
+  # snapshot while the agent is very much alive. Clearing on that alone took the icon
+  # and the subagent list away at the one moment the user was waiting on the thing that
+  # took the tty, and nothing put them back: an agent blocked on that child has no next
+  # event to report.
+  run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start sub-a --pane "$PANE"
+  assert_success
+
+  # A child of the agent's, not a shell: everything the sweep can see is the same as
+  # for a dead agent except that this is not a prompt.
+  pane_running "$PANE" 'cat'
+  run "$PLUGIN_ROOT/bin/tama" gc --all
+  assert_success
+
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
+  assert_pane_option "$PANE" state_main running
+  assert_pane_option "$PANE" subagents sub-a
 }
 
 @test "a pane still running what it reported is left alone" {
@@ -142,7 +172,7 @@ wait_until_no_icons() { # <window>
   assert_success
   assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
 
-  pane_running "$PANE" 'cat'
+  pane_running_shell "$PANE"
   run "$PLUGIN_ROOT/bin/tama" gc --window "$WINDOW"
   assert_success
 
@@ -161,11 +191,12 @@ wait_until_no_icons() { # <window>
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
 
-  pane_running "$PANE" 'cat'
+  pane_running_shell "$PANE"
   run "$PLUGIN_ROOT/bin/tama" gc --window "$WINDOW"
   assert_success
   assert_pane_option_unset "$PANE" cmd
 
+  pane_running "$PANE" 'cat'
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
   assert_pane_option "$PANE" cmd cat
@@ -233,8 +264,8 @@ wait_until_no_icons() { # <window>
   assert_success
   run "$PLUGIN_ROOT/bin/tama" state waiting Claude --pane "$other_pane"
   assert_success
-  pane_running "$PANE" 'cat'
-  pane_running "$other_pane" 'cat'
+  pane_running_shell "$PANE"
+  pane_running_shell "$other_pane"
 
   run "$PLUGIN_ROOT/bin/tama" gc --window "$WINDOW"
   assert_success
@@ -258,7 +289,7 @@ wait_until_no_icons() { # <window>
 
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$other_pane"
   assert_success
-  pane_running "$other_pane" 'cat'
+  pane_running_shell "$other_pane"
   assert_equal "$(tama_icons "$other")" ' ●'
 
   run "$PLUGIN_ROOT/bin/tama" gc --all
@@ -282,7 +313,7 @@ wait_until_no_icons() { # <window>
   assert_success
   assert_equal "$(tama_icons "$WINDOW")" ' ●◐'
 
-  pane_running "$dead" 'cat'
+  pane_running_shell "$dead"
   run "$PLUGIN_ROOT/bin/tama" gc --window "$WINDOW"
   assert_success
 
@@ -319,7 +350,7 @@ wait_until_no_icons() { # <window>
 @test "gc with no target sweeps the window tmux is on" {
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
-  pane_running "$PANE" 'cat'
+  pane_running_shell "$PANE"
 
   # No target, no $TMUX_PANE: what a user typing `tama gc` has.
   run "$PLUGIN_ROOT/bin/tama" gc
@@ -330,15 +361,16 @@ wait_until_no_icons() { # <window>
 @test "gc takes a target as an argument, and a pane resolves to its window" {
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
-  pane_running "$PANE" 'cat'
+  pane_running_shell "$PANE"
 
   run "$PLUGIN_ROOT/bin/tama" gc "$WINDOW"
   assert_success
   assert_equal "$(tama_icons "$WINDOW")" ''
 
+  pane_running "$PANE" 'sleep 300'
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
-  pane_running "$PANE" 'sleep 300'
+  pane_running_shell "$PANE"
   run "$PLUGIN_ROOT/bin/tama" gc --pane "$PANE"
   assert_success
   assert_equal "$(tama_icons "$WINDOW")" ''
@@ -351,7 +383,7 @@ wait_until_no_icons() { # <window>
   # somewhere the user never asked about.
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
-  pane_running "$PANE" 'cat'
+  pane_running_shell "$PANE"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" gc --pane '%101'
   assert_success
@@ -366,7 +398,7 @@ wait_until_no_icons() { # <window>
   test_tmux split-window -t "$WINDOW" -d 'sleep 300'
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
-  pane_running "$PANE" 'cat'
+  pane_running_shell "$PANE"
   assert_equal "$(tama_icons "$WINDOW")" ' ●'
 
   test_tmux select-pane -t "$(test_tmux list-panes -t "$WINDOW" -F '#{pane_id}' | tail -1)"
@@ -383,7 +415,7 @@ wait_until_no_icons() { # <window>
   run "$PLUGIN_ROOT/bin/tama" state waiting Claude --pane "$target_pane"
   assert_success
   assert_flagged "$target"
-  pane_running "$target_pane" 'cat'
+  pane_running_shell "$target_pane"
 
   tama_attach_client t
   test_tmux select-window -t t:1
@@ -394,7 +426,7 @@ wait_until_no_icons() { # <window>
 @test "on-select sweeps the window it was called for" {
   run "$PLUGIN_ROOT/bin/tama" state waiting Claude --pane "$PANE"
   assert_success
-  pane_running "$PANE" 'cat'
+  pane_running_shell "$PANE"
 
   run "$PLUGIN_ROOT/bin/tama" on-select --window "$WINDOW"
   assert_success
@@ -413,8 +445,8 @@ wait_until_no_icons() { # <window>
   assert_success
   run "$PLUGIN_ROOT/bin/tama" state waiting Claude --pane "$elsewhere_pane"
   assert_success
-  pane_running "$PANE" 'cat'
-  pane_running "$elsewhere_pane" 'cat'
+  pane_running_shell "$PANE"
+  pane_running_shell "$elsewhere_pane"
 
   run "$PLUGIN_ROOT/bin/tama" on-select --all --window "$WINDOW"
   assert_success
@@ -448,7 +480,7 @@ wait_until_no_icons() { # <window>
   # scope reaches.
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
-  pane_running "$PANE" 'cat'
+  pane_running_shell "$PANE"
 
   # This test is about the focus path alone, so the attach hook is taken back off:
   # otherwise attaching below would clear the mark and this would pass without focus
@@ -490,7 +522,7 @@ wait_until_no_icons() { # <window>
   # And something stale in another session, which only the whole-server scope reaches.
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
-  pane_running "$PANE" 'cat'
+  pane_running_shell "$PANE"
 
   tama_attach_client other
 
@@ -515,7 +547,7 @@ wait_until_no_icons() { # <window>
   assert_equal "$(tama_window_id other:)" "$landed"
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$landed_pane"
   assert_success
-  pane_running "$landed_pane" 'cat'
+  pane_running_shell "$landed_pane"
 
   # The other window's agent is real and waiting, and its mark is earned.
   run "$PLUGIN_ROOT/bin/tama" state waiting Claude --pane "$elsewhere_pane"
@@ -569,7 +601,7 @@ wait_until_no_icons() { # <window>
 
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
-  pane_running "$PANE" 'cat'
+  pane_running_shell "$PANE"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" gc --window "$WINDOW"
   assert_success

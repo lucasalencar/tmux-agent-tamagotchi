@@ -322,8 +322,11 @@ keeps showing the background icon until something sweeps it. This is known and o
 and is not promised to be. Everything else about the pane's state works without it.
 
 **Agents that exit without saying so are swept, by inference.** A pane is stale when it is
-running a different command from the one recorded with its state, and a pane with no
-recorded command is stale when what it runs now is a shell — `@tama_gc_shells` is that list.
+back at a shell prompt but its state says an agent is working there — `@tama_gc_shells` is
+the list of shells. A pane running some other program is left alone: what tmux reports is
+whatever holds the pane's tty, so an agent whose tool call opened an editor or a pager looks
+exactly like one that walked out, and taking a live agent's icon away is the expensive
+mistake.
 The sweep runs on window and pane selection for the window you are looking at, and over the
 whole server when you come back to the terminal. Coming back by *attaching* needs nothing
 from you; coming back because your terminal regained focus needs tmux's own `set -g

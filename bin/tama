@@ -221,9 +221,11 @@ thing this plugin could do to you.
                                        # and /usr/local/bin are not where yours is
 
 An agent that exits without saying so would otherwise leave its icon behind
-forever, so the state is swept: a pane is stale when it is running a different
-command from the one recorded when its state was written, and a pane with no
-recorded command is stale when what it is running now is a shell.
+forever, so the state is swept: a pane is stale when its state says an agent is
+working there and it is back at a shell prompt instead. A pane running some
+other program is left alone — tmux reports whichever process holds the pane's
+tty, so an agent whose tool call opened an editor looks just like one that
+walked out, and clearing a live agent is the expensive mistake.
 
   set -g @tama_gc_shells 'sh bash zsh fish dash ksh mksh ash csh tcsh'
 

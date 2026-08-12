@@ -10,8 +10,18 @@
 # There is no process to ask, because the plugin never launched one and holds no pid
 # (ADR-0001: everything arrives as argv from the agent's own hooks). What it does
 # have is the snapshot `state` took when it wrote: the pane's command *then*. If the
-# pane's command now is a different one, whatever reported that state is not what is
-# running in there any more.
+# pane's command now is a different one, whatever reported that state may not be what
+# is running in there any more.
+#
+# "May not", and that is the whole delicacy of this file. `pane_current_command` is
+# not the process the agent runs in; it is tmux's guess at whichever process holds
+# the pane's tty, so an agent that shells out to an editor or a pager stops matching
+# its own snapshot without having gone anywhere. So a snapshot that no longer matches
+# is a question and not an answer, and the answer is the shell allowlist below: an
+# agent that has really exited leaves its pane back at a prompt. Clearing on the
+# mismatch alone loses the pane's state and its subagent list at the one moment the
+# user is most likely to be waiting on it, and nothing puts them back — an agent
+# blocked on that child has no next event to report.
 #
 # Sourced by lib/common.sh, so every command has it.
 
@@ -32,11 +42,10 @@
 # names are specific enough that nothing else sets them.
 TAMA_STALE_READ_FORMAT='#{pane_id} #{?@tama_pane_state_main,1,0}#{?@tama_pane_cmd,1,0}#{==:#{@tama_pane_cmd},#{pane_current_command}} #{pane_current_command}'
 
-# The fallback for a pane with no snapshot: a state written before the plugin
-# recorded commands, or one whose command tmux could not express in a value the
-# record can hold. Then there is nothing to compare, and the only safe reading of
-# the pane is what it is running now — if that is a shell, nobody's agent is in
-# there. Anything else is left alone, because "not a shell I know" is not evidence.
+# What the sweep will accept as evidence that nobody's agent is in a pane: it is
+# running one of these, which is what a pane left behind by an agent that exited
+# goes back to. Anything else is left alone, because "not a shell I know" is not
+# evidence — it is just as likely to be a tool call that opened an editor.
 #
 # Configurable, since a user's shell need not be one anybody guessed:
 # `set -g @tama_gc_shells 'zsh nu'`.
@@ -119,11 +128,17 @@ _tama_stale_sweep() { # <list-panes …>
       # for — a sweep that cleared a live agent would be worse than one that
       # cleared nothing at all.
       111) continue ;;
-      # A snapshot, and the pane is running something else now. Stale.
-      110) ;;
-      # No snapshot to compare, so the allowlist decides. The third digit says
-      # nothing here: tmux compared the live command against an empty string.
-      10?) tama_stale_is_shell "$current" || continue ;;
+      # Everything else with a state on it: the pane is running something other
+      # than the snapshot, or there was never a snapshot to compare. Either way
+      # the live command is all there is to go on, and only the allowlist is
+      # evidence — `pane_current_command` is not "the process the agent runs in",
+      # it is whatever holds the pane's tty, so a tool call that opened `vim` or a
+      # pager stops matching the snapshot while the agent is very much alive. A
+      # sweep on that takes the icon and the subagent list away exactly when the
+      # user is waiting on the thing that took the tty, and no later event puts
+      # them back. An agent that really has gone leaves its pane at a shell
+      # prompt, which is the case this still clears.
+      1??) tama_stale_is_shell "$current" || continue ;;
       # A record that did not come back in the shape this asked for. Leaving the
       # pane alone is the direction that cannot take a live agent's icon away.
       *) continue ;;
