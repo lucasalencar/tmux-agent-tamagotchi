@@ -10,6 +10,7 @@ load helper
 setup() {
   tama_start_server
   PANE="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
+  WINDOW="$(test_tmux display-message -p -t "$PANE" '#{window_id}')"
 }
 
 teardown() {
@@ -32,7 +33,6 @@ teardown() {
   assert_success
 
   assert_pane_option "$agent_pane" state_main running
-  assert_pane_option "$agent_pane" state running
   assert_pane_option "$agent_pane" agent Claude
   # The snapshot is what a later sweep compares against to notice the agent is
   # gone, so it has to be the pane's own command and path, not the caller's.
@@ -48,8 +48,8 @@ teardown() {
   TMUX_PANE="$other" run "$PLUGIN_ROOT/bin/tama" state running
   assert_success
 
-  assert_pane_option "$other" state running
-  assert_pane_option_unset "$PANE" state
+  assert_pane_option "$other" state_main running
+  assert_pane_option_unset "$PANE" state_main
 }
 
 @test "--pane overrides the pane the hook is running in" {
@@ -60,8 +60,8 @@ teardown() {
   TMUX_PANE="$other" run "$PLUGIN_ROOT/bin/tama" state running --pane "$PANE"
   assert_success
 
-  assert_pane_option "$PANE" state running
-  assert_pane_option_unset "$other" state
+  assert_pane_option "$PANE" state_main running
+  assert_pane_option_unset "$other" state_main
 }
 
 @test "a state reported for a pane that is gone exits 0 and writes nothing" {
@@ -70,7 +70,33 @@ teardown() {
   [ -z "$output" ]
   [ -z "$stderr" ]
 
-  assert_pane_option_unset "$PANE" state
+  assert_pane_option_unset "$PANE" state_main
+
+  # Not even attempted: a pane that is gone is noticed on the read, so nothing is
+  # written at a target that no longer exists — and a subagent event does not spend
+  # its retries finding that out.
+  tama_log_tmux_calls
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start sub-1 --pane %999
+  assert_success
+  refute_tmux_command 'set'
+  refute_tmux_command 'refresh-client'
+}
+
+@test "a tmux that cannot be reached is a silent no-op, not a retry storm" {
+  # The server can go away between an agent's hook firing and this running. The
+  # read notices, and the calls that would follow it — including the retries a
+  # subagent event would otherwise spend — never happen.
+  tama_log_tmux_calls
+  export TAMA_FAKE_TMUX_FAIL_ALL=1
+  export TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls"
+  : >"$TAMA_FAKE_TMUX_COUNTER"
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" state subagent-start sub-1 --pane "$PANE"
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+
+  assert_equal "$(wc -l <"$TAMA_FAKE_TMUX_COUNTER" | tr -d ' ')" 1
 }
 
 @test "each reported state is recorded as itself" {
@@ -79,7 +105,6 @@ teardown() {
     run "$PLUGIN_ROOT/bin/tama" state "$reported" --pane "$PANE"
     assert_success
     assert_pane_option "$PANE" state_main "$reported"
-    assert_pane_option "$PANE" state "$reported"
   done
 }
 
@@ -99,13 +124,15 @@ teardown() {
   assert_success
 
   # The agent's own turn is done, but its children are not: that is a different
-  # thing from finished, and it is never reported — only derived.
+  # thing from finished, and it is never reported — only derived, from the pair of
+  # things the pane does record.
   assert_pane_option "$PANE" state_main idle
-  assert_pane_option "$PANE" state background
+  assert_pane_option "$PANE" subagents sub-1
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
 
   run "$PLUGIN_ROOT/bin/tama" state subagent-stop sub-1 --pane "$PANE"
   assert_success
-  assert_pane_option "$PANE" state idle
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
   # The last one leaving takes the option with it, rather than leaving an empty
   # string behind that would read as a set option forever.
   assert_pane_option_unset "$PANE" subagents
@@ -114,19 +141,19 @@ teardown() {
 @test "a subagent starting while the agent is idle turns it into background" {
   run "$PLUGIN_ROOT/bin/tama" state idle --pane "$PANE"
   assert_success
-  assert_pane_option "$PANE" state idle
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
 
   run "$PLUGIN_ROOT/bin/tama" state subagent-start sub-1 --pane "$PANE"
   assert_success
-  assert_pane_option "$PANE" state background
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
 }
 
 @test "background is never reported directly" {
   run "$PLUGIN_ROOT/bin/tama" state background --pane "$PANE"
   assert_success
 
-  assert_pane_option_unset "$PANE" state
   assert_pane_option_unset "$PANE" state_main
+  assert_equal "$(tama_icons "$WINDOW")" ''
 }
 
 @test "a subagent does not change a state that is not idle" {
@@ -135,8 +162,9 @@ teardown() {
   run "$PLUGIN_ROOT/bin/tama" state subagent-start sub-1 --pane "$PANE"
   assert_success
 
-  assert_pane_option "$PANE" state running
+  assert_pane_option "$PANE" state_main running
   assert_pane_option "$PANE" subagents sub-1
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
 }
 
 @test "a duplicate subagent start is idempotent" {
@@ -178,7 +206,7 @@ teardown() {
   assert_success
   assert_pane_option "$PANE" subagents 'sub-1 sub-3'
   # Still somebody working, so still background.
-  assert_pane_option "$PANE" state background
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
 }
 
 @test "clear unsets every pane option rather than emptying it" {
@@ -216,7 +244,7 @@ teardown() {
   assert_success
   [ -z "$output" ]
   [ -z "$stderr" ]
-  assert_pane_option_unset "$PANE" state
+  assert_pane_option_unset "$PANE" state_main
 }
 
 @test "a state reported outside tmux is a silent no-op" {
@@ -254,7 +282,7 @@ teardown() {
 
   assert_tmux_command 'set'
   assert_tmux_command 'refresh-client'
-  assert_pane_option "$PANE" state waiting
+  assert_pane_option "$PANE" state_main waiting
 }
 
 @test "a duplicate subagent start writes nothing" {
@@ -284,7 +312,7 @@ teardown() {
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
   assert_success
   [ -z "$stderr" ]
-  assert_pane_option "$PANE" state background
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
 
   # Including the no-op paths, where nothing is staged at all.
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
@@ -294,7 +322,7 @@ teardown() {
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" state clear --pane "$PANE"
   assert_success
   [ -z "$stderr" ]
-  assert_pane_option_unset "$PANE" state
+  assert_pane_option_unset "$PANE" state_main
 }
 
 @test "a change nothing can see writes, but refreshes no client" {
@@ -313,12 +341,23 @@ teardown() {
   assert_pane_option "$PANE" agent Codex
 }
 
-@test "concurrent subagent starts keep both ids" {
+@test "a subagent start whose write is overwritten is retried until it holds" {
   # tmux has no atomic read-modify-write, so this is the case the optimistic loop
   # exists for. Losing a start is the failure that matters: a pane with a live
   # subagent would look finished.
-  "$PLUGIN_ROOT/bin/tama" state subagent-start sub-a --pane "$PANE" &
-  "$PLUGIN_ROOT/bin/tama" state subagent-start sub-b --pane "$PANE" &
+  #
+  # The race is driven rather than raced for. Both calls read the empty list; `b`
+  # writes first; `a`'s write is held up long enough to land on top of it and drop
+  # it; and `b`'s read-back is held up until after that, so it is `b` that has to
+  # notice its id is gone and put it back.
+  tama_log_tmux_calls
+
+  TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-a" \
+    TAMA_FAKE_TMUX_DELAY_BEFORE=2 TAMA_FAKE_TMUX_DELAY=0.4 \
+    "$PLUGIN_ROOT/bin/tama" state subagent-start sub-a --pane "$PANE" &
+  TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-b" \
+    TAMA_FAKE_TMUX_DELAY_BEFORE=3 TAMA_FAKE_TMUX_DELAY=0.8 \
+    "$PLUGIN_ROOT/bin/tama" state subagent-start sub-b --pane "$PANE" &
   wait
 
   local list
@@ -371,5 +410,10 @@ teardown() {
   # it would come back empty on every later read.
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" state running "$(printf 'Cla\nude')" --pane "$PANE"
   assert_usage_error 'newline'
-  assert_pane_option_unset "$PANE" state
+  assert_pane_option_unset "$PANE" state_main
+
+  # A hook that failed to interpolate its variable, rather than a state from a
+  # version that does not exist yet.
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" state '' --pane "$PANE"
+  assert_usage_error
 }

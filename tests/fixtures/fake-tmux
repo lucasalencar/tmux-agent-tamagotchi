@@ -6,8 +6,18 @@
 #
 #   TAMA_FAKE_TMUX_VERSION       what `tmux -V` prints (default: the real version)
 #   TAMA_FAKE_TMUX_FAIL_VERSION  set to make `tmux -V` fail instead
+#   TAMA_FAKE_TMUX_FAIL_ALL      set to make every call fail, as an unreachable
+#                                server does — a tmux that went away between the
+#                                agent's hook firing and this running
 #   TAMA_FAKE_TMUX_LOG           file the calls are appended to
 #   TAMA_FAKE_TMUX_SOCKET        socket name of the test server
+#   TAMA_FAKE_TMUX_COUNTER       file counting this caller's calls, for the delay below
+#   TAMA_FAKE_TMUX_DELAY_BEFORE  which of that caller's calls to hold up
+#   TAMA_FAKE_TMUX_DELAY         how long to hold it up, in seconds
+#
+# The delay exists so that a test can *drive* a race between two CLI processes
+# instead of starting them at once and hoping: holding up one call at a known point
+# puts the two in a known order.
 
 set -o nounset
 
@@ -16,6 +26,18 @@ set -o nounset
 # command batched behind a `;` is as visible as the first.
 if [ -n "${TAMA_FAKE_TMUX_LOG:-}" ] && [ "$#" -gt 0 ]; then
   printf '%s\n' "$@" >>"$TAMA_FAKE_TMUX_LOG"
+fi
+
+if [ -n "${TAMA_FAKE_TMUX_COUNTER:-}" ]; then
+  # One line per call, so the count survives across these short-lived processes.
+  printf 'x\n' >>"$TAMA_FAKE_TMUX_COUNTER"
+  if [ "$(wc -l <"$TAMA_FAKE_TMUX_COUNTER")" -eq "${TAMA_FAKE_TMUX_DELAY_BEFORE:-0}" ]; then
+    sleep "${TAMA_FAKE_TMUX_DELAY:-0}"
+  fi
+fi
+
+if [ -n "${TAMA_FAKE_TMUX_FAIL_ALL:-}" ]; then
+  exit 1
 fi
 
 if [ "${1:-}" = '-V' ]; then

@@ -6,9 +6,12 @@
 #
 # The hottest read path in the plugin: tmux runs this in a shell of its own, once
 # per window per status-interval, for every window on the server. So it makes
-# exactly one tmux call and forks nothing — which is also why it prints the
-# display state that `state` already derived and stored, instead of deriving
-# anything here.
+# exactly one tmux call and forks nothing.
+#
+# The derived state is worked out here rather than read from a sixth option,
+# because storing it needed two writers who could disagree — see lib/pane.sh. It
+# costs nothing: the one call already reads a pane option per pane, and now reads
+# two.
 #
 # The window is named by `#{window_id}`, never by index: an index moves under
 # renumber-windows, and this command is invoked from a format that was expanded
@@ -26,22 +29,23 @@ set -o nounset
 
 main() {
   [ "$#" -eq 1 ] || die_usage 'icons needs exactly one window id'
+  # An empty target is a status line that failed to expand its format, not a
+  # request for whichever window tmux would pick.
+  [ -n "$1" ] || die_usage 'icons needs a window id'
 
-  local states icons='' state
-  # One line per pane, in pane order, empty for every pane that is not an agent
-  # pane. A window that is gone — closed between the format expanding and this
-  # running — is not an error worth a word on stdout.
-  states="$(tmux_run list-panes -t "$1" -F '#{@tama_pane_state}' 2>/dev/null)" || exit 0
+  local panes icons='' main subagents
+  # One line per pane, in pane order, holding what the pane last said about itself
+  # and its live subagents. A pane that is not an agent pane says nothing. A window
+  # that is gone — closed between the format expanding and this running — is not an
+  # error worth a word on stdout.
+  panes="$(tmux_run list-panes -t "$1" -F "$TAMA_PANE_RENDER_FORMAT" 2>/dev/null)" || exit 0
 
-  # Splitting on whitespace drops the empty lines with no test for them, and
-  # globbing is off because a state name is not a pattern.
-  set -f
-  # shellcheck disable=SC2086  # deliberate: one word per agent pane
-  set -- $states
-  set +f
-
-  for state in "$@"; do
-    case "$state" in
+  # A here-document rather than a pipe: a pipe would put this loop in a subshell,
+  # and this command exists to run without forking. The separator is the only thing
+  # split on, so a subagent list of several ids arrives whole.
+  while IFS="$TAMA_US" read -r main subagents; do
+    tama_pane_derive "$main" "$subagents"
+    case "$TAMA_PANE_DERIVED" in
       # The braces are not decoration: bash reads the bytes of a multibyte glyph
       # as part of the name in `$icons●`, and dies under `nounset`.
       running) icons="${icons}●" ;;
@@ -52,7 +56,9 @@ main() {
       # A state from a newer version of the plugin, or from somebody else's
       # option of the same name: not ours to draw.
     esac
-  done
+  done <<EOF
+$panes
+EOF
 
   # The prefix separates the icons from the window name, and exists only when
   # there is something to separate: a window with no agent pane must contribute

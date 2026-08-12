@@ -51,7 +51,7 @@ boot_demo() {
   # trace either. What the command itself contributes is the test below.
   local rendered plain
   rendered="$(test_tmux display-message -p '#{E:window-status-format}')"
-  plain="$(test_tmux display-message -p '#I:#W#{?window_flags,#{window_flags}, }')"
+  plain="$(test_tmux display-message -p '#I:#W#{?window_flags,#{window_flags},}')"
   assert_equal "$rendered" "$plain"
 
   tama_point_at_server

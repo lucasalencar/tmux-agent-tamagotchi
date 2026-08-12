@@ -22,8 +22,10 @@ tama_reserve_socket() {
 # indirection every script uses to reach it.
 tama_start_server() {
   tama_reserve_socket tamatest
-  # Exported before the server boots, so jobs the server itself spawns — status
-  # line `#()` formats, hooks — inherit it and cannot reach the user's tmux.
+  # The indirection goes into the environment *before* the server boots as well as
+  # after, so that jobs the server spawns for itself — a status line `#()` format, a
+  # hook — inherit it and cannot reach the user's tmux. $TMUX cannot be exported
+  # this early: a tmux client that sees it believes it is nested.
   export TAMA_TMUX=tmux
   export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
   test_tmux -f /dev/null new-session -d -s t
@@ -32,8 +34,8 @@ tama_start_server() {
 
 # Points the CLI at this test's server, for a suite that booted its own.
 # The CLI only checks that $TMUX is non-empty; the socket it names is irrelevant
-# because every tmux call goes through TAMA_TMUX. It is exported after the server
-# is up, since a tmux client that sees it believes it is nested.
+# because every tmux call goes through TAMA_TMUX. All three are exported after the
+# server is up, since a tmux client that sees $TMUX believes it is nested.
 tama_point_at_server() {
   export TAMA_TMUX=tmux
   export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
@@ -161,7 +163,9 @@ tama_render_icons() {
   esac
   # What is left is the format tmux expands before running it.
   job="${job#'#('}"
-  job="${job%')'}"
+  # At the *first* `)`, which is where tmux ends a job — a helper that stripped at
+  # the last one would accept a command tmux would have truncated.
+  job="${job%%')'*}"
   command="$(test_tmux display-message -p -t "$1" "$job")"
   # /bin/sh, because that is what tmux runs a job with.
   sh -c "$command"

@@ -4,6 +4,16 @@
 # round trip, derived into the one state a status line shows, and written back
 # only where it actually changed.
 #
+# The derived state is *not* stored. It was, and two commands wrote it — a state
+# report derived it from the subagents it had just read, a subagent event from the
+# state it had just read — so the ordinary pair of events an agent ends a turn with
+# (its own `idle` and its last subagent stopping) raced, and the loser left a pane
+# claiming `background` with no subagents, or `idle` with one still live. Nothing
+# healed it, because `idle` is the last thing an agent says until the user types
+# again. Deriving where it is read costs nothing — the icons already read the pane
+# options of a whole window in one call, and now read two of them instead of one —
+# and there is no second writer to disagree with.
+#
 # Sourced by lib/common.sh, so every command has it.
 #
 # Why one round trip: `state running` is reported on every tool call of every
@@ -14,26 +24,26 @@
 # pane id, state name, agent name or path anybody will ever have.
 TAMA_US=$'\037'
 
-# The pane options, in the order tama_pane_read unpacks them, without the
-# `@tama_pane_` prefix. Every value the plugin keeps about a pane is one of
-# these — there is no state file and no daemon.
-TAMA_PANE_OPTIONS='state_main subagents state cmd agent cwd'
+# What the icons read, as a format. Written here, next to the writer of the values,
+# because a rename on one side and not the other would leave every status line
+# empty with nothing to say why.
+TAMA_PANE_RENDER_FORMAT="#{@tama_pane_state_main}$TAMA_US#{@tama_pane_subagents}"
 
-# The read: the pane's identity, its stored state, and the live command and path
-# that a fresh state write snapshots. The format is built from the list above,
-# but the variables it is unpacked into are written out by hand — adding an
-# option means touching both, in the same order.
+# The read: the pane's identity, everything it last said about itself — there are
+# five options and no state file, the tmux server is the database — and the live
+# command and path a fresh report snapshots. Spelled out field by field, in the
+# order the variables below are: a loop over a list of names would look like it
+# enforced that order without doing it, since the unpack has to name them anyway.
 #
 # One asymmetry to know about: reading an option through a *format* falls back to
 # the window, session and global scopes, while `show -p` does not. Nothing sets
-# these names at any other scope, and a user who set `@tama_pane_state` globally
-# would give every pane on the server an icon — which is why the names are
+# these names at any other scope, and a user who set `@tama_pane_state_main`
+# globally would give every pane on the server an icon — which is why the names are
 # specific enough that nobody will.
-TAMA_PANE_READ_FORMAT='#{pane_id}'
-for _tama_option in $TAMA_PANE_OPTIONS; do
-  TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{@tama_pane_$_tama_option}"
-done
-unset _tama_option
+TAMA_PANE_READ_FORMAT="#{pane_id}$TAMA_US$TAMA_PANE_RENDER_FORMAT"
+TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{@tama_pane_cmd}"
+TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{@tama_pane_agent}"
+TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{@tama_pane_cwd}"
 TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{pane_current_command}"
 TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{pane_current_path}"
 
@@ -49,13 +59,17 @@ TAMA_PANE_READ_FORMAT="$TAMA_PANE_READ_FORMAT$TAMA_US#{pane_current_path}"
 tama_pane_read() {
   local raw
   raw="$(tmux_run display-message -p -t "$1" "$TAMA_PANE_READ_FORMAT" 2>/dev/null)" || raw=''
+  # Checked before the unpack rather than after: the separator is not whitespace,
+  # so `read` would hand the newline of an empty read to the first field and every
+  # caller's "no such pane" guard would be dead code.
+  [ -n "$raw" ] || return 1
   # `-d ''` reads to the end of the input rather than to the end of the first
   # line, so a newline inside a value is data instead of the end of the record.
   # Without it a directory — or an agent name — containing one truncates the read:
   # the command snapshot silently comes back empty, and the pane then differs from
   # itself on every report, which defeats the write short-circuit for good.
   IFS="$TAMA_US" read -r -d '' TAMA_PANE_ID TAMA_PANE_STATE_MAIN TAMA_PANE_SUBAGENTS \
-    TAMA_PANE_STATE TAMA_PANE_CMD TAMA_PANE_AGENT TAMA_PANE_CWD \
+    TAMA_PANE_CMD TAMA_PANE_AGENT TAMA_PANE_CWD \
     TAMA_PANE_CURRENT_CMD TAMA_PANE_CURRENT_PATH <<EOF
 $raw
 EOF
@@ -64,9 +78,10 @@ EOF
   [ -n "$TAMA_PANE_ID" ]
 }
 
-# The plugin's one derivation, in the one place both writers reach it: an `idle`
-# main state with at least one live subagent displays as `background`, which is
-# "its children are still busy", not "finished". Sets TAMA_PANE_DERIVED.
+# The plugin's one derivation, in the one place everything that renders or compares
+# a state reaches it: an `idle` main state with at least one live subagent displays
+# as `background`, which is "its children are still busy", not "finished". Sets
+# TAMA_PANE_DERIVED.
 #
 # A pane with no main state has no display state either — that, and not an empty
 # string, is what makes it not an agent pane.
@@ -131,6 +146,24 @@ tama_subagents_remove() { # <list> <id>
     kept="${kept:+$kept }$existing"
   done
   TAMA_SUBAGENTS_NEW="$kept"
+}
+
+# Whether a write would change what a status line shows, which is the only thing
+# worth refreshing every client for. Both arguments are derived states, so the
+# comparison is of what a user would see and not of what was stored.
+tama_pane_display_changed() { # <derived_before> <derived_after>
+  [ "$1" != "$2" ]
+}
+
+# Whether a value can survive being stored in a pane option and read back as one
+# field of the record above. A newline would be kept by the read but lost from the
+# last field, and the separator itself would shift every field after it — which
+# corrupts the command snapshot and leaves the pane unable to recognise itself, so
+# every later report writes and refreshes for nothing.
+tama_pane_value_is_storable() { # <value>
+  case "$1" in
+    *[$'\n\r']* | *"$TAMA_US"*) return 1 ;;
+  esac
 }
 
 # Writes are batched into a single tmux invocation, because the alternative is

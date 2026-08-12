@@ -42,8 +42,10 @@ teardown() {
 
   # A format the user puts where they want it, that runs the icon command for the
   # window being drawn. Rendered rather than compared as a string, because what
-  # matters is that tmux and the shell agree on what it means.
-  test_tmux set -p @tama_pane_state running
+  # matters is that tmux and the shell agree on what it means — and reached through
+  # the CLI, so it cannot pass on a value the test wrote itself.
+  run "$PLUGIN_ROOT/bin/tama" state running --pane "$(test_tmux list-panes -t t -F '#{pane_id}')"
+  assert_success
   assert_equal "$(tama_render_icons t)" ' ●'
 }
 
