@@ -95,7 +95,7 @@ Subcommands:
   on-select [--all]     What the after-select-window hook runs: you arrived at a
                         window, so its flag goes and its panes are swept. With
                         --all the sweep covers the whole server, which is what
-                        the client-focus-in hook asks for.
+                        the client-focus-in and client-attached hooks ask for.
   version               Print the plugin version.
   --help, -h, help      Print this message.
 
@@ -141,8 +141,10 @@ recorded command is stale when what it is running now is a shell.
   set -g @tama_gc_shells 'sh bash zsh fish dash ksh mksh ash csh tcsh'
 
 The sweep runs on window selection and pane selection for the window you are
-looking at, and over the whole server when your terminal regains focus — which
-needs tmux's own 'set -g focus-events on' to be reported at all. Everything the
+looking at, and over the whole server when you come back to the terminal —
+either by attaching, or by your terminal regaining focus, which needs tmux's own
+'set -g focus-events on' to be reported at all. Coming back also takes the mark
+off the window you land on, which no selection would have done. Everything the
 sweep clears is unset rather than emptied, including a subagent id a crashed
 delegated run leaked, so a swept pane is indistinguishable from one that never
 ran an agent.

@@ -132,6 +132,12 @@ main() {
 #     and it earns it by being rare and by being exactly when the user is about to
 #     read the whole status line. It also takes the mark off the window they came
 #     back to, which a `select-window` that never happened would not have.
+#   * attaching is the same moment for a terminal that never reports focus at all.
+#     tmux fires `client-attached` and not `client-focus-in` for a bare `attach`, so
+#     without this line the mark on the window a user attaches straight onto would sit
+#     there until they selected some other window and came back. Clearing it is right
+#     rather than merely cheap: if that window is already the session's active one,
+#     attaching means they are looking at it.
 #
 # Appended, never assigned, so a user's own lines on these events keep working — and
 # skipped when already there, because this file runs again on every `tmux source-file`
@@ -154,7 +160,8 @@ main() {
 # from a hook they wrote themselves.
 TAMA_HOOKS='after-select-window|on-select --window #{window_id}
 after-select-pane|gc --window #{window_id}
-client-focus-in|on-select --all --window #{window_id}'
+client-focus-in|on-select --all --window #{window_id}
+client-attached|on-select --all --window #{window_id}'
 
 wire_hooks() {
   # The option name carries its own `tama_`: tama_opt prepends the `@` and nothing

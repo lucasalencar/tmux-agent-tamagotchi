@@ -450,6 +450,11 @@ wait_until_no_icons() { # <window>
   assert_success
   pane_running "$PANE" 'cat'
 
+  # This test is about the focus path alone, so the attach hook is taken back off:
+  # otherwise attaching below would clear the mark and this would pass without focus
+  # ever arriving. The next test is the one that covers attaching.
+  test_tmux set-hook -gu client-attached
+
   # Attaching is not a selection: the mark is still there, which is the wart itself.
   tama_attach_client other
   assert_flagged "$target"
@@ -460,6 +465,70 @@ wait_until_no_icons() { # <window>
 
   wait_until_not_flagged "$target"
   wait_until_no_icons "$WINDOW"
+}
+
+@test "attaching sweeps the whole server and clears the mark on the window attached to" {
+  # The other half of coming back, and the half a real terminal is more likely to fire:
+  # tmux sends client-attached for a bare `attach`, and client-focus-in only if the
+  # terminal reports focus and `focus-events` is on. Wiring focus alone would leave the
+  # mark sitting on the window a user attached straight onto — no selection happened, so
+  # nothing else re-evaluates it — on every terminal that does not report focus.
+  #
+  # Nothing is simulated here: the hook the entrypoint wired is fired by tmux itself,
+  # for a client that really attaches.
+  test_tmux -f /dev/null new-session -d -s other 'sleep 300'
+  local target target_pane
+  target="$(tama_window_id other:0)"
+  target_pane="$(tama_pane_of other:0)"
+  wait_for_command "$target_pane" sleep
+
+  # Raised while nobody was attached, on the window that session is already on.
+  run "$PLUGIN_ROOT/bin/tama" state waiting Claude --pane "$target_pane"
+  assert_success
+  assert_flagged "$target"
+
+  # And something stale in another session, which only the whole-server scope reaches.
+  run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
+  assert_success
+  pane_running "$PANE" 'cat'
+
+  tama_attach_client other
+
+  wait_until_not_flagged "$target"
+  wait_until_no_icons "$WINDOW"
+}
+
+@test "attaching leaves the mark on the windows the user did not land on" {
+  # --all widens the sweep and only the sweep. A mark on some other window says
+  # something happened there while nobody was looking, and that is still true after
+  # attaching somewhere else.
+  test_tmux -f /dev/null new-session -d -s other 'sleep 300'
+  test_tmux new-window -d -t other: 'sleep 300'
+  local landed landed_pane elsewhere elsewhere_pane
+  landed="$(tama_window_id other:0)"
+  landed_pane="$(tama_pane_of other:0)"
+  elsewhere="$(tama_window_id other:1)"
+  elsewhere_pane="$(tama_pane_of other:1)"
+  wait_for_command "$elsewhere_pane" sleep
+
+  # The window the client will land on is other:0, and its agent has walked out.
+  assert_equal "$(tama_window_id other:)" "$landed"
+  run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$landed_pane"
+  assert_success
+  pane_running "$landed_pane" 'cat'
+
+  # The other window's agent is real and waiting, and its mark is earned.
+  run "$PLUGIN_ROOT/bin/tama" state waiting Claude --pane "$elsewhere_pane"
+  assert_success
+  assert_flagged "$elsewhere"
+
+  tama_attach_client other
+
+  # The sweep reached the window that was attached to.
+  wait_until_no_icons "$landed"
+  # And left the other window's truth alone: still drawing, still marked.
+  [ -n "$(tama_icons "$elsewhere")" ]
+  assert_flagged "$elsewhere"
 }
 
 @test "the sweep is a quiet no-op outside tmux" {

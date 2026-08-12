@@ -40,7 +40,7 @@ teardown() {
   # to anything else still fails here.
   local after
   after="$(tama_server_state | grep -v '^@tama_' |
-    sed -E 's%^(after-select-window|after-select-pane|client-focus-in)\[[0-9]+\] run-shell -b ".*@tama_bin.*"$%\1%')"
+    sed -E 's%^(after-select-window|after-select-pane|client-focus-in|client-attached)\[[0-9]+\] run-shell -b ".*@tama_bin.*"$%\1%')"
   assert_equal "$after" "$(printf '%s\n' "$before" | grep -v '^@tama_')"
 }
 
@@ -50,7 +50,7 @@ teardown() {
   # Every event the plugin touches, because appending on one and assigning on another
   # is exactly the kind of asymmetry nobody notices until their own hook stops firing.
   local event
-  for event in after-select-window after-select-pane client-focus-in; do
+  for event in after-select-window after-select-pane client-focus-in client-attached; do
     test_tmux set-hook -ga "$event" "run-shell -b 'echo mine'"
   done
 
@@ -58,7 +58,7 @@ teardown() {
   assert_success
 
   local hooks
-  for event in after-select-window after-select-pane client-focus-in; do
+  for event in after-select-window after-select-pane client-focus-in client-attached; do
     hooks="$(test_tmux show-options -g "$event")"
     assert_contains "$hooks" 'echo mine' "the user's $event hook"
     assert_contains "$hooks" '@tama_bin' "the plugin's $event hook"
@@ -69,16 +69,20 @@ teardown() {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
 
-  # The three events the plugin needs, and what each is asked to do: the cheap sweep
+  # The four events the plugin needs, and what each is asked to do: the cheap sweep
   # of one window on a pane selection, and the whole server when the user comes back
   # to the terminal — which is also the only chance to take the mark off a window they
-  # attached to without ever selecting it.
+  # attached to without ever selecting it. Coming back is two events, not one: a
+  # terminal that reports focus fires client-focus-in, and a bare `attach` fires
+  # client-attached, so wiring only one leaves the other kind of terminal uncovered.
   assert_contains "$(test_tmux show-options -g after-select-window)" \
     'on-select --window' 'the window-selection hook'
   assert_contains "$(test_tmux show-options -g after-select-pane)" \
     'gc --window' 'the pane-selection hook'
   assert_contains "$(test_tmux show-options -g client-focus-in)" \
     'on-select --all --window' 'the focus-in hook'
+  assert_contains "$(test_tmux show-options -g client-attached)" \
+    'on-select --all --window' 'the attach hook'
 }
 
 @test "the wired hook survives the plugin directory moving" {
@@ -110,7 +114,7 @@ teardown() {
   # plugin exports still works — a user who manages their own configuration calls
   # `tama on-select` and `tama gc` from hooks they wrote.
   local event
-  for event in after-select-window after-select-pane client-focus-in; do
+  for event in after-select-window after-select-pane client-focus-in client-attached; do
     assert_equal "$(test_tmux show-options -g "$event" 2>/dev/null)" "$event"
   done
   assert_plugin_wired "$PLUGIN_ROOT"
