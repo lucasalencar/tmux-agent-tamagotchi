@@ -25,7 +25,9 @@
 #   * `fail` — *broken*: the plugin cannot do what this machine's own configuration
 #     says it should. A tmux too old for the entrypoint to wire anything; a plugin
 #     absent from the server every hook asks; a backend the user *named* that cannot
-#     run. Exit 1, so `tama doctor` works as a CI check of the installation.
+#     run — unless every capability it ships has been replaced by the user's own
+#     command line, in which case nothing was going to reach it and the configuration
+#     asked for none of it. Exit 1, so `tama doctor` works as a CI check of an install.
 #   * `warn` — *worth knowing*: the plugin will do exactly what it was configured to,
 #     and that is probably not what the user wanted. No icons in the status line, a
 #     title configuration the focus check can never match, a Claude Code hook that was
@@ -62,6 +64,17 @@ fi
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=../lib/version.sh
 . "$TAMA_PLUGIN_DIR/lib/version.sh"
+
+# And the hook list, for exactly the same reason one step along: the entrypoint wires
+# those recipes and this file reports on them, so both read one list and one predicate.
+if [ ! -r "$TAMA_PLUGIN_DIR/lib/hooks.sh" ]; then
+  printf 'tama: no lib/hooks.sh under %s; this plugin directory is incomplete\n' \
+    "$TAMA_PLUGIN_DIR" >&2
+  exit 1
+fi
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/hooks.sh
+. "$TAMA_PLUGIN_DIR/lib/hooks.sh"
 
 TAMA_DOCTOR_PROBLEMS=0
 TAMA_DOCTOR_WARNINGS=0
@@ -190,17 +203,64 @@ doctor_plugin() {
     return 0
   fi
 
-  # Looked for by the option name the recipes are written in terms of rather than by
-  # the recipes themselves: the entrypoint owns that list, and a copy of it here would
-  # be a second list to keep in step.
-  if tmux_run show-hooks -g 2>/dev/null | grep -qF -- '@tama_bin'; then
+  doctor_tmux_hooks
+}
+
+# Whether the hooks this version of the plugin wires are the hooks this server carries.
+#
+# Asked recipe by recipe, through the same TAMA_HOOKS and the same `tama_hook_is_wired`
+# the entrypoint wires them with (lib/hooks.sh), rather than by looking for the option
+# name `@tama_bin` anywhere in `show-hooks -g`. That looser test reported a server
+# carrying only a *stale* recipe — from an earlier version of this plugin, naming a
+# command since renamed or given different arguments — as correctly wired, while those
+# hooks did something else or nothing at all. Reporting hooks as wired when they are not
+# is the exact failure this command exists to prevent.
+#
+# A warning and not a failure, deliberately, and it is the borderline case in ADR-0007:
+# with `@tama_manage_hooks on` the configuration really did ask for these hooks. But the
+# entrypoint wires them on every `tmux source-file`, so what this finds is a server one
+# reload behind rather than an installation that cannot work — and the fix is the line
+# the message ends with. `doctor` in CI should not go red on that.
+doctor_tmux_hooks() {
+  local hook command missing='' wired=0
+  while IFS='|' read -r hook command; do
+    [ -n "$hook" ] || continue
+    if tama_hook_is_wired "$hook" "$command"; then
+      wired=$((wired + 1))
+    else
+      missing="$missing $hook"
+    fi
+  done <<EOF
+$TAMA_HOOKS
+EOF
+
+  if [ -z "$missing" ]; then
     doctor_ok "the plugin's tmux hooks are wired in this server"
-  else
-    doctor_warn "the plugin's tmux hooks are not wired in this server"
-    doctor_more 'A window mark is cleared by you selecting the window and by nothing'
-    doctor_more 'else, and dead agents are swept from the same events, so without the'
-    doctor_more 'hooks a flag raised once stays up. Reload your tmux configuration.'
+    return 0
   fi
+
+  if [ "$wired" -gt 0 ]; then
+    doctor_warn "the plugin's tmux hooks are only partly wired:$missing"
+    doctor_more 'Some of the recipes this version wires are in this server and some are'
+    doctor_more 'not, which a hand-edited configuration or a half-finished reload both'
+    doctor_more 'produce. Reload your tmux configuration.'
+    return 0
+  fi
+
+  if tmux_run show-hooks -g 2>/dev/null | grep -qF -- '@tama_bin'; then
+    doctor_warn "the plugin's tmux hooks name @tama_bin but not what this version runs"
+    doctor_more 'This server carries recipes from another version of this plugin: they'
+    doctor_more 'find it the same way, and then ask it to do something it no longer does.'
+    doctor_more 'They are not replaced on a reload, because `set-hook -ga` appends and'
+    doctor_more 'the entrypoint only skips a recipe it recognises. Remove them with'
+    doctor_more '`tmux set-hook -gu <event>` for each event above, then reload.'
+    return 0
+  fi
+
+  doctor_warn "the plugin's tmux hooks are not wired in this server"
+  doctor_more 'A window mark is cleared by you selecting the window and by nothing'
+  doctor_more 'else, and dead agents are swept from the same events, so without the'
+  doctor_more 'hooks a flag raised once stays up. Reload your tmux configuration.'
 }
 
 # What `tama version` says, asked rather than duplicated: the version is bin/tama's own
@@ -228,20 +288,60 @@ doctor_status_line() {
     return 0
   fi
 
-  local normal current
-  normal="$(tmux_run show -gv window-status-format 2>/dev/null)" || normal=''
-  current="$(tmux_run show -gv window-status-current-format 2>/dev/null)" || current=''
-
-  doctor_status_line_option 'window-status-format' "$normal" \
+  doctor_status_line_option 'window-status-format' \
     'the windows you are not looking at'
-  doctor_status_line_option 'window-status-current-format' "$current" \
+  doctor_status_line_option 'window-status-current-format' \
     'the window you are looking at'
 }
 
-doctor_status_line_option() { # <option> <value> <what it draws>
+doctor_status_line_option() { # <option> <what it draws>
+  local value
+  value="$(doctor_status_line_value "$1")"
+  doctor_status_line_verdict "$1" "$value" "$2"
+  doctor_status_line_scope "$1" "$value"
+}
+
+# The value a status line will really be drawn from, rather than the one the global
+# option table happens to hold. Both of these options are inherited — a value set on a
+# session or on a single window is what tmux uses for that window, and `show -gv` never
+# sees it — so a user who configures them per session was told their status line
+# "mentions neither @tama_icons nor @tama_flag" while the icons were on the screen in
+# front of them. Same class of false ok as matching @tama_flag_text for @tama_flag.
+#
+# `display-message -p '#{<option>}'` resolves that inheritance the way drawing the
+# status line does. A `#{}` substitution's result is not expanded again — that is what
+# `#{E:}` exists for — so the `#{E:@tama_icons}` inside comes back as the literal text
+# this section is looking for rather than as rendered icons. It answers with no client
+# attached and with no usable $TMUX, which is what makes it safe for a command that runs
+# outside tmux; `show -gv` stays the fallback for a tmux that refuses it anyway.
+doctor_status_line_value() { # <option>
+  local value
+  if value="$(tmux_run display-message -p "#{$1}" 2>/dev/null)"; then
+    printf '%s' "$value"
+    return 0
+  fi
+  tmux_run show -gv "$1" 2>/dev/null
+}
+
+# Where that value came from, when it is not the global one — so the verdict above
+# cannot be read as a claim about `set -g`, which is what the setup section tells the
+# user to paste. tmux answers about one window, the active one of whichever session was
+# active last, and a server whose sessions disagree has no single status line to report.
+doctor_status_line_scope() { # <option> <value in force>
+  local global target
+  global="$(tmux_run show -gv "$1" 2>/dev/null)" || global=''
+  [ "$2" != "$global" ] || return 0
+  target="$(tmux_run display-message -p '#{session_name}:#{window_index}' 2>/dev/null)" ||
+    target=''
+  doctor_more "That is the value in force on ${target:-this server}, set on the session"
+  doctor_more "or the window; \`set -g $1\` holds something else, so the setup section"
+  doctor_more 'below is not the whole story for this server.'
+}
+
+doctor_status_line_verdict() { # <option> <value> <what it draws>
   local has_icons='no' has_flag='no'
-  case "$2" in *'@tama_icons'*) has_icons='yes' ;; esac
-  case "$2" in *'@tama_flag'*) has_flag='yes' ;; esac
+  doctor_status_line_mentions "$2" '@tama_icons' && has_icons='yes'
+  doctor_status_line_mentions "$2" '@tama_flag' && has_flag='yes'
 
   if [ "$has_icons" = 'yes' ] && [ "$has_flag" = 'yes' ]; then
     doctor_ok "$1 draws both the icons and the flag"
@@ -261,6 +361,27 @@ doctor_status_line_option() { # <option> <value> <what it draws>
   else
     doctor_warn "$1 does not mention @tama_flag: no attention mark on $3"
   fi
+}
+
+# Whether a status line asks for that option, and not merely for one whose name
+# starts with it. A substring search reported `#{E:@tama_flag_text}` as the flag being
+# drawn, and those two formats are not the same thing at all: `@tama_flag` is the
+# option the entrypoint exports as `#{?@tama_window_flag,…}`, gated on the mark, while
+# `@tama_flag_text` is the text inside it and draws on every window unconditionally. A
+# status line carrying only the text is the "the mark is always there" symptom being
+# reported as correct. The same boundary is applied to `@tama_icons`, which has no
+# longer sibling today and would acquire the same silent false ok if it ever did.
+#
+# A tmux option name is `@` and then word characters, so the boundary is a character
+# that cannot continue one — end of value, or anything outside `[[:alnum:]_]`. Spelled
+# as a class rather than as `A-Za-z0-9` because a range in a glob is collated, and
+# what a collation puts between `A` and `Z` is not the same list everywhere.
+doctor_status_line_mentions() { # <value> <option name>
+  case "$1" in
+    *"$2") return 0 ;;
+    *"$2"[![:alnum:]_]*) return 0 ;;
+  esac
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -395,11 +516,11 @@ doctor_backend_named() { # <how it was named>
         doctor_binary tama_terminal_notifier "$TAMA_MACOS_NOTIFIER_NAME" \
           "$TAMA_MACOS_NOTIFIER_DIRS"
       else
-        doctor_fail "you named the $TAMA_BACKEND_MACOS backend and its notifier is missing"
+        doctor_backend_binary_missing \
+          "you named the $TAMA_BACKEND_MACOS backend and its notifier is missing"
         doctor_binary tama_terminal_notifier "$TAMA_MACOS_NOTIFIER_NAME" \
           "$TAMA_MACOS_NOTIFIER_DIRS"
-        doctor_more 'Every capability is a process started to fail. `auto` would have'
-        doctor_more 'chosen silence here instead; naming the backend overrides that.'
+        doctor_backend_binary_cost 'capability'
       fi
       ;;
     "$TAMA_PLUGIN_DIR/backends/$TAMA_BACKEND_LIBNOTIFY")
@@ -407,15 +528,71 @@ doctor_backend_named() { # <how it was named>
         doctor_binary tama_notify_send "$TAMA_LIBNOTIFY_SEND_NAME" \
           "$TAMA_LIBNOTIFY_SEND_DIRS"
       else
-        doctor_fail "you named the $TAMA_BACKEND_LIBNOTIFY backend and its binary is missing"
+        doctor_backend_binary_missing \
+          "you named the $TAMA_BACKEND_LIBNOTIFY backend and its binary is missing"
         doctor_binary tama_notify_send "$TAMA_LIBNOTIFY_SEND_NAME" \
           "$TAMA_LIBNOTIFY_SEND_DIRS"
-        doctor_more 'Every banner is a process started to fail. `auto` would have chosen'
-        doctor_more 'silence here instead; naming the backend overrides that.'
+        doctor_backend_binary_cost 'banner'
       fi
       doctor_backend_session_bus
       ;;
   esac
+}
+
+# A named backend whose binary is not here: broken, unless nothing will ever reach that
+# binary anyway.
+#
+# ADR-0007 draws the line at what this machine's configuration asked for and did not
+# get, and a capability replaced by `@tama_<capability>_command` did not ask for the
+# shipped one — lib/backend.sh answers an override without consulting the backend at
+# all. So a user who has legitimately replaced the notifier, which is a documented and
+# supported configuration, used to get exit 1 out of a setup with nothing wrong with it,
+# defeating the "usable as a CI check" criterion the same ADR gives for the status.
+#
+# The test is per capability rather than "is any override set": the macOS backend ships
+# four, and overriding `notify` leaves `dismiss`, `focused` and `focus` still reaching a
+# binary that is not there. Broken is right for those. It stops being broken only when
+# every capability the directory actually ships has been replaced.
+doctor_backend_binary_missing() { # <verdict text>
+  if doctor_backend_fully_overridden; then
+    doctor_warn "$1"
+    return 0
+  fi
+  doctor_fail "$1"
+}
+
+# Whether every capability this backend directory ships has been replaced by the user's
+# own command line. A backend that ships none is not "fully overridden" — that is the
+# separate diagnosis doctor_backend_capabilities makes.
+doctor_backend_fully_overridden() {
+  local capability shipped='no'
+  while IFS= read -r capability; do
+    [ -n "$capability" ] || continue
+    [ -f "$TAMA_BACKEND_DIR/$capability" ] || continue
+    [ -x "$TAMA_BACKEND_DIR/$capability" ] || continue
+    shipped='yes'
+    [ -n "$(tama_opt "tama_${capability}_command" '')" ] || return 1
+  done <<EOF
+$TAMA_DOCTOR_CAPABILITIES
+EOF
+  [ "$shipped" = 'yes' ]
+}
+
+# What the missing binary costs, which is not the same sentence in the two cases: with
+# every capability overridden it costs nothing at all, and saying "every capability is a
+# process started to fail" there is the false half of the old diagnosis in words as well
+# as in the exit status.
+doctor_backend_binary_cost() { # <noun for what is lost>
+  if doctor_backend_fully_overridden; then
+    doctor_more "Nothing reaches it: every capability this backend ships is replaced by"
+    doctor_more 'a @tama_…_command below, so this is worth knowing rather than broken.'
+    doctor_more 'Installing the binary or setting @tama_backend to the empty string both'
+    doctor_more 'stop the message.'
+    return 0
+  fi
+  doctor_more "Every $1 that is not replaced by a @tama_…_command below is a process"
+  doctor_more 'started to fail. `auto` would have chosen silence here instead; naming'
+  doctor_more 'the backend overrides that.'
 }
 
 # Which binary a platform backend will run, and where it came from — resolved through
@@ -529,7 +706,16 @@ EOF
 
 # A capability replaced wholesale by the user's own command line, which happens before
 # the backend is consulted at all — so a backend that looks broken above may be beside
-# the point.
+# the point, and is graded as such (doctor_backend_binary_missing).
+#
+# **Only the program is printed, never the arguments.** This whole file exists to be
+# pasted into a bug report (see the top), and an `@tama_notify_command` is a complete
+# command line for talking to a notification service: a `curl` at a Pushover or a Slack
+# webhook carries the token inline. Printing it verbatim put a credential in the output
+# of the command whose entire purpose is to be handed to somebody else. The program name
+# is what the check is *for* — it is enough to notice that the backend diagnosis above is
+# beside the point, and enough to notice an option somebody else has hijacked — and it is
+# the part of a command line least likely to be a secret.
 doctor_backend_overrides() {
   local capability override any='no'
   while IFS= read -r capability; do
@@ -538,11 +724,29 @@ doctor_backend_overrides() {
     [ -n "$override" ] || continue
     any='yes'
     doctor_ok "@tama_${capability}_command replaces the $capability capability"
-    doctor_more "  $override"
+    doctor_more "  runs $(doctor_program "$override")"
   done <<EOF
 $TAMA_DOCTOR_CAPABILITIES
 EOF
-  [ "$any" = 'no' ] || doctor_more 'The backend is not consulted for those.'
+  [ "$any" = 'no' ] && return 0
+  doctor_more 'The backend is not consulted for those. Their arguments are deliberately'
+  doctor_more 'not printed here: a command line for a notification service usually has a'
+  doctor_more 'token in it, and this output is meant to be pasted somewhere. Read one'
+  doctor_more 'back yourself with `tmux show -gv @tama_notify_command`.'
+}
+
+# The program a command line runs, and nothing after it. Leading whitespace is stripped
+# first so that a value somebody indented does not report its program as the empty
+# string, which would read as a broken diagnostic rather than as a redacted one.
+doctor_program() { # <command line>
+  local line="$1"
+  while :; do
+    case "$line" in
+      [[:space:]]*) line="${line#?}" ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "${line%%[[:space:]]*}"
 }
 
 # ---------------------------------------------------------------------------
@@ -640,20 +844,96 @@ SubagentStart
 SubagentStop
 SessionEnd'
 
-# Where Claude Code reads settings from, most general first. Only the files that exist;
-# a user with none of them has simply not wired anything.
+# The user's own settings directory, or nothing at all when there is no telling where it
+# is. `${HOME:-}/.claude` printed a bare `/.claude` with $HOME unset — a launchd agent, a
+# `su` without `-`, a container — both in the line saying where doctor looked and in the
+# recipe it hands the user to paste, and a confidently wrong path costs more than a
+# missing one. Every caller therefore handles the empty answer.
 doctor_cc_dir() {
-  printf '%s' "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    printf '%s' "$CLAUDE_CONFIG_DIR"
+    return 0
+  fi
+  [ -n "${HOME:-}" ] || return 0
+  printf '%s' "$HOME/.claude"
 }
 
+# The `.claude` directories Claude Code would read for a session started here, most
+# general first, in TAMA_DOCTOR_CC_DIRS; and the settings files that really exist in
+# them, in TAMA_DOCTOR_CC_FILES. A user with none of those has simply not wired anything.
+#
+# A project's settings are not all resolved against the same directory, which is the
+# thing worth writing down (docs: code.claude.com/docs/en/settings):
+#
+#   * `.claude/settings.json` is read "from the directory the session runs in".
+#   * `.claude/settings.local.json` is read "at the root of the git repository, resolved
+#     through worktrees to the main checkout, so one file covers sessions started in any
+#     subdirectory or worktree of the repository" — with the starting directory kept in
+#     three cases: outside a git repository, a repository root that is $HOME, and Agent
+#     SDK sessions.
+#
+# So $PWD alone was wrong for the second of those, and wrong in the direction that costs
+# most: `tama doctor` run from a subdirectory of a fully wired project reported that
+# nothing was wired here. Both roots are looked in, and the verdict says which — this
+# command cannot know which directory the agent was started from, so it reports on the
+# places a session started *here* would read and names them.
 doctor_cc_settings() {
-  local dir
-  dir="$(doctor_cc_dir)"
+  local dir root
+  TAMA_DOCTOR_CC_DIRS=''
   TAMA_DOCTOR_CC_FILES=''
-  doctor_cc_settings_file "$dir/settings.json"
-  doctor_cc_settings_file "$dir/settings.local.json"
-  doctor_cc_settings_file "$PWD/.claude/settings.json"
-  doctor_cc_settings_file "$PWD/.claude/settings.local.json"
+
+  doctor_cc_add_dir "$(doctor_cc_dir)"
+  doctor_cc_add_dir "$PWD/.claude"
+  while IFS= read -r root; do
+    [ -n "$root" ] || continue
+    doctor_cc_add_dir "$root/.claude"
+  done <<EOF
+$(doctor_cc_project_roots)
+EOF
+
+  while IFS= read -r dir; do
+    [ -n "$dir" ] || continue
+    doctor_cc_settings_file "$dir/settings.json"
+    doctor_cc_settings_file "$dir/settings.local.json"
+  done <<EOF
+$TAMA_DOCTOR_CC_DIRS
+EOF
+}
+
+# The project roots a `.claude` can live at, when this is a git working tree: the top of
+# it, and — because a worktree's `settings.local.json` lives with the main checkout
+# rather than beside it — the main checkout as well. Nothing at all when git is not
+# installed or this is not a repository, which is one of the three cases where Claude
+# Code keeps the file in the starting directory and $PWD above is the whole answer.
+doctor_cc_project_roots() {
+  command -v git >/dev/null 2>&1 || return 0
+
+  local top common
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  [ -n "$top" ] || return 0
+  printf '%s\n' "$top"
+
+  # `--git-common-dir` is the main checkout's `.git` for a linked worktree and a
+  # relative `.git` for an ordinary one, where the top above already covers it.
+  common="$(git rev-parse --git-common-dir 2>/dev/null)" || return 0
+  case "$common" in
+    /*/.git) printf '%s\n' "${common%/.git}" ;;
+  esac
+}
+
+# Appends a directory to look in, unless it is already on the list: $PWD and the
+# repository root are the same directory for most of the sessions this runs in, and
+# reading one file twice would report it twice.
+doctor_cc_add_dir() { # <directory>
+  [ -n "$1" ] || return 0
+  local seen
+  while IFS= read -r seen; do
+    [ "$seen" != "$1" ] || return 0
+  done <<EOF
+$TAMA_DOCTOR_CC_DIRS
+EOF
+  TAMA_DOCTOR_CC_DIRS="$TAMA_DOCTOR_CC_DIRS$1
+"
 }
 
 doctor_cc_settings_file() { # <path>
@@ -685,12 +965,22 @@ doctor_claude_code() {
 
   doctor_cc_settings
 
+  local dir
   if [ -z "$TAMA_DOCTOR_CC_FILES" ]; then
-    doctor_ok 'no Claude Code settings file found, so nothing is wired here'
-    doctor_more "Looked in $(doctor_cc_dir)"
-    doctor_more "and in $PWD/.claude"
-    doctor_more 'If you do not run Claude Code that is the whole answer; the setup'
-    doctor_more 'section below has the block if you do.'
+    doctor_ok 'no Claude Code settings file found in the places a session started here'
+    doctor_more 'would read, so nothing this command can see is wired. Looked in:'
+    while IFS= read -r dir; do
+      [ -n "$dir" ] || continue
+      doctor_more "  $dir"
+    done <<EOF
+$TAMA_DOCTOR_CC_DIRS
+EOF
+    [ -n "$(doctor_cc_dir)" ] ||
+      doctor_more 'and nowhere for your own settings: $HOME is not set in this shell.'
+    doctor_more 'This is not a verdict on the machine — an agent started in some other'
+    doctor_more "project reads that project's .claude, which is not visible from here. If"
+    doctor_more 'you do not run Claude Code it is the whole answer; the setup section'
+    doctor_more 'below has the block if you do.'
     return 0
   fi
 
@@ -829,8 +1119,16 @@ doctor_setup() {
 
 doctor_setup_claude_code() {
   doctor_section 'setup — the Claude Code hooks'
+  local dir
+  dir="$(doctor_cc_dir)"
   doctor_more 'For every project, merge this into'
-  doctor_more "  $(doctor_cc_dir)/settings.json"
+  if [ -n "$dir" ]; then
+    doctor_more "  $dir/settings.json"
+  else
+    # Spelled rather than resolved, because $HOME is not set in this shell and a bare
+    # `/settings.json` is a path somebody would paste.
+    doctor_more '  $HOME/.claude/settings.json'
+  fi
   doctor_more 'or, for one project, into its own .claude/settings.json. If you already'
   doctor_more 'have a `hooks` key, merge these entries into it — and keep Notification.'
   doctor_more "Full notes: $TAMA_PLUGIN_DIR/integrations/claude-code/README.md"

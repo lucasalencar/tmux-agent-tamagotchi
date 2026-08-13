@@ -80,7 +80,14 @@ Notification Stop StopFailure SubagentStart SubagentStop SessionEnd'
 # however their editor left them. This writes the one thing that matters — the adapter
 # invocation — inside JSON that is not byte-for-byte the documented block.
 cc_settings_without() { # <event…>
-  local event skip_event skipped
+  cc_settings_into "$CLAUDE_CONFIG_DIR/settings.json" "$@"
+}
+
+# The same file, anywhere: the project cases need one under a repository root rather than
+# under the user's own directory.
+cc_settings_into() { # <path> <event…>
+  local target="$1" event skip_event skipped
+  shift
   {
     printf '{\n  "hooks": {\n'
     for event in $CC_EVENTS; do
@@ -93,7 +100,7 @@ cc_settings_without() { # <event…>
       printf ' "command": "exec \\"$tama\\" hook claude-code %s"}]}],\n' "$event"
     done
     printf '    "_": []\n  }\n}\n'
-  } >"$CLAUDE_CONFIG_DIR/settings.json"
+  } >"$target"
 }
 
 @test "doctor answers with no tmux server, where every other subcommand is a no-op" {
@@ -157,6 +164,51 @@ cc_settings_without() { # <event…>
   assert_output_contains 'window-status-current-format mentions neither'
 }
 
+@test "a status line carrying only the flag's text is not a status line drawing the flag" {
+  # `@tama_flag_text` is the text *inside* the flag, and it draws on every window
+  # unconditionally; `@tama_flag` is the option gated on the mark. A substring search
+  # for the shorter name found the longer one and reported the flag as correctly drawn,
+  # which is a false ok on one of the two commonest "nothing appears" symptoms — and it
+  # sends the user looking anywhere but at their status line.
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+  tama_use_fake_backend
+  test_tmux set -g window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag_text}'
+  test_tmux set -g window-status-current-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'window-status-format does not mention @tama_flag'
+  refute_output_contains 'window-status-format draws both'
+  # And the format that really does draw it is still recognised, so the boundary did not
+  # simply stop matching everything.
+  assert_output_contains 'window-status-current-format draws both'
+}
+
+@test "a status line set on the session is read, not the global one it overrides" {
+  # Both formats are inherited: a value on the session — or on one window — is what tmux
+  # draws that window from, and `show -gv` never sees it. Reading only the global table
+  # told a user who configures them per session that their status line "mentions neither
+  # @tama_icons nor @tama_flag" while the icons were on the screen in front of them.
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+  tama_use_fake_backend
+  test_tmux set -g window-status-format '#I:#W'
+  test_tmux set -g window-status-current-format '#I:#W'
+  test_tmux set -t t window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
+  test_tmux set -t t window-status-current-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'window-status-format draws both'
+  assert_output_contains 'window-status-current-format draws both'
+  refute_output_contains 'mentions neither'
+  # And it says the value it read is not the global one, because the setup section below
+  # tells the user to paste `set -g` lines that this server would then override.
+  assert_output_contains 'That is the value in force on t:'
+  assert_output_contains '`set -g window-status-format` holds something else'
+}
+
 @test "a status line with the icons on only one of the two formats says which one" {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
@@ -168,6 +220,35 @@ cc_settings_without() { # <event…>
   assert_success
   assert_output_contains 'window-status-format draws both'
   assert_output_contains 'window-status-current-format mentions neither'
+}
+
+@test "a hook carrying only a stale recipe is not a hook that is wired" {
+  # doctor decided the question by looking for the option name `@tama_bin` anywhere in
+  # `show-hooks -g`, while the entrypoint decides it by the whole recipe. So a server
+  # carrying a recipe from an earlier version of this plugin — same option, a command
+  # since renamed or given different arguments — was reported as "the plugin's tmux hooks
+  # are wired in this server" while those hooks did something else or nothing.
+  healthy_server
+  local event
+  for event in after-select-window after-select-pane client-focus-in client-attached; do
+    test_tmux set-hook -gu "$event" 2>/dev/null || true
+    test_tmux set-hook -ga "$event" "run-shell -b '#{q:@tama_bin} sweep --everything'"
+  done
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'name @tama_bin but not what this version runs'
+  refute_output_contains "the plugin's tmux hooks are wired in this server"
+}
+
+@test "hooks wired for some events and not others say which are missing" {
+  healthy_server
+  test_tmux set-hook -gu client-attached 2>/dev/null || true
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'only partly wired: client-attached'
+  refute_output_contains "the plugin's tmux hooks are wired in this server"
 }
 
 @test "an empty @tama_backend is a configuration and not a fault" {
@@ -208,6 +289,34 @@ cc_settings_without() { # <event…>
   assert_output_contains 'used as given or not at all'
 }
 
+@test "a clone path with glob characters in it still gets the shipped-backend checks" {
+  # The two checks a shipped backend gets — its binary, and for libnotify the session bus
+  # — are reached through a `case` whose patterns are built from $TAMA_PLUGIN_DIR. A
+  # `case` pattern is a glob, so a clone at a path holding `[`, `*` or `?` reads like one
+  # that would silently skip both: not fail them, not run them.
+  #
+  # It does not, because those patterns are wholly double-quoted and quoting makes a
+  # pattern literal. This test is here so that stays true: unquoting them, or rebuilding
+  # them with an interpolation that is not quoted, turns a diagnosis into a silence, and a
+  # silence is exactly what nobody notices.
+  healthy_server
+  local plugin="$BATS_TEST_TMPDIR/clo[n]e*?/plugin"
+  mkdir -p "$(dirname "$plugin")"
+  tama_copy_plugin "$plugin"
+  plugin="$(cd -P "$plugin" && pwd)"
+
+  run "$plugin/tamagotchi.tmux"
+  assert_success
+  test_tmux set -g @tama_backend libnotify
+  test_tmux set -g @tama_notify_send "$BATS_TEST_TMPDIR/no-such-notify-send"
+  unset DBUS_SESSION_BUS_ADDRESS
+
+  run "$plugin/bin/tama" doctor
+  assert_status 1
+  assert_output_contains 'named the libnotify backend and its binary is missing'
+  assert_output_contains 'DBUS_SESSION_BUS_ADDRESS is not set'
+}
+
 @test "the resolved notifier is reported with the path it came from: an option" {
   healthy_server
   test_tmux set -g @tama_backend macos
@@ -246,6 +355,80 @@ cc_settings_without() { # <event…>
   assert_success
   assert_output_contains '@tama_notify_command replaces the notify capability'
   assert_output_contains 'The backend is not consulted for those'
+}
+
+@test "an override's arguments are not printed, because this output is for pasting" {
+  # These options are complete command lines for talking to a notification service, and
+  # a `curl` at a Pushover or a Slack webhook carries its token inline. The whole point
+  # of this command's output is that it gets pasted into a bug report, so printing the
+  # value verbatim put a credential in it. The program is enough to notice that the
+  # backend diagnosis above is beside the point, and to notice a hijacked option.
+  healthy_server
+  test_tmux set -g @tama_notify_command \
+    'curl -s -F token=s3cr3t-app-token -F user=s3cr3t-user https://api.pushover.net/1/messages.json -F message'
+  test_tmux set -g @tama_dismiss_command '/usr/bin/env SLACK_TOKEN=xoxb-s3cr3t /bin/true'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  # Nothing after the program name.
+  refute_output_contains 's3cr3t'
+  refute_output_contains 'xoxb-'
+  refute_output_contains 'api.pushover.net'
+  # And the program name itself, so the check still does the job it is here for.
+  assert_output_contains 'runs curl'
+  assert_output_contains 'runs /usr/bin/env'
+  assert_output_contains 'usually has a'
+}
+
+@test "a named backend whose binary is missing is broken while any capability still needs it" {
+  # The macOS backend ships all four capabilities, so replacing `notify` leaves dismiss,
+  # focused and focus still starting a process that is not there. That is a promise this
+  # configuration cannot keep, and ADR-0007 calls it broken.
+  healthy_server
+  test_tmux set -g @tama_backend macos
+  test_tmux set -g @tama_terminal_notifier "$BATS_TEST_TMPDIR/no-such-notifier"
+  test_tmux set -g @tama_notify_command '/bin/echo'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_status 1
+  assert_output_contains 'named the macos backend and its notifier is missing'
+  assert_output_contains 'is not replaced by a @tama_…_command below is a process'
+}
+
+@test "a named backend every capability of which is replaced is not broken, and exits 0" {
+  # The defect this is here for: `@tama_notify_command` is the documented way to replace
+  # the notifier wholesale, and lib/backend.sh answers it without consulting the backend
+  # at all. doctor failed anyway, so a working, supported configuration made
+  # `tama doctor` exit 1 — which is precisely the "usable as a CI check" criterion
+  # ADR-0007 gives for the exit status, failing on its own terms.
+  #
+  # The libnotify backend ships `notify` and nothing else, so one override really does
+  # cover everything it can do.
+  healthy_server
+  test_tmux set -g @tama_backend libnotify
+  test_tmux set -g @tama_notify_send "$BATS_TEST_TMPDIR/no-such-notify-send"
+  test_tmux set -g @tama_notify_command '/bin/echo'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  # Still said out loud — the user wants to know the shipped backend is unusable — but as
+  # something worth knowing rather than as something broken.
+  assert_output_contains 'named the libnotify backend and its binary is missing'
+  assert_output_contains 'every capability this backend ships is replaced'
+  refute_output_contains 'something here is broken'
+}
+
+@test "that same backend without the override is broken, so the check is still there" {
+  # The other direction of the test above. Without it, a fix that simply stopped failing
+  # on a missing binary would pass both.
+  healthy_server
+  test_tmux set -g @tama_backend libnotify
+  test_tmux set -g @tama_notify_send "$BATS_TEST_TMPDIR/no-such-notify-send"
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_status 1
+  assert_output_contains 'named the libnotify backend and its binary is missing'
+  assert_output_contains 'something here is broken'
 }
 
 # --- what `auto` chose, and why ---------------------------------------------------
@@ -470,6 +653,61 @@ cc_settings_without() { # <event…>
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains 'no Claude Code settings file found'
+}
+
+@test "a project's settings are found from a subdirectory of it, not only from its root" {
+  # Claude Code reads a project's `.claude/settings.local.json` at the root of the git
+  # repository, "resolved through worktrees to the main checkout, so one file covers
+  # sessions started in any subdirectory or worktree of the repository"
+  # (code.claude.com/docs/en/settings). Reading only $PWD/.claude therefore reported a
+  # fully wired project as having nothing wired, for anybody who ran this from a
+  # subdirectory — which is most of the time.
+  healthy_server
+
+  # The physical path, because git answers with one and the assertion compares strings:
+  # on a Mac $BATS_TEST_TMPDIR lives under a symlinked /var.
+  local project
+  project="$(cd "$BATS_TEST_TMPDIR" && pwd -P)/project"
+  mkdir -p "$project/.claude" "$project/src/deep"
+  git -C "$project" init -q
+  cc_settings_into "$project/.claude/settings.local.json"
+  cd "$project/src/deep" || return 1
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains "read: $project/.claude/settings.local.json"
+  assert_output_contains 'the Notification event is wired'
+  refute_output_contains 'no Claude Code settings file found'
+}
+
+@test "a directory that is no git repository is still read for its own settings" {
+  # The other side of the rule above: outside a repository Claude Code keeps the file in
+  # the directory the session started in, so $PWD stays part of the answer.
+  healthy_server
+
+  local project
+  project="$(cd "$BATS_TEST_TMPDIR" && pwd -P)/loose"
+  mkdir -p "$project/.claude"
+  cc_settings_into "$project/.claude/settings.json"
+  cd "$project" || return 1
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains "read: $project/.claude/settings.json"
+}
+
+@test "with no HOME there is no /.claude, in what it looked at or in what it hands over" {
+  # $HOME unset is rare and real — a launchd agent, a `su` without `-`, a container — and
+  # `${HOME:-}/.claude` printed a confident `/.claude` in both the line saying where
+  # doctor looked and the recipe it tells the user to paste. A wrong path costs more than
+  # a missing one, especially in a recipe.
+  healthy_server
+
+  run env -u HOME -u CLAUDE_CONFIG_DIR "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  refute_output_contains ' /.claude'
+  assert_output_contains '$HOME is not set in this shell'
+  assert_output_contains '$HOME/.claude/settings.json'
 }
 
 # --- the setup recipe ---------------------------------------------------------------

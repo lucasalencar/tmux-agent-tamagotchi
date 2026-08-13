@@ -18,7 +18,11 @@ So the line is drawn at **what the machine's own configuration asked for**:
 - **broken**, exit 1 — the plugin cannot do what this configuration says it should. A
   tmux below the minimum, where the entrypoint deliberately wires nothing. A server the
   plugin was never loaded into, where every hook recipe finds nothing to run. A backend
-  the user *named* whose directory or whose binary is not there.
+  the user *named* whose directory or whose binary is not there — unless every capability
+  that backend ships has been replaced by a `@tama_<capability>_command`, because an
+  override is answered before the backend is consulted at all and so nothing was ever
+  going to reach the missing binary. Replacing the notifier is a supported configuration,
+  and a non-zero exit from one would be this criterion failing on its own terms.
 - **worth knowing**, exit 0 — the plugin will do exactly what it was configured to, and
   that is probably not what the user wanted. A status line that never interpolates
   `@tama_icons`. A `set-titles-string` the focus check can never match. `auto` finding
