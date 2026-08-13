@@ -168,7 +168,12 @@ wire_hooks() {
   # else, so a name without the prefix reads an option nobody sets and silently
   # lands on the default — which for this one would mean wiring hooks the user
   # asked it not to touch.
-  [ "$(tama_opt tama_manage_hooks on)" = 'on' ] || return 0
+  #
+  # Through lib/options.sh, sourced above by lib/common.sh, so that `no`, `0` and
+  # `false` mean here exactly what they mean everywhere else. Read strictly against
+  # `on`, they meant *off*, and the whole plugin then wired no hooks at all: no mark
+  # ever cleared, no sweep ever run, and nothing on screen to say why.
+  tama_opt_enabled tama_manage_hooks on || return 0
 
   local hook command
   while IFS='|' read -r hook command; do

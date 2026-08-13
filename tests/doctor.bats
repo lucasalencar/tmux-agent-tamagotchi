@@ -361,6 +361,43 @@ cc_settings_without() { # <event…>
   assert_output_contains 'every banner is delivered'
 }
 
+@test "doctor reads a flag option the way the rest of the plugin reads it" {
+  # doctor's job is to say what the plugin *would* do, so it must not have a second
+  # opinion about what a value means. It used to: three sites here compared against
+  # `on` by hand, so `@tama_manage_hooks no` reported hooks as managed while the
+  # entrypoint wired them — and `@tama_notifications false` reported banners as on
+  # while lib/notify.sh agreed, which is the same defect pointing the other way.
+  local spelling
+  for spelling in $TAMA_OFF_SPELLINGS; do
+    healthy_server
+    test_tmux set -g @tama_notifications "$spelling"
+    test_tmux set -g @tama_suppress_when_focused "$spelling"
+    test_tmux set -g @tama_manage_hooks "$spelling"
+
+    run "$PLUGIN_ROOT/bin/tama" doctor
+    assert_success || return 1
+    assert_output_contains '@tama_notifications is off' || return 1
+    assert_output_contains 'every banner is delivered' || return 1
+    assert_output_contains '@tama_manage_hooks is off' || return 1
+  done
+}
+
+@test "doctor does not report a flag option as off when it is on" {
+  local spelling
+  for spelling in $TAMA_ON_SPELLINGS; do
+    healthy_server
+    test_tmux set -g @tama_notifications "$spelling"
+    test_tmux set -g @tama_suppress_when_focused "$spelling"
+    test_tmux set -g @tama_manage_hooks "$spelling"
+
+    run "$PLUGIN_ROOT/bin/tama" doctor
+    assert_success || return 1
+    assert_output_contains '@tama_notifications is on' || return 1
+    refute_output_contains 'every banner is delivered' || return 1
+    refute_output_contains '@tama_manage_hooks is off' || return 1
+  done
+}
+
 @test "the libnotify backend reports whether there is a session bus to reach" {
   healthy_server
   test_tmux set -g @tama_backend libnotify

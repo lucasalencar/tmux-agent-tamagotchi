@@ -120,6 +120,56 @@ teardown() {
   assert_plugin_wired "$PLUGIN_ROOT"
 }
 
+# The four events back to empty, so a spelling can be tried on a server the last one
+# did not already wire. `set-hook -gu` unsets the array; `show-options -g` then prints
+# the bare event name, which is what an unwired event looks like.
+unwire_hooks() {
+  local event
+  for event in after-select-window after-select-pane client-focus-in client-attached; do
+    test_tmux set-hook -gu "$event" 2>/dev/null || true
+  done
+}
+
+@test "every spelling tmux has for off turns hook management off" {
+  local spelling event
+  for spelling in $TAMA_OFF_SPELLINGS; do
+    unwire_hooks
+    test_tmux set -g @tama_manage_hooks "$spelling"
+
+    run "$PLUGIN_ROOT/tamagotchi.tmux"
+    assert_success || return 1
+
+    for event in after-select-window after-select-pane client-focus-in client-attached; do
+      [ "$(test_tmux show-options -g "$event" 2>/dev/null)" = "$event" ] || {
+        printf '@tama_manage_hooks %s still wired %s: %s\n' "$spelling" "$event" \
+          "$(test_tmux show-options -g "$event")" >&2
+        return 1
+      }
+    done
+  done
+}
+
+@test "every other spelling wires the hooks, including the ones that look like off" {
+  # The worst of the three options read strictly against `on`, and the reason this
+  # test exists at all: `@tama_manage_hooks 1` — or `true`, or `yes` — used to wire
+  # nothing whatsoever. No mark was ever cleared, no sweep ever ran, and nothing on
+  # screen or in doctor said why, because the plugin believed the user had asked for
+  # exactly that. Silence is what makes it worth pinning all five values.
+  local spelling
+  for spelling in $TAMA_ON_SPELLINGS; do
+    unwire_hooks
+    test_tmux set -g @tama_manage_hooks "$spelling"
+
+    run "$PLUGIN_ROOT/tamagotchi.tmux"
+    assert_success || return 1
+
+    test_tmux show-hooks -g | grep -qF -- '@tama_bin' || {
+      printf '@tama_manage_hooks %s wired no hooks at all\n' "$spelling" >&2
+      return 1
+    }
+  done
+}
+
 @test "loading the plugin exports the icon format for the user to interpolate" {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success

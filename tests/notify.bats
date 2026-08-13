@@ -236,6 +236,76 @@ run_click() { # <click command line>
   assert_backend_called notify
 }
 
+@test "every spelling tmux has for off turns the focus check off" {
+  # Read strictly against `on`, `no`, `0` and `false` all left the check *on*, so a
+  # user who wrote one of them went on not being told about the window they were
+  # looking at — which is the option's entire subject.
+  tama_attach_client t
+  export TAMA_FAKE_FOCUSED=0
+  local spelling
+  for spelling in $TAMA_OFF_SPELLINGS; do
+    test_tmux set -g @tama_suppress_when_focused "$spelling"
+    : >"$TAMA_TEST_LOG"
+
+    run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+      --pane "$(tama_pane_of t:0)"
+    assert_success || return 1
+
+    refute_backend_called focused || return 1
+    assert_backend_called notify || return 1
+  done
+}
+
+@test "a value outside that vocabulary leaves the focus check on" {
+  # The direction that catches the strict reader, and the only one that does here:
+  # compared against `on` alone, `yes`, `1` and `true` all read as off, so the check
+  # the user never turned off stopped being made and they were notified about the
+  # window they were looking at. Turning it off the intended way is asserted above;
+  # this is what says a value has to be one of the four to do that.
+  tama_attach_client t
+  export TAMA_FAKE_FOCUSED=0
+  local spelling
+  for spelling in $TAMA_ON_SPELLINGS; do
+    test_tmux set -g @tama_suppress_when_focused "$spelling"
+    : >"$TAMA_TEST_LOG"
+
+    run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+      --pane "$(tama_pane_of t:0)"
+    assert_success || return 1
+
+    assert_backend_called focused || return 1
+    refute_backend_called notify || return 1
+  done
+}
+
+@test "every spelling tmux has for off turns notifications off" {
+  local spelling
+  for spelling in $TAMA_OFF_SPELLINGS; do
+    test_tmux set -g @tama_notifications "$spelling"
+    : >"$TAMA_TEST_LOG"
+
+    run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+      --pane "$(tama_pane_of t:0)"
+    assert_success || return 1
+
+    refute_backend_called notify || return 1
+  done
+}
+
+@test "a value outside that vocabulary leaves notifications on" {
+  local spelling
+  for spelling in $TAMA_ON_SPELLINGS; do
+    test_tmux set -g @tama_notifications "$spelling"
+    : >"$TAMA_TEST_LOG"
+
+    run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+      --pane "$(tama_pane_of t:0)"
+    assert_success || return 1
+
+    assert_backend_called notify || return 1
+  done
+}
+
 @test "notifications can be turned off entirely while the icons keep working" {
   test_tmux set -g @tama_notifications off
 

@@ -73,7 +73,7 @@ tama_shell_quote() { # <value>
 # window mark keep working, because they are inside tmux and cost the user nothing,
 # and only the OS-level interruption stops.
 tama_notify_enabled() {
-  [ "$(tama_opt tama_notifications on)" = 'on' ]
+  tama_opt_enabled tama_notifications on
 }
 
 # The group id for the window tama_window_read last read, in TAMA_NOTIFY_GROUP.
@@ -152,7 +152,7 @@ tama_notify_label() {
 # Every way of not knowing therefore lands on "deliver": a backend with no `focused`
 # capability, a `focused` that failed, a `focused` that says no. Noise, never silence.
 tama_notify_suppressed() {
-  [ "$(tama_opt tama_suppress_when_focused on)" = 'on' ] || return 1
+  tama_opt_enabled tama_suppress_when_focused on || return 1
   tama_window_user_is_looking || return 1
 
   tama_notify_export_context

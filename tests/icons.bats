@@ -336,6 +336,52 @@ report() {
   assert_equal "$("$PLUGIN_ROOT/bin/tama" icons "$WINDOW" | wc -c | tr -d ' ')" '0'
 }
 
+@test "every spelling tmux has for off turns idle icons off" {
+  # `off` was the only one this suite ever wrote, so narrowing the parser to it alone
+  # used to survive the whole run — while the three options that really were narrow
+  # went on reading `false` as on. All four, on one option of each kind, from here on.
+  local spelling icons
+  for spelling in $TAMA_OFF_SPELLINGS; do
+    test_tmux set -g @tama_show_idle "$spelling"
+    report "$PANE" idle
+    icons="$(tama_icons "$WINDOW")"
+    [ -z "$icons" ] || {
+      printf '@tama_show_idle %s still drew an icon: %s\n' "$spelling" "$icons" >&2
+      return 1
+    }
+  done
+}
+
+@test "a value outside that vocabulary leaves idle icons on" {
+  # Including a typo: an option nobody can spell must not take a feature away
+  # silently, which is the whole reason the vocabulary is a list and not a negation.
+  local spelling icons
+  for spelling in $TAMA_ON_SPELLINGS; do
+    test_tmux set -g @tama_show_idle "$spelling"
+    report "$PANE" idle
+    icons="$(tama_icons "$WINDOW")"
+    [ "$icons" = ' ○' ] || {
+      printf '@tama_show_idle %s drew %s, not the idle glyph\n' "$spelling" "$icons" >&2
+      return 1
+    }
+  done
+}
+
+@test "every spelling tmux has for off stops background being distinguished" {
+  local spelling icons
+  for spelling in $TAMA_OFF_SPELLINGS; do
+    test_tmux set -g @tama_show_background "$spelling"
+    report "$PANE" subagent-start sub-1
+    report "$PANE" idle
+    icons="$(tama_icons "$WINDOW")"
+    [ "$icons" = ' ●' ] || {
+      printf '@tama_show_background %s drew %s, not the running glyph\n' \
+        "$spelling" "$icons" >&2
+      return 1
+    }
+  done
+}
+
 @test "turning background off draws those panes as running, not as nothing" {
   test_tmux set -g @tama_show_background off
   report "$PANE" subagent-start sub-1

@@ -170,15 +170,6 @@ tama_icons_resolve() {
   [ "$TAMA_ICON_HAS_PREFIX" = 1 ] || TAMA_ICON_PREFIX=' '
 }
 
-# tmux's own vocabulary for a flag option. Anything else is `on`: a typo that
-# quietly took an icon away is harder to notice than one that was ignored.
-tama_icons_off() { # <value>
-  case "$1" in
-    off | no | 0 | false) return 0 ;;
-  esac
-  return 1
-}
-
 # The glyph one pane contributes, in TAMA_ICON_GLYPH — empty when it contributes
 # nothing.
 #
@@ -192,14 +183,14 @@ tama_icons_glyph() { # <derived state>
     running) TAMA_ICON_GLYPH="$TAMA_GLYPH_RUNNING" ;;
     waiting) TAMA_ICON_GLYPH="$TAMA_GLYPH_WAITING" ;;
     background)
-      if tama_icons_off "$TAMA_SHOW_BACKGROUND"; then
+      if tama_opt_value_is_off "$TAMA_SHOW_BACKGROUND"; then
         TAMA_ICON_GLYPH="$TAMA_GLYPH_RUNNING"
       else
         TAMA_ICON_GLYPH="$TAMA_GLYPH_BACKGROUND"
       fi
       ;;
     idle)
-      if tama_icons_off "$TAMA_SHOW_IDLE"; then
+      if tama_opt_value_is_off "$TAMA_SHOW_IDLE"; then
         TAMA_ICON_GLYPH=''
       else
         TAMA_ICON_GLYPH="$TAMA_GLYPH_IDLE"

@@ -182,7 +182,7 @@ doctor_plugin() {
     doctor_more 'the other one, so a change made here changes nothing you can see.'
   fi
 
-  if [ "$(tama_opt tama_manage_hooks on)" != 'on' ]; then
+  if ! tama_opt_enabled tama_manage_hooks on; then
     doctor_ok '@tama_manage_hooks is off: tmux hooks are yours to wire'
     doctor_more 'Nothing here wires after-select-window, after-select-pane,'
     doctor_more 'client-focus-in or client-attached, so whatever clears a window mark'
@@ -279,7 +279,7 @@ focus'
 doctor_notifications() {
   doctor_section 'notifications'
 
-  if [ "$(tama_opt tama_notifications on)" = 'on' ]; then
+  if tama_notify_enabled; then
     doctor_ok '@tama_notifications is on'
   else
     doctor_ok '@tama_notifications is off: no banners, deliberately'
@@ -557,7 +557,7 @@ EOF
 doctor_focus() {
   doctor_section 'the focus check'
 
-  if [ "$(tama_opt tama_suppress_when_focused on)" != 'on' ]; then
+  if ! tama_opt_enabled tama_suppress_when_focused on; then
     doctor_ok '@tama_suppress_when_focused is off: every banner is delivered'
     doctor_more 'Including for the window you are looking at. Deliberate, and the way'
     doctor_more 'to stop the backend being asked a question that costs a process.'

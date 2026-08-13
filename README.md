@@ -215,6 +215,10 @@ Every option is a global tmux user option, set the way every tmux plugin is conf
 change, with no server restart. An option set to the empty string is a configuration and not
 an absent one: `set -g @tama_icon_prefix ''` really means no prefix.
 
+Any option that reads on or off takes tmux's own vocabulary for a flag, so
+`off`, `no`, `0` and `false` all turn it off and every other value leaves it on — a typo you
+can see is kinder than one that quietly took a feature away.
+
 **The complete annotated reference is `tama --help`**, which documents every option with its
 default and every subcommand with its behaviour. It is deliberately the single source rather
 than something restated here. [`examples/demo.tmux.conf`](examples/demo.tmux.conf) is the

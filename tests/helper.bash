@@ -12,6 +12,20 @@
 PLUGIN_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PLUGIN_ROOT
 
+# tmux's own vocabulary for a flag option turned off — what lib/options.sh reads and
+# what both the README and `tama --help` print. It lives here once because a suite
+# that only ever wrote `off` is exactly what let three of the plugin's options go on
+# parsing `false` as *on*: every boolean option is now driven against all four, and
+# tests/readme.bats binds the two documents to this list and to what the plugin does.
+# shellcheck disable=SC2034  # read by the bats suites, which shellcheck cannot see
+TAMA_OFF_SPELLINGS='off no 0 false'
+
+# Values outside that vocabulary, which must therefore leave an option on. The first
+# four are the ones a reader comparing against `on` alone took for off; `offf` is the
+# typo the vocabulary is deliberately tolerant of.
+# shellcheck disable=SC2034  # read by the bats suites, which shellcheck cannot see
+TAMA_ON_SPELLINGS='on yes 1 true offf'
+
 # Names a socket for this test without booting anything on it.
 #
 # The random tail is what makes the name unique, and it has to be: a pid and a test

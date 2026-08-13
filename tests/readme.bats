@@ -191,6 +191,42 @@ $documented
 EOF
 }
 
+@test "the values the README says turn an option off are the ones the help names" {
+  # A fourth list, and a list is the thing that rots silently. Both documents state the
+  # flag vocabulary once, and neither may state it differently from the other.
+  local from_readme
+  from_readme="$(readme_off_spellings)"
+  [ -n "$from_readme" ]
+
+  assert_equal "$from_readme" "$(help_off_spellings)"
+}
+
+@test "the values the README says turn an option off really do" {
+  # The claim worth making, and the one the comparison above cannot: the front door's
+  # list measured against the plugin rather than against another document. Narrowing
+  # what lib/options.sh accepts fails here, naming the spelling it dropped.
+  loaded_server
+
+  local spelling
+  while IFS= read -r spelling; do
+    [ -n "$spelling" ] || continue
+    test_tmux set -g @tama_notifications "$spelling"
+
+    run "$PLUGIN_ROOT/bin/tama" doctor
+    assert_success || return 1
+    assert_contains "$output" '@tama_notifications is off' \
+      "doctor with @tama_notifications $spelling" || return 1
+  done <<EOF
+$(readme_off_spellings)
+EOF
+
+  # And the list the suites drive every boolean option against is that same list, so
+  # the two documents cannot agree with each other while disagreeing with the tests.
+  local expected
+  expected="$(printf '%s\n' $TAMA_OFF_SPELLINGS | sort -u)"
+  assert_equal "$(readme_off_spellings)" "$expected"
+}
+
 @test "the commands the README lists are the subcommands that exist" {
   # bin/tama dispatches by file name and keeps no list, so libexec/ is the only truth
   # about what exists. `version` is the one name the dispatcher owns itself, since it has
@@ -215,6 +251,19 @@ EOF
 # name that is a prefix of another from being read as the longer one.
 readme_option_names() {
   grep -oE '@tama_[a-z_]+' "$README" | sort -u
+}
+
+# The values each document says turn a flag option off, one per line, sorted. Both
+# sentences are written so that the whole list sits on the line that says "turn it
+# off" — backticked in the README, quoted in the help, which is each document's own
+# way of marking a literal.
+readme_off_spellings() {
+  grep -F 'turn it off' "$README" | grep -oE '`[a-z0-9]+`' | tr -d '`' | sort -u
+}
+
+help_off_spellings() {
+  "$PLUGIN_ROOT/bin/tama" --help | grep -F 'turn it off' |
+    grep -oE "'[a-z0-9]+'" | tr -d "'" | sort -u
 }
 
 refute_file_contains() { # <file> <string>
