@@ -72,6 +72,6 @@ of it.
 
 ## Stale state
 
-State belonging to a pane whose agent is gone (process exited without reporting, pane
-reused as a plain shell). Detected by comparing the pane's current command against the one
-recorded when the state was written.
+State left on a pane that has returned to a known shell prompt after its agent exited
+without clearing it. A pane running any other command is not stale, because a live agent
+may have given that command control of the pane.
