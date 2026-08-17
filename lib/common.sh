@@ -75,6 +75,37 @@ die_usage() {
   exit 2
 }
 
+# Parses the optional target shared by the window commands. A direct target wins
+# over the pane that supplied it, which in turn wins over the hook's own pane.
+# The result is in TAMA_WINDOW_TARGET.
+tama_optional_window_target() { # <command> [--pane <pane_id>] [<window_target>]
+  local command="$1" target='' pane='' positional=0
+  shift
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --pane)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--pane needs a pane id'
+        fi
+        pane="$2"
+        shift 2
+        ;;
+      -*) die_usage "unknown option: $1" ;;
+      *)
+        positional=$((positional + 1))
+        [ "$positional" -eq 1 ] || die_usage "$command takes at most one target, got: $1"
+        [ -n "$1" ] || die_usage "$command needs a window target"
+        target="$1"
+        shift
+        ;;
+    esac
+  done
+
+  # shellcheck disable=SC2034  # read by the caller after parsing
+  TAMA_WINDOW_TARGET="${target:-${pane:-${TMUX_PANE:-}}}"
+}
+
 # Outside tmux there is nothing to act on, and hooks are configured once for
 # both contexts, so every tmux-acting command is a quiet no-op.
 require_tmux() {

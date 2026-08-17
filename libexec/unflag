@@ -19,35 +19,13 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 main() {
-  local target='' pane='' positional=0
-
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --pane)
-        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
-          die_usage '--pane needs a pane id'
-        fi
-        pane="$2"
-        shift 2
-        ;;
-      -*) die_usage "unknown option: $1" ;;
-      *)
-        positional=$((positional + 1))
-        [ "$positional" -eq 1 ] || die_usage "unflag takes at most one target, got: $1"
-        [ -n "$1" ] || die_usage 'unflag needs a window target'
-        target="$1"
-        shift
-        ;;
-    esac
-  done
-
-  target="${target:-${pane:-${TMUX_PANE:-}}}"
-  [ -n "$target" ] || exit 0
+  tama_optional_window_target unflag "$@"
+  [ -n "$TAMA_WINDOW_TARGET" ] || exit 0
 
   # The status says whether there was a mark to take off, which this command has no
   # use for and must not exit with: `tama unflag` on a window that was not marked has
   # done what was asked of it.
-  tama_flag_clear "$target" || true
+  tama_flag_clear "$TAMA_WINDOW_TARGET" || true
 }
 
 main "$@"

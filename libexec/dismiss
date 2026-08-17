@@ -24,38 +24,14 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 main() {
-  local target='' pane='' positional=0
-
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --pane)
-        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
-          die_usage '--pane needs a pane id'
-        fi
-        pane="$2"
-        shift 2
-        ;;
-      -*) die_usage "unknown option: $1" ;;
-      *)
-        positional=$((positional + 1))
-        [ "$positional" -eq 1 ] || die_usage "dismiss takes at most one target, got: $1"
-        # An empty one is a binding that failed to interpolate its format, not a
-        # request for whichever window tmux would pick.
-        [ -n "$1" ] || die_usage 'dismiss needs a window target'
-        target="$1"
-        shift
-        ;;
-    esac
-  done
-
-  target="${target:-${pane:-${TMUX_PANE:-}}}"
-  [ -n "$target" ] || exit 0
+  tama_optional_window_target dismiss "$@"
+  [ -n "$TAMA_WINDOW_TARGET" ] || exit 0
 
   # With banners off there is nothing of ours on screen to take down, and asking the
   # backend would start a notifier process to say so.
   tama_notify_enabled || exit 0
 
-  tama_window_read "$target" || exit 0
+  tama_window_read "$TAMA_WINDOW_TARGET" || exit 0
   tama_notify_dismiss
 }
 

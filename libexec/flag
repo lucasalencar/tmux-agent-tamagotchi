@@ -20,38 +20,10 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 main() {
-  local target='' pane='' positional=0
+  tama_optional_window_target flag "$@"
+  [ -n "$TAMA_WINDOW_TARGET" ] || exit 0
 
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --pane)
-        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
-          die_usage '--pane needs a pane id'
-        fi
-        pane="$2"
-        shift 2
-        ;;
-      -*) die_usage "unknown option: $1" ;;
-      *)
-        positional=$((positional + 1))
-        [ "$positional" -eq 1 ] || die_usage "flag takes at most one target, got: $1"
-        # An empty one is a binding that failed to interpolate its format, not a
-        # request for whichever window tmux would pick.
-        [ -n "$1" ] || die_usage 'flag needs a window target'
-        target="$1"
-        shift
-        ;;
-    esac
-  done
-
-  # A window given outright wins over the pane the hook happens to run in, which is
-  # what makes this usable from a key binding; `--pane` then overrides $TMUX_PANE the
-  # way it does on `state`. Having none of the three is one of the quiet no-ops:
-  # there is no window to mark, and an agent's turn must not fail over it.
-  target="${target:-${pane:-${TMUX_PANE:-}}}"
-  [ -n "$target" ] || exit 0
-
-  tama_flag_raise "$target"
+  tama_flag_raise "$TAMA_WINDOW_TARGET"
 }
 
 main "$@"
