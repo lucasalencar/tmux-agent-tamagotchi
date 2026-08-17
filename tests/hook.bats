@@ -291,7 +291,7 @@ payload() { # <event> [extra JSON…]
 
 @test "a notification that means the user is wanted shows the agent waiting" {
   local type
-  for type in permission_prompt idle_prompt agent_needs_input elicitation_dialog; do
+  for type in permission_prompt idle_prompt agent_needs_input elicitation_dialog elicitation_url_dialog; do
     hook SessionStart
     hook Notification <<<"$(payload Notification ",\"notification_type\":\"$type\"")"
     assert_success
