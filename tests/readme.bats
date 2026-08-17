@@ -59,8 +59,23 @@ help_set_lines() {
 }
 
 demo_set_lines() {
-  sed -n 's/^ *\(set -g \(window-status\|set-titles\).*\)$/\1/p' \
-    "$PLUGIN_ROOT/examples/demo.tmux.conf"
+  setup_recipe_lines "$PLUGIN_ROOT/examples/demo.tmux.conf"
+}
+
+setup_recipe_lines() {
+  sed -n \
+    -e 's/^ *\(set -g window-status.*\)$/\1/p' \
+    -e 's/^ *\(set -g set-titles.*\)$/\1/p' "$1"
+}
+
+setup_recipe_from_lines() {
+  sed -n \
+    -e '/^set -g window-status/p' \
+    -e '/^set -g set-titles/p'
+}
+
+doctor_setup_recipe_lines() {
+  doctor_set_lines | setup_recipe_from_lines
 }
 
 # The plugin loaded into this test's server, so doctor reports on a real installation.
@@ -116,16 +131,22 @@ loaded_server() {
 @test "the copied status and title recipes match doctor" {
   loaded_server
 
-  local line copy found=0
-  for copy in "$(help_set_lines)" "$(demo_set_lines)"; do
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      found=$((found + 1))
-      assert_contains "$copy" "$line" 'the copied recipe' || return 1
-    done < <(doctor_set_lines)
+  local expected copy
+  expected="$(doctor_setup_recipe_lines)"
+  [ -n "$expected" ]
+  for copy in \
+    "$(help_set_lines | setup_recipe_from_lines)" \
+    "$(demo_set_lines)" \
+    "$(setup_recipe_lines "$README")"; do
+    assert_equal "$copy" "$expected"
   done
+}
 
-  [ "$found" -gt 0 ]
+@test "the backend title recipe matches doctor" {
+  loaded_server
+
+  assert_equal "$(setup_recipe_lines "$PLUGIN_ROOT/backends/README.md" | grep '^set -g set-titles')" \
+    "$(doctor_setup_recipe_lines | grep '^set -g set-titles')"
 }
 
 @test "the on-select recipe the README hands a user is the one the plugin wires" {
