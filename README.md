@@ -48,14 +48,10 @@ are inside tmux and cost nothing, and `@tama_backend auto` resolves to a no-op b
 rather than to a process started to fail. So a headless box, a container or a CI runner
 needs no configuration to behave.
 
-**Platform honesty.** The macOS backend does all four of its jobs and is the one this
-plugin is developed against. The Linux backend is a single file — it delivers banners and
-nothing else, because `notify-send` is a one-way door: no dismissal, no focus check, and a
-click cannot come back to the pane. Its command line is asserted by tests on both CI
-platforms, but there is no Linux desktop on this project's development machine and no
-notification daemon on a CI runner, so **no human has yet watched it raise a banner**.
-[`backends/README.md`](backends/README.md) says exactly what each platform can and cannot
-do.
+The macOS backend supports every capability. The libnotify backend only delivers banners;
+it cannot dismiss them, detect focus or handle clicks. See
+[`backends/README.md`](backends/README.md) for the backend contract, platform limitations
+and configuration.
 
 ## Install
 
@@ -112,9 +108,7 @@ nothing to draw, so the icons expand to nothing at all — not even a stray spac
 the single thing most often mistaken for the plugin not working, and it is most confusing on
 the window you are looking at, which is usually the one you test with. Open an agent in a
 pane and the icon appears on the next redraw. The icons for windows you are *not* looking at
-are drawn the same way and arrive on the redraw the plugin's own option write triggers —
-measured at about 90 ms on tmux 3.7b, with `status-interval` deliberately set to 15 to prove
-it is not waiting for a tick.
+are drawn the same way and appear when the plugin's option write triggers a redraw.
 
 `#{E:@tama_flag}` draws `@tama_flag_text`, which is `" *"` unless you set it; put
 `#[fg=red]` in it if you would rather see colour.
@@ -153,15 +147,17 @@ wired. Then it prints the setup recipes, whether or not anything is wrong.
 "$(tmux show -gqv @tama_bin)" doctor
 ```
 
+Without a reachable tmux server, run it by path instead:
+
+```sh
+/path/to/tmux-agent-tamagotchi/bin/tama doctor
+```
+
 It exits non-zero when it found something broken and 0 when it only found things worth
 knowing, so it works as a check in a script
 ([ADR-0007](docs/adr/0007-doctor-is-the-one-command-that-fails.md)). It is also the one
 command that runs with no tmux server at all, because "there is no server here" is one of
 the answers it exists to give.
-
-There are four distinct reasons `auto` ends up picking no backend, and one of them looks
-exactly like a bug. `doctor` names whichever one you hit rather than saying "no backend
-found", so ask it instead of reading a list.
 
 ## The wiring you own
 
@@ -257,20 +253,23 @@ clone. Run `tama --help` for the full description of each.
 | `notify` / `dismiss` | Raise a banner, and take one down. |
 | `focus-window` | Bring a session's terminal window forward — the last step of a click. |
 | `gc` | Clear the state of panes whose agent is gone. |
-| `on-select` | What the selection hooks run: clear the mark, sweep the panes. |
+| `on-select` | Clear the mark, dismiss its banner and sweep the selected window. |
 | `hook` | Hand an event to a shipped adapter, e.g. `tama hook claude-code Stop`. |
 | `doctor` | Say what this installation is doing and why it is not doing the rest. |
 | `version` | Print the plugin version. |
 
-Three promises the whole CLI keeps, because it runs inside an agent's turn:
+Hook-facing commands keep three promises because they run inside an agent's turn:
 
-- **Outside tmux every command is a silent no-op, exit 0**, so one hook configuration works
-  in both contexts.
+- **Outside tmux they are silent no-ops, exit 0**, so one hook configuration works in both
+  contexts.
 - **A usage error exits 2** with a message on stderr, so a hook you are still editing fails
   loudly.
 - **Everything else that goes wrong exits 0 silently** and never fails an agent's turn or
-  prints into its transcript. `doctor` is the deliberate exception, since nothing runs it
-  from a hook.
+  prints into its transcript.
+
+`doctor` is the diagnostic exception: it runs without tmux and reports broken setups with a
+non-zero status. `focus-window` also runs outside tmux because notification clicks are
+started by the desktop.
 
 ## Notifications, and being left alone
 
@@ -291,32 +290,17 @@ set -g set-titles on
 set -g set-titles-string '#S'
 ```
 
-A backend is a *directory* of up to four optional executables — `notify`, `dismiss`,
-`focused`, `focus` — and that is the entire contract, so your own backend needs no fork of
-this plugin. A missing capability is not an error, it is "this platform cannot", and the
-plugin degrades rather than failing.
-[`backends/README.md`](backends/README.md) is the reference.
-
-Any single capability can also be replaced without replacing the backend, with
-`@tama_notify_command`, `@tama_dismiss_command`, `@tama_focused_command` or
-`@tama_focus_command`. Those are command *lines*, so they can carry their own flags, and the
-capability's arguments are appended as arguments rather than pasted in.
-[`examples/focus-open-window`](examples/focus-open-window) is a worked example of the
-largest of those: a `focus` with one more level than the shipped one, which synthesises
-Cmd+N and types an `attach` into the new window when no existing terminal window can be
-found or repurposed. It is an example rather than behaviour because it needs Accessibility
-permission, is specific to one terminal, and types into whatever Cmd+N opened — the reasons
-are in the file, and they are why the plugin does not do this for you.
+Backends are directories of optional capabilities, each replaceable by a command of your
+own. The complete contract, platform behavior and override examples live in
+[`backends/README.md`](backends/README.md); a macOS focus override is available at
+[`examples/focus-open-window`](examples/focus-open-window).
 
 ## Behaviour that would otherwise surprise you
 
-**Clicking a banner can take a window away from another session.** If no terminal window is
-showing the session the banner came from, the macOS `focus` capability falls back to
-pointing some *other* session's tmux client at this one, so that window now shows what you
-clicked about. That is deliberate — you clicked a banner, and a click that does nothing is
-what makes a feature feel broken — but it is a real cost, and `doctor` does not currently
-mention it ([#22](https://github.com/lucasalencar/tmux-agent-tamagotchi/issues/22)). Replace
-the capability with `@tama_focus_command` if you want a different rule.
+**Clicking a banner can repurpose another session's terminal window** when none currently
+shows the target session. This macOS fallback and its override are documented in
+[`backends/README.md`](backends/README.md)
+([#22](https://github.com/lucasalencar/tmux-agent-tamagotchi/issues/22)).
 
 **Subagent tracking is best effort.** The background icon — an idle agent whose delegated
 runs are still working — is counted from ids the agent's hooks supply. An agent that starts
@@ -333,19 +317,16 @@ exactly like one that walked out, and taking a live agent's icon away is the exp
 mistake. A pane carrying the plugin's leftovers but no state at all — a `notify` from a pane
 whose state hooks were never wired — is swept whatever it is running, since it draws nothing
 and nothing else will ever clear it.
+
 The sweep runs on window and pane selection for the window you are looking at, and over the
 whole server when you come back to the terminal. Coming back by *attaching* needs nothing
 from you; coming back because your terminal regained focus needs tmux's own `set -g
 focus-events on` for tmux to notice at all.
 
-**`integrations/` is outside the version promise.** `bin/tama` is the compatibility promise;
-the adapters are not
-([ADR-0002](docs/adr/0002-integrations-are-outside-the-contract.md)). They track agents that
-change on their own schedule, so an adapter may break when its agent changes its hooks, that
-break does not hold a release of the plugin, and when one does break the fix reaches you by
-pulling the plugin rather than by editing your own configuration — which is why they ship as
-code here instead of as documentation. An event an adapter does not recognise is ignored in
-silence, so a configuration written against a newer plugin stays harmless on an older one.
+**Adapters are best effort and outside the version promise.** `bin/tama` is stable;
+`integrations/` tracks agents that evolve independently. See
+[`integrations/README.md`](integrations/README.md) and
+[ADR-0002](docs/adr/0002-integrations-are-outside-the-contract.md).
 
 ## Documentation
 
@@ -353,7 +334,7 @@ silence, so a configuration written against a newer plugin stays harmless on an 
 | --- | --- |
 | `tama --help` | Every option and every subcommand. The reference. |
 | `tama doctor` | What your installation is doing, and the recipes to paste. |
-| [`CONTEXT.md`](CONTEXT.md) | The domain glossary: state, flag, backend, integration. |
+| [`CONTEXT.md`](CONTEXT.md) | The domain glossary. |
 | [`docs/adr/`](docs/adr/) | Why the boundaries are where they are — the reasoning behind most of what looks arbitrary. |
 | [`backends/README.md`](backends/README.md) | The backend contract and what each platform can do. |
 | [`integrations/README.md`](integrations/README.md) | Wiring an agent, adapter or not. |
