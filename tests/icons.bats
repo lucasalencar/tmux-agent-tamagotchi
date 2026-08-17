@@ -65,6 +65,19 @@ report() {
   assert_equal "$(tama_icons "$WINDOW")" ' ●◐'
 }
 
+@test "an icon option can equal the window id" {
+  test_tmux split-window -d -t t
+  local first second
+  first="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
+  second="$(test_tmux list-panes -t t -F '#{pane_id}' | tail -1)"
+
+  report "$first" running
+  report "$second" waiting
+  test_tmux set -g @tama_icon_separator "$WINDOW"
+
+  assert_equal "$(tama_icons "$WINDOW")" " ●${WINDOW}◐"
+}
+
 @test "a pane with no agent in it contributes nothing" {
   test_tmux split-window -d -t t
   local second

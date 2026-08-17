@@ -73,18 +73,17 @@ TAMA_ICON_OPTION_COUNT=11
 # the two, and `show -gv`, which fails on an unset option, cannot be batched at
 # all: tmux abandons the rest of a command sequence after a failure.
 #
-# So the marker is what keeps the lines aligned, and it is the window's own id
-# because that is a value no glyph, prefix or separator will be. Setting one of
-# them to the literal id of the window being drawn — `@7` — would shift that
-# window's remaining options; nothing else in-band can be made proof against a
-# value that impersonates the delimiter, and this is the value least likely to.
+# The marker is minted after the configuration was written. It has three random
+# components as well as this process's id, so no static option value can impersonate
+# it while a status job is parsed.
 tama_icons_query() { # <window>
-  local target="$1" option
+  local target="$1" option pid="$$"
+  TAMA_ICONS_MARKER="__tama_icons_${pid}_${RANDOM}_${RANDOM}_${RANDOM}__"
 
-  set -- display-message -p -t "$target" '#{window_id}'
+  set -- display-message -p -t "$target" "$TAMA_ICONS_MARKER"
   while IFS= read -r option; do
     set -- "$@" ';' show -gqv "@tama_$option" \
-      ';' display-message -p -t "$target" '#{window_id}'
+      ';' display-message -p -t "$target" "$TAMA_ICONS_MARKER"
   done <<EOF
 $TAMA_ICON_OPTIONS
 EOF
