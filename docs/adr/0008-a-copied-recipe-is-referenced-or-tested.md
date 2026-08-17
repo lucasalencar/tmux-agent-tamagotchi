@@ -35,9 +35,9 @@ test that holds it to an existing copy, or accept a reference instead. That is t
 — the cost is paid by the person adding the copy rather than by the user who pasted a
 stale one.
 
-Two unbound copies remain, in `tama --help` and `examples/demo.tmux.conf`. They predate
-the rule and are not grandfathered in on merit; they are simply not yet done, and they can
-be bound the same way `tests/readme.bats` binds the README's.
+`tests/readme.bats` now binds the status and title recipes in `tama --help`,
+`examples/demo.tmux.conf`, the project README, and `backends/README.md` to the recipe
+`tama doctor` prints. A new copy must join that comparison or reference one of them.
 
 The rule is about recipes, not about prose. Two documents explaining the same behaviour in
 their own words is normal and healthy, and no test should try to hold those in step.

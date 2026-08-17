@@ -192,8 +192,8 @@ write. The plugin adds what only it knows as pane options for you to reach:
 state, which the default falls back on because tmux cannot always say where a
 pane is now — and @tama_pane_label when you have a label provider.
 
-  set -g @tama_title_format '#{@tama_pane_agent} - #{?pane_current_path,#{b:pane_current_path},#{b:@tama_pane_cwd}}#{?@tama_pane_label, (#{@tama_pane_label}),}'
-  set -g @tama_group_format 'tmux-window-#{window_id}'
+  set -g @tama_title_format '$TAMA_NOTIFY_TITLE_DEFAULT'
+  set -g @tama_group_format '$TAMA_NOTIFY_GROUP_DEFAULT'
   set -g @tama_label_command ''  # your own window-naming script, given the window
                                  # id, its first line of output is the label;
                                  # empty means nothing is ever run
