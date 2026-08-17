@@ -55,10 +55,6 @@ deliver() { # <target> <agent_name> <message>
   tama_notify_suppressed && exit 0
 
   tama_notify_label
-  if [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
-    tama_notify_group
-  fi
-
   tama_batch_reset
   # The name is what the default title leads with, and it is sticky in the pane
   # record exactly as `state` keeps it: an agent that only ever calls `notify` still
@@ -81,21 +77,19 @@ deliver() { # <target> <agent_name> <message>
   # whatever tmux thinks about which window is active. Deliver and mark are the same
   # decision, made once, above.
   #
-  # The other end of that invariant is in lib/window.sh: because a delivered banner
-  # always leaves a mark, a window with no mark has no banner pending, which is what
-  # lets the user arriving at a window dismiss without a notifier process per
-  # keystroke. Stop raising this and banners start outliving the thing they were
-  # about.
+  # The visible mark records attention; the pending marker written below remembers the
+  # banner identity separately, because `unflag` may clear one without dismissing the
+  # other.
   tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" on
   # No refresh: the agent, label and mark are not icon jobs; the plain flag format
   # redraws with its option write itself.
   tama_batch_flush 'no' || true
 
-  # A new group may name the agent or label just written above. A pending banner keeps
-  # its original identity so a newer notification replaces it instead of creating a
-  # second group for the same window.
+  # A new group may name the agent or label just written above. A pending banner instead
+  # reads its original identity, so a newer notification replaces it rather than making
+  # a second group for the same window.
+  tama_notify_group
   if [ -z "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
-    tama_notify_group
     tmux_run set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" \
       "$TAMA_NOTIFY_GROUP" ';' set -w -t "$TAMA_WINDOW_ID" \
       "$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION" on >/dev/null 2>&1 || true

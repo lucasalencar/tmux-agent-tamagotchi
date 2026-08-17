@@ -686,10 +686,9 @@ PROVIDER
   assert_backend_value dismiss argv1 "$group"
 }
 
-@test "a window selection with no mark on it starts no notifier at all" {
-  # A window selection happens every time the user presses a key. A window with no mark
-  # has no banner of ours pending, because a delivered banner always leaves one, so
-  # there is nothing to ask the desktop about — and asking would mean a notifier
+@test "a window selection with no pending banner starts no notifier at all" {
+  # A window selection happens every time the user presses a key. Without the pending
+  # marker there is nothing to ask the desktop about — and asking would mean a notifier
   # process per keystroke.
   arrange_two_windows
   tama_attach_client t

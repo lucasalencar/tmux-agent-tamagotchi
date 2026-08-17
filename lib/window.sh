@@ -46,8 +46,8 @@ TAMA_WINDOW_NOTIFICATION_PENDING_OPTION='@tama_window_notification_pending'
 #
 # `#{@tama_window_flag}` is read, not only written, so that the user arriving at a
 # window can tell "there was a mark here" from "there was not" without a second
-# round trip — which is what keeps a banner from being dismissed on every window
-# selection. Reading an option through a format falls back to the window, session
+# round trip. The separate pending marker decides whether that selection dismisses a
+# banner. Reading an option through a format falls back to the window, session
 # and global scopes, the same asymmetry lib/pane.sh documents; the exported
 # `@tama_flag` format has always had it too.
 TAMA_WINDOW_READ_FIELDS="#{window_id}

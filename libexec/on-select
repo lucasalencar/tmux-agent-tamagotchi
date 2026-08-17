@@ -35,10 +35,10 @@
 # variable does name a real pane.
 #
 # Three things become true when the user arrives at a window, and all three happen
-# here rather than off three hooks of their own: the mark goes, the banner that went
-# with it is dismissed, and the window's panes are swept. Dismissing belongs with
-# unflagging in particular — they are the two halves of "already dealt with", and the
-# mark is what tells this command whether there was a banner at all.
+# here rather than off three hooks of their own: the mark goes, a pending banner is
+# dismissed, and the window's panes are swept. Dismissing belongs with unflagging in
+# particular — they are the two halves of "already dealt with" — but the pending marker
+# is what tells this command whether there is a banner at all.
 #
 # Never fails: this runs from a tmux hook, where a non-zero exit is noise in the
 # server log and nothing a user can act on.
