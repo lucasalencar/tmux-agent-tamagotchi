@@ -54,6 +54,15 @@ doctor_set_lines() {
   "$PLUGIN_ROOT/bin/tama" doctor | sed -n 's/^ *\(set -g .*\)$/\1/p'
 }
 
+help_set_lines() {
+  "$PLUGIN_ROOT/bin/tama" --help | sed -n 's/^ *\(set -g .*\)$/\1/p'
+}
+
+demo_set_lines() {
+  sed -n 's/^ *\(set -g \(window-status\|set-titles\).*\)$/\1/p' \
+    "$PLUGIN_ROOT/examples/demo.tmux.conf"
+}
+
 # The plugin loaded into this test's server, so doctor reports on a real installation.
 loaded_server() {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
@@ -101,6 +110,21 @@ loaded_server() {
   done < <(doctor_set_lines)
 
   # Nothing extracted would make the loop above assert nothing at all.
+  [ "$found" -gt 0 ]
+}
+
+@test "the copied status and title recipes match doctor" {
+  loaded_server
+
+  local line copy found=0
+  for copy in "$(help_set_lines)" "$(demo_set_lines)"; do
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      found=$((found + 1))
+      assert_contains "$copy" "$line" 'the copied recipe' || return 1
+    done < <(doctor_set_lines)
+  done
+
   [ "$found" -gt 0 ]
 }
 
