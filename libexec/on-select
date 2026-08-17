@@ -82,10 +82,11 @@ main() {
   # `--all` sweep is about the server and does not need a target at all.
   local target="${window:-${pane:-${TMUX_PANE:-}}}"
 
-  # A delivered banner records its own group. The mark can also come from `tama flag`,
-  # which must not invoke a user's dismiss command for a banner that never existed.
-  if [ -n "$target" ] && tama_flag_clear "$target"; then
-    # The window tama_flag_clear just read, so this costs no second round trip.
+  # `flag` alone must not invoke a user's dismiss command. Conversely, `unflag` may
+  # have cleared a banner's visible mark already, so the pending marker — not the
+  # result of clearing that mark — decides whether arriving dismisses it.
+  if [ -n "$target" ]; then
+    tama_flag_clear "$target" || true
     if tama_notify_enabled && [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
       tama_notify_dismiss
     fi

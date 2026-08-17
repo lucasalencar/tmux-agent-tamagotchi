@@ -83,6 +83,7 @@ tama_notify_enabled() {
 tama_notify_group() {
   local format
   if [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
+    tama_window_notification_group_read
     TAMA_NOTIFY_GROUP="$TAMA_WINDOW_NOTIFY_GROUP"
     return 0
   fi
@@ -280,10 +281,9 @@ tama_notify_tmux_command() {
 # also expands the current format when no banner was recorded, which keeps it useful for
 # a user cleaning up a banner from before this version.
 #
-# Nothing here checks whether there *was* one: a dismissal for a group with no banner
-# in it is what a notifier does nothing about, and asking would mean the plugin
-# keeping a record of pending banners, which is a second copy of what the desktop
-# already knows.
+# Nothing here asks the desktop whether there *is* one: dismissing a group with no
+# banner is a harmless no-op. The window marker only preserves the group that `notify`
+# used and says when that persisted identity should be cleared.
 tama_notify_dismiss() {
   tama_notify_group
 

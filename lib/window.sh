@@ -21,8 +21,8 @@ TAMA_WINDOW_NOTIFY_GROUP_OPTION='@tama_window_notify_group'
 # shellcheck disable=SC2034  # read by notification writers
 TAMA_WINDOW_NOTIFICATION_PENDING_OPTION='@tama_window_notification_pending'
 
-# Everything the flag path and the notification path need to know about a window, in
-# one tmux round trip.
+# The flag path and the notification path's shared window facts, in one tmux round
+# trip. A pending banner's opaque group is read separately only when it is needed.
 #
 # One value per line, like the pane record — see tama_fields_read in lib/common.sh
 # for why, and for why the last field is followed by a sentinel. This record started
@@ -50,16 +50,15 @@ TAMA_WINDOW_NOTIFICATION_PENDING_OPTION='@tama_window_notification_pending'
 # selection. Reading an option through a format falls back to the window, session
 # and global scopes, the same asymmetry lib/pane.sh documents; the exported
 # `@tama_flag` format has always had it too.
-TAMA_WINDOW_READ_FIELDS='#{window_id}
+TAMA_WINDOW_READ_FIELDS="#{window_id}
 #{window_active}
 #{session_attached}
 #{session_name}
 #{pane_id}
-#{@tama_window_flag}
-#{@tama_window_notify_group}
-#{@tama_window_notification_pending}
-.'
-TAMA_WINDOW_READ_COUNT=9
+#{$TAMA_WINDOW_FLAG_OPTION}
+#{$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION}
+."
+TAMA_WINDOW_READ_COUNT=8
 
 # Reads the window holding <target>, which may be a pane id, a window id, or
 # anything else tmux resolves — the callers have a pane (a hook reporting a state)
@@ -82,7 +81,6 @@ tama_window_read() { # <target>
   TAMA_WINDOW_SESSION=''
   TAMA_WINDOW_PANE_ID=''
   TAMA_WINDOW_FLAG=''
-  TAMA_WINDOW_NOTIFY_GROUP=''
   TAMA_WINDOW_NOTIFICATION_PENDING=''
   while IFS= read -r field; do
     lines=$((lines + 1))
@@ -93,8 +91,7 @@ tama_window_read() { # <target>
       4) TAMA_WINDOW_SESSION="$field" ;;
       5) TAMA_WINDOW_PANE_ID="$field" ;;
       6) TAMA_WINDOW_FLAG="$field" ;;
-      7) TAMA_WINDOW_NOTIFY_GROUP="$field" ;;
-      8) TAMA_WINDOW_NOTIFICATION_PENDING="$field" ;;
+      7) TAMA_WINDOW_NOTIFICATION_PENDING="$field" ;;
     esac
   done <<EOF
 $raw
@@ -105,6 +102,20 @@ EOF
   # A window that is gone: tmux says so by expanding `#{window_id}` to nothing
   # rather than by failing, and writing from that would write somewhere else.
   [ -n "$TAMA_WINDOW_ID" ]
+}
+
+# The group is an opaque backend value, so unlike the rest of the window record it may
+# contain a newline. Read it by option only when a pending marker says it is needed;
+# putting it in the line-based record would corrupt every field after it.
+tama_window_notification_group_read() {
+  local group
+  # shellcheck disable=SC2034  # read by lib/notify.sh after this helper returns
+  TAMA_WINDOW_NOTIFY_GROUP=''
+  [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ] || return 0
+  group="$(tmux_run show-options -wv -t "$TAMA_WINDOW_ID" \
+    "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" 2>/dev/null)" || group=''
+  # shellcheck disable=SC2034  # read by lib/notify.sh after this helper returns
+  TAMA_WINDOW_NOTIFY_GROUP="$group"
 }
 
 # The one implementation of "is the user looking at this window?", over what
@@ -176,13 +187,10 @@ tama_flag_set() {
 # option set to "" is still an option that is set, and `@tama_flag` asks whether this
 # one is there at all.
 #
-# Returns zero only when there really was a mark to take off — and leaves the window
-# it read in TAMA_WINDOW_*, which libexec/on-select then has without a second round
-# trip. That answer is load-bearing rather than a nicety: a window with no mark has no
-# banner of ours pending either, because `notify` raises the mark whenever it delivers
-# one, so it is what keeps a window selection from spawning a notifier process every
-# time the user presses a key. The invariant is stated at both ends; breaking it at
-# one would leave banners on screen with nothing to say why.
+# Returns zero only when there really was a mark to take off, and leaves the window it
+# read in TAMA_WINDOW_*. A notification also raises the mark, but a user may clear that
+# mark independently with `tama unflag`; the notification-pending marker is therefore
+# the separate source of truth for dismissing its banner on selection.
 #
 # Never fails on the write: every caller is a hook or a key binding.
 tama_flag_clear() { # <target>

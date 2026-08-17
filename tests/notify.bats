@@ -339,6 +339,20 @@ run_click() { # <click command line>
   assert_backend_value notify argv1 "t:0 $pane"
 }
 
+@test "a new group can name the agent notify just stored" {
+  test_tmux set -g @tama_group_format '#{@tama_pane_agent}'
+  local pane
+  pane="$(tama_pane_of t:0)"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_backend_value notify env.TAMA_GROUP 'claude-code'
+
+  run "$PLUGIN_ROOT/bin/tama" notify codex 'permission needed again' --pane "$pane"
+  assert_success
+  assert_backend_value notify env.TAMA_GROUP 'claude-code'
+}
+
 @test "the title comes from the pane's own directory, not the caller's" {
   # The bug this replaces: the project name came from the hook process's working
   # directory, which is right until an agent is started from somewhere else. This suite
@@ -377,6 +391,7 @@ printf 'the %s window\n' "$1"
 PROVIDER
   chmod +x "$provider"
   test_tmux set -g @tama_label_command "$provider"
+  test_tmux set -g @tama_group_format 'label-#{@tama_pane_label}'
 
   local pane window
   pane="$(agent_pane_in the-api)"
@@ -388,6 +403,7 @@ PROVIDER
   # Exposed as a pane option, which is how a format the user writes can reach it.
   assert_pane_option "$pane" label "the $window window"
   assert_backend_value notify argv1 "claude-code - the-api (the $window window)"
+  assert_backend_value notify env.TAMA_GROUP "label-the $window window"
 }
 
 @test "a label provider that says nothing useful leaves the title alone" {
@@ -557,11 +573,15 @@ PROVIDER
   assert_backend_value notify env.TAMA_GROUP "before-$window"
 
   test_tmux set -g @tama_group_format 'after-#{window_id}'
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed again' --pane "$pane"
+  assert_success
+  assert_backend_value notify env.TAMA_GROUP "before-$window"
+
   run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
   assert_success
   assert_backend_value dismiss argv1 "before-$window"
 
-  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed again' --pane "$pane"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed once more' --pane "$pane"
   assert_success
   assert_backend_value notify env.TAMA_GROUP "after-$window"
 }
@@ -584,6 +604,27 @@ PROVIDER
   assert_backend_value dismiss argv1 ''
 }
 
+@test "a group with a newline is still dismissed when the user arrives" {
+  arrange_two_windows
+  tama_attach_client t
+  test_tmux select-window -t t:0
+  test_tmux set -g @tama_group_format $'before-#{window_id}\nafter'
+
+  local pane window expected
+  pane="$(tama_pane_of t:1)"
+  window="$(tama_window_id t:1)"
+  expected=$'before-'
+  expected+="$window"
+  expected+=$'\nafter'
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_backend_value notify env.TAMA_GROUP "$expected"
+
+  run "$PLUGIN_ROOT/bin/tama" on-select --window "$window"
+  assert_success
+  assert_backend_value dismiss argv1 "$expected"
+}
+
 @test "a flag without a banner does not dismiss anything" {
   local window
   window="$(tama_window_id t:0)"
@@ -593,6 +634,23 @@ PROVIDER
   run "$PLUGIN_ROOT/bin/tama" on-select --window "$window"
   assert_success
   refute_backend_called dismiss
+}
+
+@test "arriving dismisses a banner after its mark was cleared separately" {
+  arrange_two_windows
+  tama_attach_client t
+  test_tmux select-window -t t:0
+
+  local pane window
+  pane="$(tama_pane_of t:1)"
+  window="$(tama_window_id t:1)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" unflag "$window"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" on-select --window "$window"
+  assert_success
+  assert_backend_called dismiss
 }
 
 @test "an explicit dismiss without a pending banner uses the configured group" {

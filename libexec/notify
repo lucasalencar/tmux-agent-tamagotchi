@@ -21,9 +21,10 @@
 #   2. read the window    → the one round trip everything below works from
 #   3. suppression        → the `AND` of ADR-0004, before anything is written
 #   4. the label provider → only if the user configured one
-#   5. one batch of writes: the label, the agent's name, the mark, and banner identity
-#   6. the group and the title, expanded by tmux
-#   7. the backend
+#   5. one batch of writes: the label, the agent's name, and the mark
+#   6. the group, expanded after those writes and persisted with banner identity
+#   7. the title, expanded after those writes
+#   8. the backend
 #
 # Failure policy: a wrong invocation exits 2 while its author is editing the hook.
 # Everything else exits 0 in silence — no pane, no window, no backend, no `notify`
@@ -54,7 +55,9 @@ deliver() { # <target> <agent_name> <message>
   tama_notify_suppressed && exit 0
 
   tama_notify_label
-  tama_notify_group
+  if [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
+    tama_notify_group
+  fi
 
   tama_batch_reset
   # The name is what the default title leads with, and it is sticky in the pane
@@ -84,16 +87,19 @@ deliver() { # <target> <agent_name> <message>
   # keystroke. Stop raising this and banners start outliving the thing they were
   # about.
   tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" on
-  if tama_pane_value_is_storable "$TAMA_NOTIFY_GROUP"; then
-    tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" \
-      "$TAMA_NOTIFY_GROUP"
-  else
-    tama_batch_add set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION"
-  fi
-  tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION" on
-  # No refresh: none of these three is drawn by the icon job, and the mark is a plain
-  # format that redraws with the option write itself.
+  # No refresh: the agent, label and mark are not icon jobs; the plain flag format
+  # redraws with its option write itself.
   tama_batch_flush 'no' || true
+
+  # A new group may name the agent or label just written above. A pending banner keeps
+  # its original identity so a newer notification replaces it instead of creating a
+  # second group for the same window.
+  if [ -z "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
+    tama_notify_group
+    tmux_run set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" \
+      "$TAMA_NOTIFY_GROUP" ';' set -w -t "$TAMA_WINDOW_ID" \
+      "$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION" on >/dev/null 2>&1 || true
+  fi
 
   # After the writes, because the title reads what was just written.
   tama_notify_title "$TAMA_WINDOW_PANE_ID"
