@@ -90,9 +90,11 @@ deliver() { # <target> <agent_name> <message>
   # a second group for the same window.
   tama_notify_group
   if [ -z "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
-    tmux_run set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" \
-      "$TAMA_NOTIFY_GROUP" ';' set -w -t "$TAMA_WINDOW_ID" \
-      "$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION" on >/dev/null 2>&1 || true
+    tama_batch_reset
+    tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" \
+      "$TAMA_NOTIFY_GROUP"
+    tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION" on
+    tama_batch_flush 'no' || true
   fi
 
   # After the writes, because the title reads what was just written.
