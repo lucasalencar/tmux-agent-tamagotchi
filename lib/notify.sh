@@ -77,11 +77,12 @@ tama_notify_enabled() {
 }
 
 # The group id for the window tama_window_read last read, in TAMA_NOTIFY_GROUP.
-# A delivered banner keeps the group it was raised with until dismissal, so changing
-# the format cannot orphan it in the notification centre.
+# A pending banner keeps the group it was raised with until dismissal, so changing
+# the format cannot orphan it in the notification centre. The pending marker is
+# separate because an empty group is a valid configuration.
 tama_notify_group() {
   local format
-  if [ -n "$TAMA_WINDOW_NOTIFY_GROUP" ]; then
+  if [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
     TAMA_NOTIFY_GROUP="$TAMA_WINDOW_NOTIFY_GROUP"
     return 0
   fi
@@ -286,8 +287,9 @@ tama_notify_tmux_command() {
 tama_notify_dismiss() {
   tama_notify_group
 
-  if [ -n "$TAMA_WINDOW_NOTIFY_GROUP" ]; then
+  if [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
     tmux_run set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" \
+      ';' set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION" \
       >/dev/null 2>&1 || true
   fi
 

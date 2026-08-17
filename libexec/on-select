@@ -86,7 +86,7 @@ main() {
   # which must not invoke a user's dismiss command for a banner that never existed.
   if [ -n "$target" ] && tama_flag_clear "$target"; then
     # The window tama_flag_clear just read, so this costs no second round trip.
-    if tama_notify_enabled && [ -n "$TAMA_WINDOW_NOTIFY_GROUP" ]; then
+    if tama_notify_enabled && [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
       tama_notify_dismiss
     fi
   fi

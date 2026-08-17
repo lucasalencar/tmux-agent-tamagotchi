@@ -10,9 +10,8 @@
 # wants the banner gone without visiting the window should not have to visit it.
 #
 # Unconditional, unlike the mark it goes with: whoever calls this is saying the
-# banner has served its purpose. Which banner that is comes from `@tama_group_format`
-# by way of lib/notify.sh — the same expansion `notify` used to raise it, so the two
-# cannot name different things.
+# banner has served its purpose. A pending banner keeps the group `notify` used to
+# raise it, so changing @tama_group_format cannot make it impossible to dismiss.
 #
 # Never fails: a banner that would not go away is not worth a word out of an agent's
 # hook or a line in the server log.

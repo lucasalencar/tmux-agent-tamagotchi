@@ -18,6 +18,8 @@
 TAMA_WINDOW_FLAG_OPTION='@tama_window_flag'
 # shellcheck disable=SC2034  # read by notification writers
 TAMA_WINDOW_NOTIFY_GROUP_OPTION='@tama_window_notify_group'
+# shellcheck disable=SC2034  # read by notification writers
+TAMA_WINDOW_NOTIFICATION_PENDING_OPTION='@tama_window_notification_pending'
 
 # Everything the flag path and the notification path need to know about a window, in
 # one tmux round trip.
@@ -55,8 +57,9 @@ TAMA_WINDOW_READ_FIELDS='#{window_id}
 #{pane_id}
 #{@tama_window_flag}
 #{@tama_window_notify_group}
+#{@tama_window_notification_pending}
 .'
-TAMA_WINDOW_READ_COUNT=8
+TAMA_WINDOW_READ_COUNT=9
 
 # Reads the window holding <target>, which may be a pane id, a window id, or
 # anything else tmux resolves — the callers have a pane (a hook reporting a state)
@@ -80,6 +83,7 @@ tama_window_read() { # <target>
   TAMA_WINDOW_PANE_ID=''
   TAMA_WINDOW_FLAG=''
   TAMA_WINDOW_NOTIFY_GROUP=''
+  TAMA_WINDOW_NOTIFICATION_PENDING=''
   while IFS= read -r field; do
     lines=$((lines + 1))
     case "$lines" in
@@ -90,6 +94,7 @@ tama_window_read() { # <target>
       5) TAMA_WINDOW_PANE_ID="$field" ;;
       6) TAMA_WINDOW_FLAG="$field" ;;
       7) TAMA_WINDOW_NOTIFY_GROUP="$field" ;;
+      8) TAMA_WINDOW_NOTIFICATION_PENDING="$field" ;;
     esac
   done <<EOF
 $raw

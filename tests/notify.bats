@@ -560,6 +560,49 @@ PROVIDER
   run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
   assert_success
   assert_backend_value dismiss argv1 "before-$window"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed again' --pane "$pane"
+  assert_success
+  assert_backend_value notify env.TAMA_GROUP "after-$window"
+}
+
+@test "an empty group is still dismissed when the user arrives" {
+  arrange_two_windows
+  tama_attach_client t
+  test_tmux select-window -t t:0
+  test_tmux set -g @tama_group_format ''
+
+  local pane window
+  pane="$(tama_pane_of t:1)"
+  window="$(tama_window_id t:1)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+
+  run "$PLUGIN_ROOT/bin/tama" on-select --window "$window"
+  assert_success
+  assert_backend_called dismiss
+  assert_backend_value dismiss argv1 ''
+}
+
+@test "a flag without a banner does not dismiss anything" {
+  local window
+  window="$(tama_window_id t:0)"
+
+  run "$PLUGIN_ROOT/bin/tama" flag "$window"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" on-select --window "$window"
+  assert_success
+  refute_backend_called dismiss
+}
+
+@test "an explicit dismiss without a pending banner uses the configured group" {
+  local window
+  window="$(tama_window_id t:0)"
+  test_tmux set -g @tama_group_format 'manual-#{window_id}'
+
+  run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
+  assert_success
+  assert_backend_value dismiss argv1 "manual-$window"
 }
 
 @test "arriving at the window takes its banner down" {
