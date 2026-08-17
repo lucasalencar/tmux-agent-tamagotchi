@@ -57,6 +57,10 @@ present-and-empty.** Do not add one to make a directory look complete.
 | `libnotify` | `notify-send`, a running freedesktop notification daemon | `notify` only |
 | `none` | nothing | `notify`, `dismiss`, both no-ops |
 
+With the `macos` backend, `ALL` is reserved by terminal-notifier to remove every
+notification. Do not use it as `@tama_group_format`: tama deliberately leaves that
+banner in place rather than dismissing notifications that do not belong to it.
+
 `@tama_backend auto` picks, in order:
 
 1. `macos`, on a Mac **where `terminal-notifier` is actually installed**. It is found on

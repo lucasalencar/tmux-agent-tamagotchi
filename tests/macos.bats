@@ -253,8 +253,11 @@ FOCUS
 
   run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
   assert_success
-  sleep 0.1
-  [ ! -e "$TAMA_NOTIFIER_DIR/flag.remove" ]
+
+  # The backend backgrounds terminal-notifier, so give a regressed invocation time to
+  # reach the fixture before asserting that no global removal was requested.
+  sleep 0.2
+  [ ! -e "$TAMA_NOTIFIER_DIR/remove" ]
 }
 
 @test "a notifier that is not installed is silence, not a failed turn" {

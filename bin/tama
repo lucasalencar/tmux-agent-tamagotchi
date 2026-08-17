@@ -199,9 +199,14 @@ pane is now — and @tama_pane_label when you have a label provider.
                                  # empty means nothing is ever run
 
 Banners are grouped per window from that format. A banner keeps the group it was
-raised with until it is dismissed, so a newer one replaces the older one and arriving
-at the window takes it down even if you changed the format meanwhile. If your own tooling already names your windows, point
-@tama_label_command at it and the banners will say what your status line says.
+raised with until it is dismissed, so a newer one replaces the older one. Arriving at
+the window takes it down even if you changed the format meanwhile.
+
+If your own tooling already names your windows, point @tama_label_command at it and
+the banners will say what your status line says.
+
+On macOS, do not make @tama_group_format expand to ALL: terminal-notifier reserves
+that group to remove every notification, so tama leaves such a banner alone.
 
 You are not notified about a window you are looking at, and that takes two
 answers agreeing: tmux says that window is current in its own session with
