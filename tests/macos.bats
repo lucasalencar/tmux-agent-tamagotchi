@@ -240,6 +240,23 @@ FOCUS
   assert_notifier_flag remove "$group"
 }
 
+@test "a group named ALL never removes every notification" {
+  use_macos_backend
+  test_tmux set -g @tama_group_format ALL
+  local pane window
+  pane="$(agent_pane_elsewhere)"
+  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  wait_for_notifier
+
+  run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
+  assert_success
+  sleep 0.1
+  [ ! -e "$TAMA_NOTIFIER_DIR/flag.remove" ]
+}
+
 @test "a notifier that is not installed is silence, not a failed turn" {
   use_macos_backend
   test_tmux set -g @tama_terminal_notifier /nonexistent/terminal-notifier

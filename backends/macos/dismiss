@@ -27,7 +27,7 @@ main() {
   # `-remove` with no group would be a removal of nothing; `-remove ALL` is what
   # terminal-notifier calls removing everything, and dismissing a banner must never
   # take down somebody else's.
-  [ -n "$group" ] || exit 0
+  [ -n "$group" ] && [ "$group" != 'ALL' ] || exit 0
 
   tama_macos_notifier || exit 0
 
