@@ -1,42 +1,9 @@
 #!/usr/bin/env bash
 #
-# The macOS backend's focus: put the terminal showing this session in front of the user.
-#
 #   focus <session>
 #
-# The last step of a banner's click, and the step tmux cannot do for itself. Two levels,
-# tried in order, and the second one only because the first found nothing:
-#
-#   1. **Raise the terminal window whose title is the session.** The ordinary case: the
-#      session is already on screen somewhere, behind a browser or on another desktop.
-#      Titles carry the session name because tmux is told to put it there —
-#      `set-titles-string '#S'` — which is the same assumption backends/macos/focused
-#      rests on, and the reason `doctor` will check it.
-#
-#   2. **Steal a client from another session.** No window is showing this session, but
-#      some other terminal window is showing tmux: point its client at this session
-#      instead. That window is then showing what the user just clicked about.
-#
-# Level 2 takes a window away from whatever session it was displaying. That is
-# deliberate: the user clicked a banner, so the thing they asked for is to be looking at
-# *this* session, and a click that does nothing is the outcome that makes the feature
-# feel broken. The system this replaces protected a hardcoded session named `main` from
-# being repurposed; that is somebody's personal setup and not a rule this plugin can
-# have, so it is gone. A user who wants one back replaces this whole capability with
-# `@tama_focus_command`.
-#
-# **There is no third level, on purpose.** The original went further: when no terminal
-# window could be repurposed it synthesised Cmd+N and pasted an attach command through
-# the clipboard. It needs Accessibility permission for synthetic keystrokes, it clobbers
-# the clipboard it borrows, and every part of it is specific to one terminal. It ships
-# as a documented example for `@tama_focus_command` instead of as behaviour nobody asked
-# for: examples/focus-open-window. That option replaces this capability wholesale, so the
-# example owes this file nothing — it delegates the two levels here back to it anyway,
-# since they need no permission and it would rather not reimplement them, and it types the
-# attach command instead of borrowing the clipboard.
-#
-# Runs from a notification click, in a process the desktop started, so it is not on an
-# agent's turn: it may take the time it takes.
+# Raise an existing terminal window for the session, or repurpose another tmux client.
+# Opening a new terminal requires Accessibility and remains an opt-in example.
 
 set -o nounset
 

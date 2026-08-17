@@ -5,7 +5,6 @@
 # invocation time, never cached, so `tmux source-file` takes effect on the very
 # next command with no server restart.
 
-# tama_opt <option-name-without-@> <default>
 tama_opt() {
   local value default="${2-}"
   # `show -gv` without -q fails on an option that was never set, which is the

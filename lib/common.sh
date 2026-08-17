@@ -1,13 +1,7 @@
 # shellcheck shell=bash
 #
-# Shared helpers, sourced by bin/tama and by every script under libexec/.
-# Sourcing this file turns on `nounset` for the caller, deliberately: every
-# script in the plugin runs under it.
-#
-# Failure policy (see the CLI contract in bin/tama): usage errors exit 2 with a
-# message on stderr, because a wrong hook is the user's fault and must be visible
-# while they are editing it. Everything else exits 0 silently — a notification
-# that did not appear must never fail an agent's turn.
+# Shared runtime for CLI commands. Usage errors are loud; operational failures
+# remain silent so hooks cannot fail an agent turn.
 
 set -o nounset
 
@@ -17,8 +11,6 @@ set -o nounset
 # not.
 TAMA_TMUX="${TAMA_TMUX:-tmux}"
 
-# tmux, wherever it is. Never quote-mangles the caller's arguments.
-#
 # `-u` says this client speaks UTF-8. Without it tmux decides from the ambient
 # locale, and a server whose locale is C — a CI runner, a systemd unit, a cron job —
 # hands back `_` for every byte of every multibyte character it prints. That would
@@ -35,28 +27,10 @@ tmux_run() {
   "$TAMA_TMUX" -u "$@"
 }
 
-# Reads several tmux formats about one target in a single tmux invocation, one
-# value per line of output. The shape every record in this plugin is read in, and
-# the reason it is here rather than copied: the batching is where the traps are.
-#
-# One `display-message -p` per field, joined by tmux's own `;`, so each value
-# arrives on a line of its own and nothing has to separate them. A separator was
-# the obvious thing and is not available: tmux prints to a client through an
-# escaper, so a byte like a unit separator arrives as the four characters `\037`
-# on some versions and locales and intact on others, collapsing every field into
-# one. A newline cannot be smuggled either; it arrives as `_`.
-#
-# The number of lines is therefore the integrity check, which is why every caller
-# ends its field list with a sentinel: command substitution strips trailing
-# newlines, so a last field that is legitimately empty would be indistinguishable
-# from a line that never arrived.
-#
-# <fields> is newline separated. Prints the raw output; non-zero when tmux could
-# not answer at all, which every caller treats as an empty record.
+# Reads newline-separated formats in one tmux call. Callers append a sentinel and
+# verify line count because command substitution removes trailing empty lines.
 tama_fields_read() { # <target> <fields>
   local target="$1" fields="$2" field
-  # Built here rather than kept as a constant because the target belongs in every
-  # one of the commands.
   set --
   while IFS= read -r field; do
     [ "$#" -eq 0 ] || set -- "$@" ';'
@@ -112,12 +86,7 @@ require_tmux() {
   [ -n "${TMUX:-}" ] || exit 0
 }
 
-# The configuration reader needs tmux_run, and everything that reads tmux reads
-# configuration; the state model needs both, and every command that does anything
-# at all acts on a pane — or on the window around it, or on every pane the server
-# has when the sweep goes looking. So they travel together.
-# Stripping the last path component leaves the name untouched when there is none,
-# so a caller that sourced us by a bare relative name still finds them.
+# Shared libraries travel together so commands have one runtime surface.
 _tama_lib_dir="${BASH_SOURCE[0]%/*}"
 [ "$_tama_lib_dir" = "${BASH_SOURCE[0]}" ] && _tama_lib_dir='.'
 

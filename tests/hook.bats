@@ -61,10 +61,6 @@ payload() { # <event> [extra JSON…]
   printf '"cwd":"/tmp","permission_mode":"default","hook_event_name":"%s"%s}' "$1" "$2"
 }
 
-# --------------------------------------------------------------------------
-# The router
-# --------------------------------------------------------------------------
-
 @test "hook routes by directory name, with no list of known agents anywhere" {
   plugin_with_stub_agent
 
@@ -166,10 +162,6 @@ payload() { # <event> [extra JSON…]
   [ -z "$output" ]
   [ -z "$stderr" ]
 }
-
-# --------------------------------------------------------------------------
-# The Claude Code adapter: the states a user sees
-# --------------------------------------------------------------------------
 
 @test "a session starting puts an idle agent in the pane" {
   hook SessionStart
@@ -284,10 +276,6 @@ payload() { # <event> [extra JSON…]
   [ -z "$stderr" ]
   assert_pane_option_unset "$PANE" state_main
 }
-
-# --------------------------------------------------------------------------
-# The two payload fields the adapter reads
-# --------------------------------------------------------------------------
 
 @test "a notification that means the user is wanted shows the agent waiting" {
   local type
@@ -557,15 +545,10 @@ PAYLOAD
   }
 }
 
-# --------------------------------------------------------------------------
-# The Claude Code adapter: the banners
-#
-# Every payload here is the shape a real Claude Code 2.1.228 sends, taken from
+# Every payload below is the shape a real Claude Code 2.1.228 sends, taken from
 # payloads captured out of a live session: `Notification` carries `message` and
 # `notification_type`, `Stop` carries `last_assistant_message`, and an event
 # belonging to a delegated run carries `agent_id`.
-# --------------------------------------------------------------------------
-
 @test "a notification that means the user is wanted banners, carrying the agent's words" {
   hook SessionStart
   hook Notification \
@@ -824,10 +807,6 @@ PAYLOAD
       ;;
   esac
 }
-
-# --------------------------------------------------------------------------
-# The configuration a user pastes
-# --------------------------------------------------------------------------
 
 # One event's command, taken out of the JSON block in the adapter's README, so
 # what these tests drive is the text a user pastes and not a paraphrase of it.

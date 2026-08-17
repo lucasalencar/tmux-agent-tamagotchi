@@ -1,28 +1,11 @@
 #!/usr/bin/env bash
 #
-# state — an agent pane reports what it is doing.
-#
 #   tama state <running|waiting|idle|error|clear> [agent_name] [--pane <pane_id>]
 #   tama state subagent-start <id> [--pane <pane_id>]
 #   tama state subagent-stop  <id> [--pane <pane_id>]
 #
-# Called from an agent's hooks, so the shape of an invocation is the contract and
-# the failure policy matters more than the feature: a wrong hook exits 2 loudly
-# while its author is editing it, and everything else — no pane, a state this
-# version does not know — exits 0 silently rather than failing an agent's turn.
-#
-# The agent name is optional and sticky: reporting a state without one keeps the
-# name already recorded, so only the hook that has the name has to pass it. It is
-# ignored by `clear`, which removes it along with everything else.
-#
-# A state this plugin does not know is not a hook author's mistake to shout
-# about: agents grow event types, and a hook wired to a newer plugin must stay
-# quiet on an older one.
-#
-# `waiting` and `error` also raise the window's attention flag, when the user is not
-# already looking at that window. That happens on the *event* and not on the change:
-# nothing here writes when nothing changed, and a question the user has already
-# walked away from once must be able to raise the flag again. See report().
+# Agent names are sticky, unknown states are ignored for forward compatibility,
+# and attention states raise their flag on every event rather than only on changes.
 
 set -o nounset
 
@@ -36,11 +19,7 @@ set -o nounset
 TAMA_SUBAGENT_ATTEMPTS=5
 TAMA_SUBAGENT_RETRY_DELAY=0.05
 
-# Records a state, plus the snapshot that stale-state detection needs later to
-# notice the agent is gone. Writes only what changed, and nothing at all when
-# nothing did: the `running` state is reported on every tool call, which makes this
-# the one genuinely hot write path in the plugin. Skipping the write skips the
-# client refresh with it, which is the expensive half.
+# Record state and the command snapshot used by stale detection, writing only changes.
 report() {
   local pane="$1" state_main="$2" name="$3" refresh='no'
   tama_pane_read "$pane" || exit 0

@@ -4,13 +4,7 @@ bats_require_minimum_version 1.7.0
 
 load helper
 
-# The whole notification path against a backend that records instead of notifying.
-# Nothing here reaches into a shell library: every test drives `bin/tama` and asserts
-# on what a user could observe — the banner the backend was asked to raise, the tmux
-# options a status line would draw, and what the click action does when it is run.
-#
-# The plugin is loaded in every test because the mark is half of what `notify` does,
-# and the mark is only visible through the format the entrypoint exports.
+# Notification behavior through the public CLI and a recording backend.
 setup() {
   # Before the server boots: the backend is reached from tmux hooks too, and a hook's
   # `run-shell` inherits the environment the server was started with.
@@ -32,19 +26,7 @@ arrange_two_windows() {
   test_tmux new-window -t t: -d
 }
 
-# An agent pane in a directory of a known name — which is what the default title is made
-# of, so this is the fixture for every claim about it. Prints the pane id.
-#
-# Both of the things that title reads are arranged here, and neither is ceremony:
-#
-#   * tmux is asked for the pane's directory until it says this one. A pane can exist for
-#     a few milliseconds before the shell in it does, and until then there is nothing to
-#     read the directory from.
-#   * the pane then reports a state, the way an agent does, which records the directory
-#     as a pane option. That is the branch the default title falls back to, and it is
-#     what makes this deterministic: tmux's live answer intermittently comes back empty
-#     even for a pane that has been idle for minutes — 2 reads in 400 on macOS — so a
-#     test that depended on it alone would fail about that often, and so would a banner.
+# Wait for both live and stored cwd values; tmux intermittently omits the live path.
 agent_pane_in() { # <directory-name>
   local name="$1" dir="$BATS_TEST_TMPDIR/$1" pane waited=0
   mkdir -p "$dir"
@@ -76,22 +58,12 @@ agent_pane_in() { # <directory-name>
   printf '%s' "$pane"
 }
 
-# The window a pane is in, by id.
 window_of() { # <pane>
   test_tmux display-message -p -t "$1" '#{window_id}'
 }
 
-# Runs a click action the way the desktop runs it: in a process that has none of the
-# environment the hook which raised the banner had. That is not a detail — everything the
-# click needs has to be baked into the command line, the tmux server included, and a test
-# that ran it with the suite's own environment would pass on a click that only worked
-# because the environment was still there. It did.
-#
-# TAMA_TMUX is deliberately pointed at nothing rather than merely unset: if the command
-# line ever stops carrying its own, every tmux call inside it fails instead of falling
-# through to whichever server a bare `tmux` would reach — which on a developer's machine
-# is their own. The click's own assignments override this one when they are there, which
-# is the whole point.
+# Desktop clicks inherit none of the hook environment; poison TAMA_TMUX so missing
+# assignments fail instead of reaching the developer's server.
 run_click() { # <click command line>
   run --separate-stderr env -u TMUX -u TAMA_TMUX_ARGS TAMA_TMUX=/nonexistent/tmux \
     sh -c "$1"

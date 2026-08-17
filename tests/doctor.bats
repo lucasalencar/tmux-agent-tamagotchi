@@ -4,26 +4,8 @@ bats_require_minimum_version 1.7.0
 
 load helper
 
-# `tama doctor`, driven through `bin/tama` against an isolated tmux server like
-# everything else here.
-#
-# Two things make this suite different from its neighbours. It is the only one where
-# the *exit status* is a promised behaviour rather than "0, always": doctor is meant to
-# be droppable into a script, so what counts as broken and what counts as merely worth
-# knowing is asserted here and not left to the prose. And most of it is
-# platform-independent on purpose — pointing `@tama_backend` at `macos` and
-# `@tama_terminal_notifier` at a fixture is a machine state any operating system can be
-# put into, so the title warning, the "which binary and from where" reporting and the
-# named-backend failures are all asserted on both CI legs.
-#
-# What stays platform-gated is only what a platform can really change: what `auto`
-# resolves to. Those tests skip on the other platform, which is the shape of test that
-# quietly asserts nothing for years, so each one says in its name which machine it is
-# about.
-#
-# Nothing here ever lets a real notifier run. doctor never invokes a capability — it
-# only resolves and inspects paths — and the suite still points every notifier option
-# at a fixture where it points it anywhere at all.
+# Doctor's exit status is part of its scriptable contract. Only `auto` resolution is
+# platform-gated; explicit backends use fixtures on both CI platforms.
 
 setup() {
   tama_start_server
@@ -40,8 +22,6 @@ teardown() {
   tama_kill_server
 }
 
-# The plugin loaded and a status line that asks for both formats: a machine with
-# nothing wrong with it, which is what the "no problems" claims are measured against.
 healthy_server() {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
@@ -58,8 +38,6 @@ refute_darwin() {
   [ "$(uname -s)" != 'Darwin' ] || skip 'this is about what a machine that is not a Mac does'
 }
 
-# A notifier binary on PATH under the given name, the way a machine with one installed
-# has it — which is how `auto` has to find it, by name, with no option pointing at it.
 notifier_on_path() { # <name>
   local bin="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$bin"
@@ -73,18 +51,11 @@ notifier_on_path() { # <name>
 CC_EVENTS='SessionStart UserPromptSubmit PostToolUse PostToolUseFailure PermissionRequest
 Notification Stop StopFailure SubagentStart SubagentStop SessionEnd'
 
-# Writes a Claude Code settings file wiring every event except the ones named.
-#
-# Deliberately not a copy of the README's block: what is being tested is that doctor
-# recognises a *user's* settings, and a user's are hand-merged, reindented and quoted
-# however their editor left them. This writes the one thing that matters — the adapter
-# invocation — inside JSON that is not byte-for-byte the documented block.
+# Intentionally differs from the README formatting to model hand-merged settings.
 cc_settings_without() { # <event…>
   cc_settings_into "$CLAUDE_CONFIG_DIR/settings.json" "$@"
 }
 
-# The same file, anywhere: the project cases need one under a repository root rather than
-# under the user's own directory.
 cc_settings_into() { # <path> <event…>
   local target="$1" event skip_event skipped
   shift

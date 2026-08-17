@@ -1,68 +1,17 @@
 # shellcheck shell=bash
 #
-# The sweep: state stops lying about panes whose agent is gone.
-#
-# An agent that exits without reporting — it crashed, the user killed it, the pane
-# went back to being a plain shell — leaves a pane option saying it is working. The
-# status line then shows a busy agent forever, which is worse than showing nothing:
-# the whole point of the icons is to be trusted from across the room.
-#
-# There is no process to ask, because the plugin never launched one and holds no pid
-# (ADR-0001: everything arrives as argv from the agent's own hooks). What it does
-# have is the snapshot `state` took when it wrote: the pane's command *then*. If the
-# pane's command now is a different one, whatever reported that state may not be what
-# is running in there any more.
-#
-# "May not", and that is the whole delicacy of this file. `pane_current_command` is
-# not the process the agent runs in; it is tmux's guess at whichever process holds
-# the pane's tty, so an agent that shells out to an editor or a pager stops matching
-# its own snapshot without having gone anywhere. So a snapshot that no longer matches
-# is a question and not an answer, and the answer is the shell allowlist below: an
-# agent that has really exited leaves its pane back at a prompt. Clearing on the
-# mismatch alone loses the pane's state and its subagent list at the one moment the
-# user is most likely to be waiting on it, and nothing puts them back — an agent
-# blocked on that child has no next event to report.
-#
-# Sourced by lib/common.sh, so every command has it.
+# Clears state left by agents that exit without reporting. A changed
+# `pane_current_command` is not sufficient evidence because tmux may report an
+# editor or pager opened by a live agent; only an allowlisted shell confirms it.
 
-# What one pane contributes to the sweep's decision, as a format.
-#
-# The comparisons are made by tmux rather than by the shell, and that is the point
-# of the shape: a record read as fields cannot hold a value with a space in it
-# without shifting everything after it, and both a recorded command and a live one
-# are strings from outside. So tmux answers four yes/no questions as digits — is
-# this an agent pane, does it have a snapshot, does the snapshot still match, is
-# there anything else of ours on the pane — and the only free-form value is the live
-# command, which comes last and is taken whole.
-#
-# The fourth digit is what makes a pane with no main state reachable at all. `notify`
-# writes the agent's name and the label without ever writing a state, and a subagent
-# event can arrive before anything reports one; those panes draw no icon — a pane
-# with no main state has no display state, see tama_pane_derive — but they keep a
-# dead agent's name for `@tama_title_format` and any user status-line format to
-# expand, forever, because the first digit alone said "not ours, skip". It is
-# deliberately every *other* option in one question rather than one digit each: what
-# the sweep needs to know is whether there is residue, not which.
-#
-# `#{==:a,b}` splits its arguments at the literal comma in *this* string, before
-# either side is expanded, so a comma inside a command name is not a delimiter.
-#
-# Reading a pane option through a format falls back to the window, session and
-# global scopes, the same asymmetry lib/pane.sh documents for the pane record. The
-# names are specific enough that nothing else sets them.
+# tmux performs the comparisons so free-form command names cannot shift fields.
+# The fourth digit also exposes residue on panes that have no main state.
 TAMA_STALE_READ_FORMAT='#{pane_id} #{?@tama_pane_state_main,1,0}#{?@tama_pane_cmd,1,0}#{==:#{@tama_pane_cmd},#{pane_current_command}}#{?#{@tama_pane_subagents}#{@tama_pane_cmd}#{@tama_pane_agent}#{@tama_pane_cwd}#{@tama_pane_label},1,0} #{pane_current_command}'
 
-# What the sweep will accept as evidence that nobody's agent is in a pane: it is
-# running one of these, which is what a pane left behind by an agent that exited
-# goes back to. Anything else is left alone, because "not a shell I know" is not
-# evidence — it is just as likely to be a tool call that opened an editor.
-#
-# Configurable, since a user's shell need not be one anybody guessed:
-# `set -g @tama_gc_shells 'zsh nu'`.
+# Only a known shell is evidence that the agent returned to a prompt.
 TAMA_STALE_SHELLS_DEFAULT='sh bash zsh fish dash ksh mksh ash csh tcsh'
 
-# Read at most once per process, and only when a pane without a snapshot actually
-# turns up — which is the rare case. The common sweep is one tmux round trip.
+# Lazily cached so the common sweep remains one tmux round trip.
 _TAMA_STALE_SHELLS=''
 _TAMA_STALE_SHELLS_READ=0
 
@@ -91,14 +40,11 @@ tama_stale_is_shell() { # <command>
   return 1
 }
 
-# The stale panes of one window.
 tama_stale_sweep_window() { # <target>
   _tama_stale_sweep list-panes -t "$1"
 }
 
-# The stale panes of the whole server. The expensive scope, wired to the one event
-# that is both rare and exactly when the user is about to read every window at
-# once: their terminal regaining focus.
+# The server-wide sweep runs only when the terminal regains focus.
 tama_stale_sweep_server() {
   _tama_stale_sweep list-panes -a
 }
@@ -128,37 +74,15 @@ _tama_stale_sweep() { # <list-panes …>
     current="${flags#* }"
     flags="${flags%% *}"
 
-    # Four digits: is this an agent pane, does it have a snapshot, does the
-    # snapshot still match what the pane is running, is there anything else of
-    # ours on the pane.
+    # Flags: main state, snapshot, snapshot match, and any plugin residue.
     case "$flags" in
-      # Nothing of ours at all: the overwhelming majority.
       0??0) continue ;;
-      # No state, but something of ours left on the pane — a `notify` on a pane
-      # whose state hooks were never wired, or a subagent event that arrived
-      # before anything reported a state. It draws no icon, so nothing about it
-      # can heal, and it keeps a dead agent's name for every format that expands
-      # `@tama_pane_agent`. There is no live agent to protect here and no
-      # snapshot to judge one by, so it goes unconditionally.
+      # Residue without state cannot heal because the pane draws no icon.
       0??1) ;;
-      # A snapshot that still matches: the agent that reported this is still what
-      # is running in there. Preserved, and that is half of what this command is
-      # for — a sweep that cleared a live agent would be worse than one that
-      # cleared nothing at all.
       111?) continue ;;
-      # Everything else with a state on it: the pane is running something other
-      # than the snapshot, or there was never a snapshot to compare. Either way
-      # the live command is all there is to go on, and only the allowlist is
-      # evidence — `pane_current_command` is not "the process the agent runs in",
-      # it is whatever holds the pane's tty, so a tool call that opened `vim` or a
-      # pager stops matching the snapshot while the agent is very much alive. A
-      # sweep on that takes the icon and the subagent list away exactly when the
-      # user is waiting on the thing that took the tty, and no later event puts
-      # them back. An agent that really has gone leaves its pane at a shell
-      # prompt, which is the case this still clears.
+      # A mismatch is stale only when the pane has returned to a known shell.
       1???) tama_stale_is_shell "$current" || continue ;;
-      # A record that did not come back in the shape this asked for. Leaving the
-      # pane alone is the direction that cannot take a live agent's icon away.
+      # Malformed records must not clear a possibly live agent.
       *) continue ;;
     esac
 

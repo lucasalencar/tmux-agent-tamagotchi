@@ -1,100 +1,15 @@
 #!/usr/bin/env bash
 #
-# The Claude Code adapter: everything this plugin knows about Claude Code.
+# Claude Code event adapter, isolated from the stable core contract by ADR-0002.
+# Unknown events remain silent so newer Claude Code versions cannot fail a turn.
 #
-#   tama hook claude-code <event> [args]
+# `PermissionRequest` moves state but its later `Notification` owns the banner so
+# one interruption produces one message. `idle_prompt` likewise changes state
+# without replacing the more useful banner already raised by `Stop`.
 #
-# Wired once from the user's `settings.json` — see README.md next to this file for
-# the block to paste. Nothing about Claude Code appears in that block beyond the
-# names of its own events, and nothing about Claude Code appears anywhere else in
-# the plugin: which events matter, which of them are worth interrupting the user
-# about, what a delegated run means, and how to get the four fields the payload has
-# to give up all live here (ADR-0002). A fix reaches the user by pulling the plugin.
-#
-# Events, and what the user sees because of them:
-#
-#   SessionStart                       state idle     — an agent is in this pane now
-#   UserPromptSubmit                   state running
-#   PreToolUse, PostToolUse            state running  — the hot path, on every call
-#   PostToolUseFailure, PostToolBatch  state running
-#   PermissionRequest                  state waiting  — blocked on the user
-#   Notification (the types that mean the user is wanted)
-#                                      state waiting  + notify, carrying `message` —
-#                                                       except idle_prompt, which is
-#                                                       the state and no banner
-#   Stop                               state idle     + notify, carrying
-#                                                       `last_assistant_message`
-#   StopFailure                        state error    + notify — the turn died on an
-#                                                       API error
-#   SubagentStart / SubagentStop       state subagent-start|stop <agent_id>
-#   SessionEnd                         state clear    — no trace left in tmux
-#
-# Anything else is ignored in silence, on purpose: Claude Code grows events on its
-# own schedule, and a user whose settings wire one this version has never heard of
-# must not have their turn fail over it.
-#
-# Why `waiting` comes from PermissionRequest and not from a matcher on
-# Notification: Claude Code has a dedicated event for the thing that blocks a
-# turn, so the user's config stays a list of event names with no filtering
-# knowledge in it. Notification is wired too, because it is the only event behind
-# `AskUserQuestion` and the idle prompt, and there the type does have to be looked
-# at — auth_success and the elicitation results are routine noise and must not
-# turn a pane into one that wants the user.
-#
-# Which events raise a banner, and which only move the icon:
-#
-# `Notification`, `Stop` and `StopFailure` notify. `PermissionRequest` deliberately
-# does not, even though it is the event that turns the pane `waiting`, because
-# Claude Code raises `Notification` for the same interruption a few seconds later —
-# observed at 6s on 2.1.228 — and that one carries the sentence the agent wrote.
-# Wiring both would mean two banners per interruption, collapsing into one only
-# because the core groups them per window, with the vaguer of the two messages
-# arriving first. One event, one banner, always carrying the agent's own words.
-#
-# That delay is a feature, not a cost: a prompt answered in two seconds never
-# interrupts the user at all, while the icon and the window mark are already there
-# the instant `PermissionRequest` fires, which is the signal for a user who *is*
-# looking at their terminal. And the `Notification` event does not depend on the
-# user's own Claude Code notification settings — verified with
-# `preferredNotifChannel: notifications_disabled`, where it still fires.
-#
-# The `idle_prompt` notification is the same decision reached the same way, at the
-# other end of a turn: it moves the state and never banners. Claude Code raises it
-# **60 seconds after every turn ends** — measured at exactly +60s on three
-# consecutive turns of a 2.1.228 session — and its message is the fixed sentence
-# `Claude is waiting for your input`. `Stop` has already bannered by then, carrying
-# what the agent actually said. Wiring both means two interruptions for one finished
-# turn, and because the core groups banners per window the second one *replaces* the
-# first: a minute after being told what the agent said, the user would be told again
-# in words that say nothing. The vaguer message wins simply by arriving second,
-# which is the same trap the `PermissionRequest` pair sets in the other direction.
-#
-# So the shape to keep is: one interruption per thing that happens, carried by
-# whichever of the events has the agent's own words in it. The state still moves on
-# `idle_prompt`, because a session that has gone quiet waiting for the user really is
-# `waiting`, and that is the event which says so if `Stop` was never wired.
-#
-# The cost of that decision, and the thing to check when somebody reports a
-# permission prompt that moves the icon and never banners: `Notification` has to be
-# in their `settings.json`. It is in the README's block, and a hand-merged `hooks`
-# key that dropped it leaves every other event working. Anything that diagnoses this
-# plugin's setup should say so.
-#
-# What a delegated run means here: a subagent's own end is SubagentStop, never
-# Stop — Claude Code converts it — so `state idle` cannot be reported by a
-# delegated run in the first place. Subagent events therefore only ever move the
-# subagent counter, which is what makes an agent whose own turn has finished while
-# its subagents work render as working in the background rather than as finished.
-# A subagent's tool calls do report `running`, which is true: something is working
-# in that pane.
-#
-# And no event a delegated run is attributed to ever raises a banner: `agent_id`
-# in the payload means a subagent, and the banner is skipped while the state still
-# moves. Nothing is lost by that, which is the part worth knowing — a permission
-# prompt raised *inside* a subagent arrives twice, as a `PermissionRequest`
-# carrying that subagent's `agent_id` and as a session-level `Notification` with no
-# `agent_id` at all. So the user still gets the banner, from the event that has the
-# message in it, and what stays quiet is only the delegated run's own bookkeeping.
+# Events carrying `agent_id` still update state but never banner. Claude Code emits
+# subagent permission prompts again as session-level notifications, so the user does
+# not lose the actionable message.
 #
 # Failure policy, inherited from the CLI: a wrong invocation exits 2 on stderr;
 # everything else exits 0 in silence. This runs inside an agent's turn, so it must

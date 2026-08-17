@@ -1,47 +1,9 @@
 #!/usr/bin/env bash
 #
-# on-select — the user just looked at a window.
-#
 #   tama on-select [--all] [--window <window_id>] [--pane <pane_id>]
 #
-# Wired to tmux's `after-select-window` hook by the entrypoint, which is what makes
-# clearing a flag free of any manual step: the user selects the window, the mark
-# goes. It is the only thing that clears one.
-#
-# Also wired to `client-focus-in`, with `--all`: the user's terminal coming back to
-# the front means they are about to read the whole status line, so every window's
-# state is swept and not only this one's — see libexec/gc for why that scope hangs
-# off this event and no other. The flag still only comes off the one window they are
-# looking at. Clearing the flag of every window some attached session happens to be
-# showing would take marks off windows nobody has looked at, and a mark that never
-# arrived costs an agent sitting blocked, while a stale one costs a glance.
-#
-# That hook is also what closes the one gap the flag had: a flag raised on the
-# active window of a detached session was waiting for a `select-window` that
-# attaching never produces, because the user is already on that window. Focus
-# arriving is the event that says they are looking at it now. It needs tmux's
-# `focus-events on` to be reported at all, which is the user's setting to make —
-# without it the mark waits for the next window selection, as before.
-#
-# The hook passes `--window` because $TMUX_PANE cannot be trusted here. tmux sets it,
-# in a hook's `run-shell`, to a pane id that does not exist — `%101` on the tmux this
-# was written against — so a command that resolved its target from the environment
-# silently did nothing at all, on the one path the whole feature depends on. What is
-# reliable is tmux's own format expansion: `run-shell` expands `#{window_id}` against
-# the window the hook fired for, before the shell ever runs. So the recipe interpolates
-# the answer rather than making this command go looking for it.
-#
-# The $TMUX_PANE fallback stays for a user calling this from a key binding, where the
-# variable does name a real pane.
-#
-# Three things become true when the user arrives at a window, and all three happen
-# here rather than off three hooks of their own: the mark goes, a pending banner is
-# dismissed, and the window's panes are swept. Dismissing belongs with unflagging in
-# particular — they are the two halves of "already dealt with" — but the pending marker
-# is what tells this command whether there is a banner at all.
-#
-# Never fails: this runs from a tmux hook, where a non-zero exit is noise in the
-# server log and nothing a user can act on.
+# Selection clears the current window's flag and banner, then sweeps stale pane state.
+# Hook recipes pass `--window` because tmux supplies an unusable TMUX_PANE to run-shell.
 
 set -o nounset
 

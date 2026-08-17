@@ -1,43 +1,9 @@
 #!/usr/bin/env bash
 #
-# notify — an agent needs the user, and the user is not looking.
-#
 #   tama notify <agent_name> <message> [--pane <pane_id>]
 #
-# Raises the OS banner that says so, marks the window, and arranges for a click to
-# land the cursor on the pane that spoke. Everything platform-specific is behind
-# lib/backend.sh; everything about deciding is in lib/notify.sh.
-#
-# The message is one argument and stays one argument. It is arbitrary text an agent
-# wrote — spaces, quotes, `#`, `$`, a newline — and it is never expanded as a tmux
-# format, never pasted into a command line unquoted, and never stored in a tmux
-# option. The title is the opposite: a format the *user* wrote, expanded by tmux
-# against the pane. Keeping those two apart is what makes an agent's own words safe
-# to put on screen.
-#
-# The order is deliberate and each step earns its place:
-#
-#   1. banners off        → nothing to do at all
-#   2. read the window    → the one round trip everything below works from
-#   3. suppression        → the `AND` of ADR-0004, before anything is written
-#   4. the label provider → only if the user configured one
-#   5. one batch of writes: the label, the agent's name, and the mark
-#   6. the group, expanded after those writes and persisted with banner identity
-#   7. the title, expanded after those writes
-#   8. the backend
-#
-# Failure policy: a wrong invocation exits 2 while its author is editing the hook.
-# Everything else exits 0 in silence — no pane, no window, no backend, no `notify`
-# capability, a notifier that failed. A banner that did not appear must never be the
-# reason an agent's turn failed, which is user story 52 and the reason this command
-# has no error path at all past the argument check.
-#
-# On being called twice for one interruption: an agent whose hook system fires two
-# events for the same question — Claude Code raises `Notification` alongside
-# `PermissionRequest` — gets one banner, because banners are grouped per window and
-# the second replaces the first. That is the core's whole contribution to the
-# problem; an integration that wants to send only one call is welcome to decide
-# that for itself, and only it can (ADR-0002).
+# Agent messages remain opaque arguments; only user-authored titles are expanded as
+# tmux formats. Suppression is decided before any state is written (ADR-0004).
 
 set -o nounset
 

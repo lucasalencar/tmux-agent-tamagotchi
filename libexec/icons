@@ -1,37 +1,9 @@
 #!/usr/bin/env bash
 #
-# icons — one glyph per agent pane of a window, in pane order, as the user
-# configured them.
-#
 #   tama icons <window_id>
 #
-# The hottest read path in the plugin: tmux runs this in a shell of its own, once
-# per window per status-interval, for every window on the server. So it makes
-# exactly one tmux call — the configuration and the panes come back together —
-# and forks nothing beyond the one command substitution that reads them.
-#
-# The derived state is worked out here rather than read from an option of its own,
-# because storing it needed two writers who could disagree — see lib/pane.sh. It
-# costs nothing: the one call already read a pane option per pane, and now reads
-# two.
-#
-# Everything the user can configure is read on every invocation and never cached,
-# so `tmux source-file` takes effect on the very next status redraw with no server
-# restart.
-#
-# What this prints is expanded again as a tmux format by the status line that ran
-# it — verified on tmux 3.7b with a real attached client: a job printing
-# `#{host}` draws the hostname, and `##` draws a single `#`. Every byte here now
-# comes from an option the user set, so a `#` is doubled on the way out; without
-# that, an icon of `#{...}` would be a format nobody wrote, and one of `#(...)`
-# a command. `%` is left alone: the same test showed window-status-format is not
-# passed through strftime, so a `%%` would draw as two characters. A user who
-# interpolates the icons into status-left — which *is* strftime-expanded — should
-# keep `%` out of their glyphs.
-#
-# The window is named by `#{window_id}`, never by index: an index moves under
-# renumber-windows, and this command is invoked from a format that was expanded
-# some moments earlier.
+# Hot status-line path: read configuration and panes in one tmux call. Escape `#`
+# because command output is expanded again as a tmux format.
 
 set -o nounset
 

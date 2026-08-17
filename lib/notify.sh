@@ -1,56 +1,14 @@
 # shellcheck shell=bash
 #
-# The notification pipeline: whether to deliver, what to say, what a click does, and
-# which banner a dismissal is about.
-#
-# Sourced by lib/common.sh, so every command has it. The platform half is behind
-# lib/backend.sh; nothing here knows what a desktop is.
-#
-# Everything in this file works over the window tama_window_read last read, because
-# every question it answers is about that window — which is also what keeps the
-# round trips down on a path that is already the most expensive one in the plugin.
+# Platform-independent notification policy. Helpers operate on the last window read.
 
-# The group a window's banners share, as a tmux format. One banner per window is the
-# whole grouping story: a newer one replaces the older one, so a chatty agent cannot
-# bury the screen, and dismissing is a per-window act because the mark it goes with is.
-#
-# Configurable, and read in exactly one place — tama_notify_group below — because
-# `notify` and `dismiss` naming the same banner is not a coincidence to be maintained
-# in two places. The one thing that must never happen here is two expansions that
-# agree today and drift later, which is why `notify` pays a second round trip for
-# this rather than expanding it alongside the title.
+# One group per window lets newer banners replace older ones.
 TAMA_NOTIFY_GROUP_DEFAULT='tmux-window-#{window_id}'
 
-# What a banner says, as a tmux format expanded against the pane that spoke.
-#
-# A real format, not a template language of the plugin's own: the user already knows
-# this one, it can do conditionals, and it reaches everything tmux knows about the
-# pane. So there is no "project" concept anywhere in the plugin — a project is
-# `#{b:pane_current_path}`, and a user who means something else writes something else.
-#
-# The two things only the plugin knows are exposed as pane options for the format to
-# reach: the agent's own name, and the label, which is whatever the user's own
-# window-naming tooling says when they have configured one. The default mentions the
-# label conditionally, so it costs nothing when there is no provider.
-#
-# The path is asked for twice because tmux cannot always answer. It reads a pane's
-# directory from the process running in it, and that lookup intermittently fails on a
-# pane that has been sitting idle for minutes — measured at 2 reads in 400 coming back
-# empty on macOS, with no pattern to them. A banner titled `claude-code - ` is the
-# result, once in a couple of hundred, which is exactly often enough to be seen and
-# never often enough to be reproduced on purpose. So when the live answer is missing the
-# format falls back to `@tama_pane_cwd`, the directory the pane was in when it last
-# reported a state, which is a stored value and cannot flicker.
+# tmux may intermittently omit a live pane path, so fall back to the last reported cwd.
 TAMA_NOTIFY_TITLE_DEFAULT='#{@tama_pane_agent} - #{?pane_current_path,#{b:pane_current_path},#{b:@tama_pane_cwd}}#{?@tama_pane_label, (#{@tama_pane_label}),}'
 
-# Quotes <value> so that a shell reading it back sees exactly these bytes, in
-# TAMA_QUOTED. Single quotes, which stop a shell acting on anything at all — a `$`, a
-# backtick, a `#`, a space, a newline — with the one closing-quote dance for a value that
-# contains a single quote of its own.
-#
-# It lives here, and not in lib/common.sh, because there is exactly one thing in this
-# plugin that composes a command line out of values it did not choose — the click action
-# below, which a backend hands to the desktop — and nothing else should acquire the habit.
+# Quotes an arbitrary value for the click action's shell command.
 # shellcheck disable=SC2034  # TAMA_QUOTED is read by the caller
 tama_shell_quote() { # <value>
   local rest="$1" out=''
@@ -69,9 +27,6 @@ tama_shell_quote() { # <value>
   TAMA_QUOTED="$out"
 }
 
-# Whether banners are wanted at all. `off` is the heads-down switch: the icons and the
-# window mark keep working, because they are inside tmux and cost the user nothing,
-# and only the OS-level interruption stops.
 tama_notify_enabled() {
   tama_opt_enabled tama_notifications on
 }
@@ -92,10 +47,7 @@ tama_notify_group() {
     "$format" 2>/dev/null)" || TAMA_NOTIFY_GROUP=''
 }
 
-# The title for <pane>, in TAMA_NOTIFY_TITLE. Expanded against the pane and not the
-# window, because the pane is what knows the agent, the path and the label — the
-# project name in the system this replaces came from the *hook process's* working
-# directory, which is right until an agent is started from anywhere else.
+# Expand the title against the reporting pane, which owns its path and agent metadata.
 # shellcheck disable=SC2034  # TAMA_NOTIFY_TITLE is read by the caller
 tama_notify_title() { # <pane_id>
   local format
@@ -104,20 +56,7 @@ tama_notify_title() { # <pane_id>
     TAMA_NOTIFY_TITLE=''
 }
 
-# The user's own label for the window tama_window_read last read, in
-# TAMA_NOTIFY_LABEL, or empty when there is no provider configured.
-#
-# The plugin never computes a label and has no opinion about naming schemes: this
-# exists so that notifications can say what the user's own window-naming tooling
-# already says. With `@tama_label_command` unset *nothing runs* — that is the whole
-# of the zero-configuration promise, and it is why the default title mentions the
-# label only conditionally.
-#
-# The provider is given the window id and nothing else, and its first line of output
-# is the label. It runs synchronously inside an agent's hook with no timeout, for the
-# same reason a backend does — bash 3.2 has none to offer — so a provider that blocks
-# blocks the agent's turn. A provider that fails, says nothing, or answers with
-# something a tmux option cannot hold is a window with no label.
+# A configured provider receives the window id; only its first storable line is used.
 # shellcheck disable=SC2034  # TAMA_NOTIFY_LABEL is read by the caller
 tama_notify_label() {
   local command label

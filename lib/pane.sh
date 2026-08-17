@@ -1,60 +1,19 @@
 # shellcheck shell=bash
 #
-# The state model: everything the plugin knows about a pane, read in one tmux
-# round trip, derived into the one state a status line shows, and written back
-# only where it actually changed.
-#
-# The derived state is *not* stored. It was, and two commands wrote it — a state
-# report derived it from the subagents it had just read, a subagent event from the
-# state it had just read — so the ordinary pair of events an agent ends a turn with
-# (its own `idle` and its last subagent stopping) raced, and the loser left a pane
-# claiming `background` with no subagents, or `idle` with one still live. Nothing
-# healed it, because `idle` is the last thing an agent says until the user types
-# again. Deriving where it is read costs nothing — the icons already read the pane
-# options of a whole window in one call, and now read two of them instead of one —
-# and there is no second writer to disagree with.
-#
-# Sourced by lib/common.sh, so every command has it.
-#
-# Why one round trip: `state running` is reported on every tool call of every
-# agent, and a tmux round trip costs a few milliseconds. Reading the pane's five
-# options one `show -p` at a time would cost more than the event being reported.
+# Pane state model. Derived state is computed on read so concurrent main-state and
+# subagent events cannot leave a stale stored derivation (ADR-0005).
 
-# Everything a status line needs about one pane, as a format, and the one function
-# that takes such a record apart. Both live here, next to the writer of the values:
-# a rename or a reordering on one side and not the other would leave every status
-# line empty with nothing to say why.
-#
-# The fields are separated by a space, because a state is one of five words and
-# nothing else is read from this: whatever follows the first one is the subagent
-# list, and only whether it is empty matters. It cannot be a control character —
-# see tama_pane_read.
+# Keep render format and parser together so their field order cannot drift.
 # shellcheck disable=SC2034  # read by libexec/icons, which sources this file
 TAMA_PANE_RENDER_FORMAT='#{@tama_pane_state_main} #{@tama_pane_subagents}'
 
-# Derives the state of one such record. Parameter expansion rather than `read`,
-# because the caller is the icon command and it must not fork.
+# Parameter expansion avoids a fork on the status-line hot path.
 tama_pane_derive_record() { # <record>
-  # Everything after the first space is the subagent list, whole, so a record that
-  # grows a field cannot quietly turn every idle pane into a busy one.
   local main="${1%% *}"
   tama_pane_derive "$main" "${1#* }"
 }
 
-# The read: the pane's identity, everything it last said about itself — there are
-# five options and no state file, the tmux server is the database — and the live
-# command and path a fresh report snapshots.
-#
-# One value per line, in one tmux invocation: see tama_fields_read in lib/common.sh
-# for why a record cannot be read any other way, and why the count of lines is the
-# integrity check. A value holding a control character is refused at the boundary
-# instead — see tama_pane_value_is_storable — rather than left to shift the record.
-#
-# One asymmetry to know about: reading an option through a *format* falls back to
-# the window, session and global scopes, while `show -p` does not. Nothing sets
-# these names at any other scope, and a user who set `@tama_pane_state_main`
-# globally would give every pane on the server an icon — which is why the names are
-# specific enough that nobody will.
+# Pane state and its live snapshot, read in one tmux round trip.
 TAMA_PANE_READ_FIELDS='#{pane_id}
 #{@tama_pane_state_main}
 #{@tama_pane_subagents}
@@ -64,21 +23,10 @@ TAMA_PANE_READ_FIELDS='#{pane_id}
 #{pane_current_command}
 #{pane_current_path}
 .'
-# Nine, not eight: the sentinel at the end is there because command substitution
-# strips trailing newlines, so a last field that is legitimately empty — tmux cannot
-# always tell what a pane's directory is — would be indistinguishable from a line
-# that never arrived.
+# Includes the sentinel required by tama_fields_read.
 TAMA_PANE_READ_COUNT=9
 
-# Reads everything about a pane at once. Returns non-zero when there is no such
-# pane, or when the record did not come back whole.
-#
-# Sets TAMA_PANE_ID and one variable per field, plus TAMA_PANE_DISPLAY: what this
-# pane draws as of this read, since every writer needs it to decide whether a
-# refresh is owed. TAMA_PANE_ID is the canonical `%id`, which is what every write
-# below targets — the caller may well have been given a pane by index, and an index
-# moves.
-# The fields are this library's output, read by its callers rather than by it.
+# Populates TAMA_PANE_* and rejects incomplete or vanished-pane records.
 # shellcheck disable=SC2034
 tama_pane_read() {
   local raw field lines=0
@@ -206,18 +154,8 @@ tama_pane_value_is_storable() { # <value>
   return 0
 }
 
-# Every pane option the plugin owns, in one list, because two things take a pane
-# apart again: `state clear` and the stale-state sweep. An option added to the
-# record above and not here would survive both of them, and a pane that keeps one
-# is a pane a later read can still tell from one that never ran an agent. Any new
-# pane option belongs here, whether or not the record reads it — and, unless it is
-# `state_main` itself, in TAMA_STALE_READ_FORMAT's residue digit too, or the sweep
-# will not notice a pane that carries only that one.
-#
-# `label` is the one that is not in the record: it is written by `notify` for the
-# title format to expand and is never read back by the shell, so nothing would be
-# gained by paying for a field on the hottest read path in the plugin. It is
-# cleared here all the same, because it is a pane option the plugin wrote.
+# Every owned pane option must be cleared here and represented in stale residue.
+# `label` is omitted from the hot read path but still belongs in this list.
 TAMA_PANE_OPTIONS='state_main
 subagents
 cmd
@@ -237,33 +175,8 @@ tama_batch_reset() {
   TAMA_BATCH_COUNT=0
 }
 
-# One tmux command, as its words. tmux takes `;` as its own argument, which is why
-# the separator between commands is added here and never comes from a caller.
-#
-# Every word is escaped on the way in, because tmux reads an argument that *ends* in
-# `;` as the end of a command: it strips the semicolon and starts parsing from the
-# next argument. So a value ending in one is stored without it, and the pane can then
-# never recognise itself again — every later report writes and wakes every client for
-# nothing. How much else it costs depends on where in the command that argument sits.
-# Measured on tmux 3.7b:
-#
-#   * last argument of its command, which is where every value the plugin stores
-#     sits: only that value is truncated. The separator this function already put
-#     after it becomes an empty command, which tmux skips, so the rest of the batch
-#     still runs.
-#   * anywhere else: tmux runs out of arguments for the command it thinks it is
-#     parsing, fails the whole list, and *nothing* in the batch runs at all.
-#
-# It lives here rather than at each caller because there is a caller for every value
-# the plugin stores, and one of them forgot: `notify` writes the agent's name and the
-# label straight into the batch, so both were stored truncated, with only the
-# accident of their position keeping the window mark staged behind them alive.
-#
-# Escaping only the last semicolon is deliberate and is enough: tmux leaves a `;`
-# anywhere else in an argument alone, and unescapes exactly one backslash before the
-# final one — so `a;;` goes out as `a;\;` and comes back `a;;`, and a value that
-# really ends in `\;` goes out as `a\\;` and comes back `a\;`. Both round trips are
-# covered by tests/state.bats.
+# tmux parses a trailing `;` as a command separator even inside an argument. Escape
+# that final byte centrally so every stored value survives the batch unchanged.
 tama_batch_add() {
   local word
   [ "$TAMA_BATCH_COUNT" -eq 0 ] || TAMA_BATCH+=(';')

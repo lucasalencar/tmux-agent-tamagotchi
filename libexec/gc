@@ -1,31 +1,9 @@
 #!/usr/bin/env bash
 #
-# gc — clear the state of panes whose agent is gone.
-#
 #   tama gc [--all] [--window <window_id>] [--pane <pane_id>] [<target>]
 #
-# Wired to `after-select-pane` by the entrypoint, and reached through `on-select` on
-# window selection and on the user's terminal regaining focus. It is also the command
-# to run by hand, or from a key binding, when the status line is showing an agent that
-# has clearly been dead for ten minutes.
-#
-# Scope is the whole point of the two forms. The default is one window, because a
-# pane selection happens constantly and the user is looking at exactly one window
-# when it does: one `list-panes` and, in the ordinary case where nothing is stale, no
-# write at all. `--all` is every pane on the server, which is affordable only because
-# the event it hangs off — the terminal regaining focus — is rare, and is exactly the
-# moment the user is about to read the whole status line at once.
-#
-# The target may be a pane or a window; tmux resolves either to the window that holds
-# it, which is the scope. `--window` is what the hook recipes pass, because inside a
-# hook's `run-shell` $TMUX_PANE names a pane that does not exist — see libexec/on-select.
-# With no target at all the current window is swept, which is what a user typing
-# `tama gc` means.
-#
-# How staleness is decided, and why it is not `kill -0`, is in lib/stale.sh.
-#
-# Never fails: this runs from a tmux hook, where a non-zero exit is noise in the
-# server log and nothing a user can act on.
+# Pane-selection hooks sweep one window; terminal-focus hooks use `--all` because
+# that rarer event is when the user sees the whole status line.
 
 set -o nounset
 

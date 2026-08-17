@@ -2,10 +2,7 @@
 # $status and $output are set by bats around every `run`.
 # shellcheck disable=SC2154
 #
-# Shared setup for the bats suite.
-#
-# Every test that needs tmux boots its own server on a private socket and points
-# the CLI at it through TAMA_TMUX, so nothing touches the user's tmux.
+# Shared isolated-tmux setup for the bats suite.
 
 # -P because every script under test reports its own location with symlinks
 # resolved, and the plugin's own documented dev setup is a symlinked clone.
@@ -39,8 +36,6 @@ tama_reserve_socket() {
   export TAMA_SOCKET
 }
 
-# Boots an isolated tmux server with an empty config and exports the
-# indirection every script uses to reach it.
 tama_start_server() {
   tama_reserve_socket tamatest
   # The indirection goes into the environment *before* the server boots as well as
@@ -60,22 +55,12 @@ tama_start_server() {
   tama_point_at_server
 }
 
-# Turns every capability off, which is what an empty `@tama_backend` means.
-#
-# The default is `auto`, and `auto` resolves to a *real* platform backend on a machine
-# that has one — on the developer's own Mac it finds their `terminal-notifier`. Then any
-# test that happens to reach the notification path, including a window selection
-# dismissing a mark, starts a real process that talks to their desktop. So a test server
-# begins with no backend at all and every suite that wants one says so: the fake backend,
-# a capability override, or `macos` with the notifier pointed at a fixture.
+# Disable auto so tests never reach a developer's real notifier.
 tama_no_backend() {
   test_tmux set -g @tama_backend ''
 }
 
-# Points the CLI at this test's server, for a suite that booted its own.
-# The CLI only checks that $TMUX is non-empty; the socket it names is irrelevant
-# because every tmux call goes through TAMA_TMUX. All three are exported after the
-# server is up, since a tmux client that sees $TMUX believes it is nested.
+# Export only after startup because tmux treats an existing TMUX as nesting.
 tama_point_at_server() {
   export TAMA_TMUX=tmux
   export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
@@ -85,11 +70,7 @@ tama_point_at_server() {
   unset TMUX_PANE
 }
 
-# Kills this test's server and takes its socket with it. A server that exits
-# leaves its socket file behind, and a suite that boots one per test leaves as
-# many dead sockets in the tmux directory as it has ever run tests — which is
-# litter in a directory shared with every other tmux on the machine. Only ever
-# this test's own name, for the same reason.
+# tmux leaves socket files behind after server exit, so remove this test's socket.
 tama_kill_server() {
   if [ -n "${TAMA_SOCKET:-}" ]; then
     tmux -L "$TAMA_SOCKET" kill-server 2>/dev/null || true
@@ -97,13 +78,10 @@ tama_kill_server() {
   fi
 }
 
-# Where tmux keeps sockets named with -L. Its own rule: $TMUX_TMPDIR if set,
-# otherwise /tmp, plus a per-user directory.
 tama_socket_dir() {
   printf '%s/tmux-%s' "${TMUX_TMPDIR:-/tmp}" "$(id -u)"
 }
 
-# Talks to the test server directly, for arranging fixtures and asserting.
 test_tmux() {
   tmux -L "$TAMA_SOCKET" "$@"
 }
@@ -119,9 +97,6 @@ tama_copy_plugin() {
     -exec cp -R {} "$dest/" \;
 }
 
-# Stands in for any subcommand: the dispatcher routes by file name, so what it
-# does with a real one it does with this. Reports what it received the way a real
-# subcommand would have to read it.
 tama_add_stub_subcommand() {
   mkdir -p "$1/libexec"
   cat >"$1/libexec/stub" <<'STUB'

@@ -1,44 +1,9 @@
 #!/usr/bin/env bash
 #
-# doctor — what this installation is doing, and why it is not doing the rest.
-#
 #   tama doctor
 #
-# The command a user runs when they were not notified. It answers, in order, every
-# question that stands between an agent's hook and a banner on the screen: is this tmux
-# new enough, is the plugin loaded in this server, is the status line asking for the
-# icons, which backend was chosen and *why*, which binary that backend will run and
-# where it was found, whether the focus check can ever match, and whether the agent's
-# own hooks are wired. Then it prints the setup recipes, so the same command that says
-# what is missing also says what to paste.
-#
-# Two rules hold the rest of this file together.
-#
-# **It runs without a tmux server.** bin/tama exempts it from `require_tmux` alongside
-# `focus-window`, because a doctor that is a silent no-op outside tmux is useless
-# exactly when it is needed — a user whose plugin never loaded has no server to run it
-# from. Everything here therefore treats an unreachable tmux as an answer ("there is no
-# server, so the values below are the defaults") rather than as a reason to stop.
-#
-# **It is the one command that exits non-zero, and the split is deliberate**:
-#
-#   * `fail` — *broken*: the plugin cannot do what this machine's own configuration
-#     says it should. A tmux too old for the entrypoint to wire anything; a plugin
-#     absent from the server every hook asks; a backend the user *named* that cannot
-#     run — unless every capability it ships has been replaced by the user's own
-#     command line, in which case nothing was going to reach it and the configuration
-#     asked for none of it. Exit 1, so `tama doctor` works as a CI check of an install.
-#   * `warn` — *worth knowing*: the plugin will do exactly what it was configured to,
-#     and that is probably not what the user wanted. No icons in the status line, a
-#     title configuration the focus check can never match, a Claude Code hook that was
-#     not wired. Exit status unaffected.
-#   * `ok` — including the deliberate silences. `@tama_backend ''` is a configuration
-#     and not a fault, and neither is a `none` backend on a machine with no notifier,
-#     though that one is worth a warning since it is usually the answer to "why was I
-#     not told anything".
-#
-# The rest of the CLI exits 0 on everything except a usage error, because the rest of
-# the CLI runs inside an agent's turn (see bin/tama). Nothing runs this from a hook.
+# Diagnoses the full hook-to-banner path and prints setup recipes. Unlike hook-facing
+# commands it runs without tmux and exits non-zero for broken configuration (ADR-0007).
 
 # Almost every string in this file is prose printed at the user, and prose about a shell
 # plugin is full of `$PATH`, `$DBUS_SESSION_BUS_ADDRESS` and `set -g` in backticks. They

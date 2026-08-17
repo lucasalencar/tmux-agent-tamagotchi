@@ -1,48 +1,9 @@
 # shellcheck shell=bash
 #
-# The platform-specific half of notifications, kept behind one door.
-#
-# A backend is a *directory* holding up to four optional executables, one per
-# capability. That is the whole contract, and it is a directory rather than a set of
-# options so that a third-party backend needs no fork: point `@tama_backend` at an
-# absolute path and it is a backend.
-#
-# Sourced by lib/common.sh, so every command has it.
-#
-# | Capability | argv            | Contract                                        |
-# | ---------- | --------------- | ----------------------------------------------- |
-# | `notify`   | <title> <msg>   | Raise a banner. Exit status ignored.            |
-# | `dismiss`  | <group>         | Remove the banners in that group. Ignored.      |
-# | `focused`  | —               | Exit 0 = the user is looking at TAMA_WINDOW_ID. |
-# | `focus`    | <session>       | Bring that session's terminal forward. Ignored. |
-#
-# Context arrives in the environment rather than in argv so it can grow without
-# breaking a backend that was written against an earlier version. Every capability
-# gets TAMA_BIN, TAMA_PLUGIN_DIR, TAMA_TERMINAL_APP and TAMA_TERMINAL_BUNDLE_ID;
-# lib/notify.sh sets the rest per capability and documents them there.
-#
-# Three rules a backend author has to know, and every backend in this repo obeys:
-#
-#   1. **Return promptly.** These run inside an agent's hook, synchronously, on the
-#      turn the user is waiting for. There is no timeout — bash 3.2 has no portable
-#      one — so a capability that blocks blocks the agent. A backend that has to wait
-#      on something (a notifier that draws the banner itself, an `osascript` that may
-#      prompt) must background it and return.
-#   2. **Say nothing.** Every invocation's stdout and stderr are discarded here, so a
-#      chatty notifier cannot land in a transcript. Do not rely on being heard; a
-#      capability communicates through its exit status and nothing else.
-#   3. **Exit 0 unless you mean it.** Only `focused` is asked a question. For the
-#      other three the status is dropped: a banner that did not appear must never
-#      fail an agent's turn.
-#
-# A missing capability is not an error, it is "unsupported", and every caller
-# degrades: no `focused` means nothing is ever suppressed, no `dismiss` means a banner
-# stays until the desktop retires it, no `notify` means the whole feature is off. That
-# is what makes `backends/none` a directory with two files in it and `backends/libnotify`
-# one with a single file, and what lets a backend ship the capabilities its platform can
-# actually do. A capability a platform cannot honestly answer is *absent*, never present
-# and empty — backends/README.md argues each absence where it can be read next to the
-# directory it is about.
+# Backend boundary for desktop-specific behavior. A backend directory may provide
+# `notify`, `dismiss`, `focused`, and `focus` executables; missing capabilities are
+# unsupported, not errors. They run synchronously inside hooks, so implementations
+# must return promptly and communicate only through exit status.
 
 # The bare name whose directory is inside the plugin, and the one `auto` resolves to
 # when nothing better will work here.
@@ -108,28 +69,8 @@ tama_backend_dir() {
   return 0
 }
 
-# Which backend `auto` means on this machine.
-#
-# A Mac with `terminal-notifier` picks `macos`; anything else with `notify-send` picks
-# `libnotify`; everything left picks the no-op one. This is the only place that resolves
-# a platform to a backend, and a third platform belongs here rather than anywhere else.
-#
-# It resolves only to a backend whose dependency is *actually installed*, which is the
-# difference between a plugin that degrades quietly on a headless box and one that
-# fails on every notification an agent reports. A Mac with no `terminal-notifier`
-# therefore lands on `none` and `doctor` is what explains why — never on `macos`,
-# whose every capability would be a process started to fail.
-#
-# **A Mac is never a `libnotify` machine**, which is why the Darwin branch returns
-# rather than falling through: `notify-send` can be installed on a Mac — Homebrew's
-# glib carries one — and there is no notification daemon there for it to talk to, so
-# picking it would be a banner that never appears with nothing anywhere to say why.
-# Anything that is *not* a Mac is asked about `notify-send` and nothing else, so a BSD
-# or a WSL with a freedesktop daemon gets its banners without this function having to
-# hold a list of which operating systems have one.
-#
-# Kept cheap on purpose: this runs on every capability invocation, so it costs a `case`
-# on `$OSTYPE` — bash's own answer, no `uname` process — and at most one `command -v`.
+# Resolve only backends whose dependency exists. Darwin never falls through to
+# libnotify because Homebrew may install `notify-send` without a notification daemon.
 tama_backend_auto() {
   if tama_backend_is_darwin; then
     if tama_macos_notifier; then
@@ -158,21 +99,8 @@ tama_backend_is_darwin() {
   esac
 }
 
-# The binary a platform backend depends on, in TAMA_BINARY; non-zero when this machine
-# has none, which is what stops `auto` picking a backend that could only fail.
-#
-#   tama_resolve_binary <option> <default name> <directories to search>
-#
-# Resolved rather than hardcoded — the system this replaces had
-# `/opt/homebrew/bin/terminal-notifier` written into two scripts, which is wrong on an
-# Intel Mac, wrong on a MacPorts install and wrong for anyone who keeps their own build.
-# The option overrides the name or gives an absolute path, then `PATH`, then the
-# directories the caller named.
-#
-# Read here, in the core, rather than in the backend that runs it, because `auto` and
-# the backend must never disagree about which binary the backend is going to run:
-# `auto` promising a notifier the backend then cannot find would be silence with no
-# explanation anywhere. Each backend calls its own wrapper below.
+# Resolve an option override, then PATH, then platform directories. Core and backend
+# share this result so `auto` cannot select a dependency the backend cannot find.
 # shellcheck disable=SC2034  # TAMA_BINARY is read by the caller
 tama_resolve_binary() { # <option> <name> <dirs>
   local name resolved dir dirs="$3"
