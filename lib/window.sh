@@ -16,6 +16,8 @@
 # you", and it deliberately outlives the state that raised it. Only the user clears
 # it, by selecting the window — see tama_flag_clear.
 TAMA_WINDOW_FLAG_OPTION='@tama_window_flag'
+# shellcheck disable=SC2034  # read by notification writers
+TAMA_WINDOW_NOTIFY_GROUP_OPTION='@tama_window_notify_group'
 
 # Everything the flag path and the notification path need to know about a window, in
 # one tmux round trip.
@@ -52,8 +54,9 @@ TAMA_WINDOW_READ_FIELDS='#{window_id}
 #{session_name}
 #{pane_id}
 #{@tama_window_flag}
+#{@tama_window_notify_group}
 .'
-TAMA_WINDOW_READ_COUNT=7
+TAMA_WINDOW_READ_COUNT=8
 
 # Reads the window holding <target>, which may be a pane id, a window id, or
 # anything else tmux resolves — the callers have a pane (a hook reporting a state)
@@ -76,6 +79,7 @@ tama_window_read() { # <target>
   TAMA_WINDOW_SESSION=''
   TAMA_WINDOW_PANE_ID=''
   TAMA_WINDOW_FLAG=''
+  TAMA_WINDOW_NOTIFY_GROUP=''
   while IFS= read -r field; do
     lines=$((lines + 1))
     case "$lines" in
@@ -85,6 +89,7 @@ tama_window_read() { # <target>
       4) TAMA_WINDOW_SESSION="$field" ;;
       5) TAMA_WINDOW_PANE_ID="$field" ;;
       6) TAMA_WINDOW_FLAG="$field" ;;
+      7) TAMA_WINDOW_NOTIFY_GROUP="$field" ;;
     esac
   done <<EOF
 $raw

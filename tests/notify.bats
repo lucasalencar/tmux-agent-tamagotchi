@@ -546,6 +546,22 @@ PROVIDER
   assert_backend_value dismiss argv1 "agent-t-$window"
 }
 
+@test "dismissing uses the group that raised the banner" {
+  local pane window
+  pane="$(tama_pane_of t:0)"
+  window="$(tama_window_id t:0)"
+  test_tmux set -g @tama_group_format 'before-#{window_id}'
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_backend_value notify env.TAMA_GROUP "before-$window"
+
+  test_tmux set -g @tama_group_format 'after-#{window_id}'
+  run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
+  assert_success
+  assert_backend_value dismiss argv1 "before-$window"
+}
+
 @test "arriving at the window takes its banner down" {
   # Through the hook the entrypoint wired, not by calling on-select: the user selects
   # the window and both the mark and the banner go.

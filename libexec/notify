@@ -54,6 +54,7 @@ deliver() { # <target> <agent_name> <message>
   tama_notify_suppressed && exit 0
 
   tama_notify_label
+  tama_notify_group
 
   tama_batch_reset
   # The name is what the default title leads with, and it is sticky in the pane
@@ -83,12 +84,17 @@ deliver() { # <target> <agent_name> <message>
   # keystroke. Stop raising this and banners start outliving the thing they were
   # about.
   tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" on
+  if tama_pane_value_is_storable "$TAMA_NOTIFY_GROUP"; then
+    tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" \
+      "$TAMA_NOTIFY_GROUP"
+  else
+    tama_batch_add set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION"
+  fi
   # No refresh: none of these three is drawn by the icon job, and the mark is a plain
   # format that redraws with the option write itself.
   tama_batch_flush 'no' || true
 
   # After the writes, because both formats read what was just written.
-  tama_notify_group
   tama_notify_title "$TAMA_WINDOW_PANE_ID"
 
   tama_notify_click "$TAMA_WINDOW_ID" "$TAMA_WINDOW_PANE_ID" "$TAMA_WINDOW_SESSION"

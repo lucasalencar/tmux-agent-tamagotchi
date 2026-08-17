@@ -82,14 +82,11 @@ main() {
   # `--all` sweep is about the server and does not need a target at all.
   local target="${window:-${pane:-${TMUX_PANE:-}}}"
 
-  # Taking the mark off is also how this knows whether there is a banner to take
-  # down. `notify` raises the mark whenever it delivers one, so a window that had no
-  # mark had no banner of ours pending — and this runs on every window selection, so
-  # asking the backend anyway would mean starting a notifier process every time the
-  # user presses a key. The invariant is stated at both ends; see lib/window.sh.
+  # A delivered banner records its own group. The mark can also come from `tama flag`,
+  # which must not invoke a user's dismiss command for a banner that never existed.
   if [ -n "$target" ] && tama_flag_clear "$target"; then
     # The window tama_flag_clear just read, so this costs no second round trip.
-    if tama_notify_enabled; then
+    if tama_notify_enabled && [ -n "$TAMA_WINDOW_NOTIFY_GROUP" ]; then
       tama_notify_dismiss
     fi
   fi

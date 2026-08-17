@@ -77,10 +77,14 @@ tama_notify_enabled() {
 }
 
 # The group id for the window tama_window_read last read, in TAMA_NOTIFY_GROUP.
-# Expanded against the window's own id rather than the caller's target, so a banner
-# raised for `session:3` is still dismissed after `renumber-windows` moved it.
+# A delivered banner keeps the group it was raised with until dismissal, so changing
+# the format cannot orphan it in the notification centre.
 tama_notify_group() {
   local format
+  if [ -n "$TAMA_WINDOW_NOTIFY_GROUP" ]; then
+    TAMA_NOTIFY_GROUP="$TAMA_WINDOW_NOTIFY_GROUP"
+    return 0
+  fi
   format="$(tama_opt tama_group_format "$TAMA_NOTIFY_GROUP_DEFAULT")"
   TAMA_NOTIFY_GROUP="$(tmux_run display-message -p -t "$TAMA_WINDOW_ID" \
     "$format" 2>/dev/null)" || TAMA_NOTIFY_GROUP=''
@@ -271,10 +275,9 @@ tama_notify_tmux_command() {
   return 0
 }
 
-# Takes down whatever banner the window tama_window_read last read has pending, by
-# naming its group. Both callers — `tama dismiss` and the user arriving at the window
-# — reach the group through tama_notify_group, so the banner that is dismissed is the
-# banner that was raised.
+# Takes down the banner named by the group the window last stored. An explicit dismiss
+# also expands the current format when no banner was recorded, which keeps it useful for
+# a user cleaning up a banner from before this version.
 #
 # Nothing here checks whether there *was* one: a dismissal for a group with no banner
 # in it is what a notifier does nothing about, and asking would mean the plugin
@@ -282,6 +285,11 @@ tama_notify_tmux_command() {
 # already knows.
 tama_notify_dismiss() {
   tama_notify_group
+
+  if [ -n "$TAMA_WINDOW_NOTIFY_GROUP" ]; then
+    tmux_run set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" \
+      >/dev/null 2>&1 || true
+  fi
 
   tama_notify_export_context
   # In the environment as well as in argv, so that a backend which handles both
