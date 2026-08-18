@@ -207,6 +207,10 @@ PY
   assert_success
   assert_backend_value notify argv2 'Revisão concluída ✅'
 
+  hook Stop "$(payload Stop ',"last_assistant_message":"Line one\rLine two\bchecked\fformatted"')"
+  assert_success
+  assert_backend_value notify argv2 "$(printf 'Line one\nLine two checked formatted')"
+
   hook PermissionRequest '{"tool_name":"Bash","tool_input":{"description":"truncated}'
   assert_success
   assert_backend_value notify argv2 'Codex needs your approval'
@@ -359,6 +363,17 @@ PY
   assert_backend_value notify argv2 'Approve the real command?'
 }
 
+@test "scoped fields cannot escape into sibling objects" {
+  hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash","tool_input":{"command":"deploy"},"metadata":{"description":"Sibling text"}')"
+  assert_success
+  assert_pane_option "$PANE" state_main waiting
+  assert_backend_value notify argv2 'Codex needs your approval'
+
+  hook PreToolUse "$(payload PreToolUse ',"tool_name":"request_user_input","tool_input":{"questions":[]},"metadata":{"question":"Sibling question"}')"
+  assert_success
+  assert_backend_value notify argv2 'Codex has a question'
+}
+
 @test "a payload cut at the input bound cannot raise attention from partial JSON" {
   hook SessionStart "$(payload SessionStart ',"source":"startup"')"
   local oversized
@@ -370,6 +385,33 @@ PY
   assert_success
   assert_pane_option "$PANE" state_main idle
   refute_backend_called notify
+}
+
+@test "payload-independent events and fallbacks survive the input bound" {
+  local oversized
+  oversized="$(python3 - <<'PY'
+print('{"last_assistant_message":"Untrusted complete text","tool_input":{"description":"Also untrusted"},"padding":"' + ('x' * 70000) + '"}')
+PY
+)"
+
+  hook UserPromptSubmit "$oversized"
+  assert_success
+  assert_pane_option "$PANE" state_main running
+
+  hook Stop "$oversized"
+  assert_success
+  assert_pane_option "$PANE" state_main idle
+  assert_backend_value notify argv2 'Codex finished its turn'
+
+  hook PermissionRequest "$oversized"
+  assert_success
+  assert_pane_option "$PANE" state_main waiting
+  assert_backend_value notify argv2 'Codex needs your approval'
+
+  hook SessionEnd "$oversized"
+  assert_success
+  assert_pane_option_unset "$PANE" state_main
+  assert_pane_option_unset "$PANE" agent
 }
 
 @test "a text value that exhausts the escape bound uses its fallback" {
