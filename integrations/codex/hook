@@ -264,6 +264,10 @@ codex_auto_review_is_configured() {
 
 TAMA_CODEX_EVENT="${1:-}"
 codex_read_payload
+if [ "$TAMA_CODEX_PAYLOAD_TRUNCATED" = 'yes' ]; then
+  [ "$TAMA_CODEX_EVENT" = 'SessionEnd' ] && codex_state clear
+  exit 0
+fi
 case "$TAMA_CODEX_EVENT" in
   SubagentStart | SubagentStop) ;;
   *)
@@ -277,7 +281,7 @@ esac
 
 case "$TAMA_CODEX_EVENT" in
   SessionStart)
-    if [ "$TAMA_CODEX_PAYLOAD_TRUNCATED" = 'no' ] && codex_token_field source; then
+    if codex_token_field source; then
       case "$TAMA_CODEX_FIELD" in
         startup | resume | clear) codex_state idle ;;
         compact) : ;;
@@ -288,8 +292,7 @@ case "$TAMA_CODEX_EVENT" in
     codex_state running
     ;;
   PreToolUse)
-    if [ "$TAMA_CODEX_PAYLOAD_TRUNCATED" = 'no' ] &&
-      codex_token_field tool_name && [ "$TAMA_CODEX_FIELD" = 'request_user_input' ]; then
+    if codex_token_field tool_name && [ "$TAMA_CODEX_FIELD" = 'request_user_input' ]; then
       codex_text_field question first-question || TAMA_CODEX_TEXT='Codex has a question'
       codex_state_and_notify waiting "$TAMA_CODEX_TEXT"
     fi
@@ -298,15 +301,14 @@ case "$TAMA_CODEX_EVENT" in
     if codex_auto_review_is_configured; then
       codex_state running
     else
-      if [ "$TAMA_CODEX_PAYLOAD_TRUNCATED" = 'yes' ] ||
-        ! codex_text_field description tool-input; then
+      if ! codex_text_field description tool-input; then
         TAMA_CODEX_TEXT='Codex needs your approval'
       fi
       codex_state_and_notify waiting "$TAMA_CODEX_TEXT"
     fi
     ;;
   SubagentStart | SubagentStop)
-    if [ "$TAMA_CODEX_PAYLOAD_TRUNCATED" = 'no' ] && codex_text_field agent_id top; then
+    if codex_text_field agent_id top; then
       case "$TAMA_CODEX_EVENT" in
         SubagentStart)
           "$TAMA_BIN" state subagent-start "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true
@@ -318,8 +320,7 @@ case "$TAMA_CODEX_EVENT" in
     fi
     ;;
   Stop)
-    if [ "$TAMA_CODEX_PAYLOAD_TRUNCATED" = 'yes' ] ||
-      ! codex_text_field last_assistant_message top; then
+    if ! codex_text_field last_assistant_message top; then
       TAMA_CODEX_TEXT='Codex finished its turn'
     fi
     codex_state_and_notify idle "$TAMA_CODEX_TEXT"

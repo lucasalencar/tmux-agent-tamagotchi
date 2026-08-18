@@ -408,26 +408,26 @@ PY
   refute_backend_called notify
 }
 
-@test "payload-independent events and fallbacks survive the input bound" {
+@test "only main-thread cleanup survives the input bound" {
   local oversized
   oversized="$(python3 - <<'PY'
 print('{"last_assistant_message":"Untrusted complete text","tool_input":{"description":"Also untrusted"},"padding":"' + ('x' * 70000) + '"}')
 PY
 )"
 
-  hook UserPromptSubmit "$oversized"
+  hook UserPromptSubmit "$(payload UserPromptSubmit)"
   assert_success
   assert_pane_option "$PANE" state_main running
 
   hook Stop "$oversized"
   assert_success
-  assert_pane_option "$PANE" state_main idle
-  assert_backend_value notify argv2 'Codex finished its turn'
+  assert_pane_option "$PANE" state_main running
+  refute_backend_called notify
 
   hook PermissionRequest "$oversized"
   assert_success
-  assert_pane_option "$PANE" state_main waiting
-  assert_backend_value notify argv2 'Codex needs your approval'
+  assert_pane_option "$PANE" state_main running
+  refute_backend_called notify
 
   hook SessionEnd "$oversized"
   assert_success
@@ -462,11 +462,11 @@ PY
   assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
 }
 
-@test "truncated delegated payloads remain isolated when common fields precede event data" {
+@test "truncated delegated payloads remain isolated even when agent_id follows the cutoff" {
   hook SessionStart "$(payload SessionStart ',"source":"startup"')"
   local delegated
   delegated="$(python3 - <<'PY'
-print('{"agent_id":"review_1","padding":"' + ('x' * 70000) + '"}')
+print('{"padding":"' + ('x' * 70000) + '","agent_id":"review_1"}')
 PY
 )"
 
@@ -504,6 +504,7 @@ PY
     assert_success
     [ -z "$output" ]
     [ -z "$stderr" ]
+    assert_pane_option "$PANE" subagents 'agent.alpha:1'
   done
   hook SubagentStop "$(payload SubagentStop ',"agent_id":"two ids"')"
   assert_success
