@@ -26,46 +26,46 @@ this file, so a change there reaches you by pulling the plugin.
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code SessionStart" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code SessionStart >/dev/null 2>&1 || :" } ] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code UserPromptSubmit" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code UserPromptSubmit >/dev/null 2>&1 || :" } ] }
     ],
     "PostToolUse": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code PostToolUse" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code PostToolUse >/dev/null 2>&1 || :" } ] }
     ],
     "PostToolUseFailure": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code PostToolUseFailure" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code PostToolUseFailure >/dev/null 2>&1 || :" } ] }
     ],
     "PermissionRequest": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code PermissionRequest" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code PermissionRequest >/dev/null 2>&1 || :" } ] }
     ],
     "Notification": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code Notification" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code Notification >/dev/null 2>&1 || :" } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code Stop" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code Stop >/dev/null 2>&1 || :" } ] }
     ],
     "StopFailure": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code StopFailure" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code StopFailure >/dev/null 2>&1 || :" } ] }
     ],
     "SubagentStart": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code SubagentStart" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code SubagentStart >/dev/null 2>&1 || :" } ] }
     ],
     "SubagentStop": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code SubagentStop" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code SubagentStop >/dev/null 2>&1 || :" } ] }
     ],
     "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code SessionEnd" } ] }
+      { "hooks": [ { "type": "command", "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code SessionEnd >/dev/null 2>&1 || :" } ] }
     ]
   }
 }
 ```
 
-Every command is the same three lines, which is the recipe every hook in this plugin
-follows and the reason it survives you moving the plugin: bail out when there is no tmux to
-talk to, ask tmux where the plugin is, bail out again if it is not installed on this
-machine. No absolute path to the plugin appears anywhere in your settings (ADR-0003).
+Every command asks tmux where the plugin is, dispatches its event, and turns any failure into
+silent success. That keeps hooks harmless outside tmux and on machines where the plugin is
+not loaded, without embedding the guards in your settings. No absolute path to the plugin
+appears anywhere in your settings, so moving the clone does not break them (ADR-0003).
 
 `tama doctor` prints this same block, and a test asserts the two are byte-for-byte the same
 list of events — doctor is what tells you which of them you are missing, so a block here

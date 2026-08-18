@@ -68,7 +68,8 @@ cc_settings_into() { # <path> <event…>
       done
       [ "$skipped" = 'no' ] || continue
       printf '    "%s": [{"hooks": [{"type": "command",' "$event"
-      printf ' "command": "exec \\"$tama\\" hook claude-code %s"}]}],\n' "$event"
+      printf ' "command": "\\"$(tmux show -gqv @tama_bin 2>/dev/null)\\" hook claude-code %s >/dev/null 2>&1 || :"}]}],\n' \
+        "$event"
     done
     printf '    "_": []\n  }\n}\n'
   } >"$target"
@@ -589,6 +590,26 @@ cc_settings_into() { # <path> <event…>
   assert_output_contains 'no problems and no warnings'
 }
 
+@test "an event is wired only by the canonical command" {
+  healthy_server
+  mkdir -p "$CLAUDE_CONFIG_DIR"
+  local canonical
+  canonical='\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code Notification >/dev/null 2>&1 || :'
+
+  local command
+  for command in \
+    'tama hook claude-code Notification' \
+    "prefix $canonical" \
+    "$canonical; false"; do
+    printf '{"hooks":{"Notification":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' \
+      "$command" >"$CLAUDE_CONFIG_DIR/settings.json"
+
+    run "$PLUGIN_ROOT/bin/tama" doctor
+    assert_success
+    assert_output_contains 'the Notification event is NOT wired'
+  done
+}
+
 @test "a missing event other than Notification says what it costs" {
   healthy_server
   cc_settings_without Stop SubagentStop
@@ -726,8 +747,9 @@ cc_settings_into() { # <path> <event…>
 
   local printed documented
   printed="$("$PLUGIN_ROOT/bin/tama" doctor |
-    sed -n 's/.*hook claude-code \([A-Za-z]*\)".*/\1/p' | sort -u)"
-  documented="$(sed -n 's/.*hook claude-code \([A-Za-z]*\)".*/\1/p' "$readme" | sort -u)"
+    sed -n 's/.*hook claude-code \([A-Za-z]*\) >\/dev\/null.*/\1/p' | sort -u)"
+  documented="$(sed -n 's/.*hook claude-code \([A-Za-z]*\) >\/dev\/null.*/\1/p' \
+    "$readme" | sort -u)"
   [ -n "$printed" ]
   assert_equal "$printed" "$documented"
 }

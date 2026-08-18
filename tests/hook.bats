@@ -811,8 +811,15 @@ PAYLOAD
 # One event's command, taken out of the JSON block in the adapter's README, so
 # what these tests drive is the text a user pastes and not a paraphrase of it.
 readme_command() { # <event>
-  sed -n "s/.*\"command\": \"\\(.*hook claude-code $1\\)\".*/\\1/p" \
-    "$PLUGIN_ROOT/integrations/claude-code/README.md" | sed 's/\\"/"/g'
+  sed -n 's/.*"command": "\(.*\)" } ] }.*/\1/p' \
+    "$PLUGIN_ROOT/integrations/claude-code/README.md" |
+    sed 's/\\"/"/g' |
+    grep -F -- "hook claude-code $1 "
+}
+
+@test "the README uses the canonical silent command" {
+  assert_equal "$(readme_command Stop)" \
+    '"$(tmux show -gqv @tama_bin 2>/dev/null)" hook claude-code Stop >/dev/null 2>&1 || :'
 }
 
 @test "every event the adapter maps has a command in the README" {
@@ -880,6 +887,31 @@ readme_command() { # <event>
   [ -z "$output" ]
   [ -z "$stderr" ]
   assert_pane_option_unset "$PANE" state_main
+}
+
+@test "the pasted command stays quiet when the discovered adapter is broken" {
+  plugin_with_stub_agent
+  tama_add_stub_integration "$PLUGIN" claude-code
+  test_tmux set -g @tama_bin "$PLUGIN/bin/tama"
+  tama_shim_tmux_on_path
+
+  local command
+  command="$(readme_command Stop)"
+  TAMA_STUB_EXIT=3 TMUX_PANE="$PANE" run --separate-stderr sh -c "$command"
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+}
+
+@test "the pasted command stays quiet outside tmux" {
+  tama_shim_tmux_on_path
+  local command
+  command="$(readme_command Stop)"
+
+  TMUX='' TMUX_PANE='' run --separate-stderr sh -c "$command"
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
 }
 
 @test "the adapter runs under the bash macOS ships" {

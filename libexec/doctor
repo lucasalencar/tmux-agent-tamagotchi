@@ -908,15 +908,25 @@ doctor_cc_settings_file() { # <path>
 "
 }
 
-# Whether any settings file wires this plugin for that event. Deliberately a search for
-# the adapter invocation rather than a JSON parse — `jq` is not a dependency of this
-# plugin (ADR-0001) and a hook command is a shell line the user may have edited. The
-# trailing boundary is what keeps `PostToolUse` from matching `PostToolUseFailure`.
+# The canonical JSON-escaped command value for one event. The command itself is deliberately
+# exact: doctor should not bless a hook that names the adapter but omits the discovery and
+# failure semantics that make it safe in Claude Code settings.
+doctor_cc_command() { # <event>
+  printf '%s%s%s' \
+    '\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook claude-code ' \
+    "$1" \
+    ' >/dev/null 2>&1 || :'
+}
+
+# Whether any settings file wires this plugin for that event with the canonical command.
+# This remains a fixed-string search rather than a JSON parse because `jq` is not a
+# dependency (ADR-0001); JSON may be formatted freely around the command string.
 doctor_cc_wired() { # <event>
-  local file
+  local file command_value
+  command_value="\"$(doctor_cc_command "$1")\""
   while IFS= read -r file; do
     [ -n "$file" ] || continue
-    if grep -qE -- "claude-code $1([^A-Za-z0-9_-]|\$)" "$file" 2>/dev/null; then
+    if grep -qF -- "$command_value" "$file" 2>/dev/null; then
       return 0
     fi
   done <<EOF
@@ -1106,9 +1116,8 @@ doctor_setup_claude_code() {
     [ "$first" = 'yes' ] || printf '%s\n' '    ],'
     first='no'
     printf '    "%s": [\n' "$event"
-    printf '      { "hooks": [ { "type": "command", "command": "%s%s" } ] }\n' \
-      '[ -n \"$TMUX\" ] || exit 0; tama=$(tmux show -gqv @tama_bin); [ -x \"$tama\" ] || exit 0; exec \"$tama\" hook claude-code ' \
-      "$event"
+    printf '      { "hooks": [ { "type": "command", "command": "%s" } ] }\n' \
+      "$(doctor_cc_command "$event")"
   done <<EOF
 $TAMA_DOCTOR_CC_EVENTS
 EOF

@@ -7,13 +7,21 @@ an unrequested write into `$HOME` every time the config is sourced, and it colli
 already-taken binary name `tama` (npm `usik/tamagotchi`, crates.io `mlnja/tama`).
 
 Instead the TPM entrypoint exports `@tama_bin`, and hook recipes ask tmux where the plugin
-is: `[ -n "$TMUX" ] || exit 0` followed by `"$(tmux show -gv @tama_bin)" state running …`.
-Nothing is installed, nothing is shadowed, and the recipe works identically under TPM, a
-manual clone, a submodule, or a symlinked worktree.
+is. They invoke the discovered path directly and normalize a missing tmux server, an
+unloaded plugin, or a hook failure to silent success. Nothing is installed, nothing is
+shadowed, and the recipe works identically under TPM, a manual clone, a submodule, or a
+symlinked worktree.
 
 ## Consequences
 
-Every hook recipe carries a guard line and a subshell, and the plugin has nothing to offer
-someone who wants to type `tama` at a prompt. That is acceptable: the CLI is an interface for
-hooks, not for humans, and the only human-facing entry point (`doctor`) prints its own
-absolute path.
+Every hook recipe still carries a tmux option lookup, because the plugin cannot centralize
+the step needed to find its own executable without installing a stable launcher elsewhere.
+The Claude Code integration, whose settings invoke the plugin's adapter rather than core
+commands directly, keeps its operational guards out of user configuration: its recipe
+attempts the quoted path, redirects errors, and falls back to success, while the discovered
+plugin owns all behavior after dispatch. Recipes that call the core commands directly may
+keep explicit guards so usage errors remain visible while those hooks are being authored.
+
+The plugin still has nothing to offer someone who wants to type `tama` at a prompt. That is
+acceptable: the CLI is an interface for hooks, not for humans, and the only human-facing
+entry point (`doctor`) prints its own absolute path.
