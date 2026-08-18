@@ -74,13 +74,38 @@ set -g window-status-current-format '#I:#W#{?window_flags,#{window_flags},}#{E:@
 
 A window without an agent has no icon or additional padding.
 
-Available icon sets:
+### Icons
 
-| Set | `running` | `waiting` | `background` | `idle` | `error` |
+Select an icon preset with `@tama_icon_set`:
+
+| Preset | running | waiting | background | idle | error |
 | --- | --- | --- | --- | --- | --- |
-| glyphs | `●` | `◐` | `⚙` | `○` | `✕` |
-| ascii | `*` | `?` | `+` | `.` | `!` |
-| pets | `🐥` | `🍼` | `🥚` | `😴` | `💀` |
+| Default (`glyphs`) | `●` | `◐` | `⚙` | `○` | `✕` |
+| ASCII (`ascii`) | `*` | `?` | `+` | `.` | `!` |
+| Pets (`pets`) | `🐥` | `🍼` | `🥚` | `😴` | `💀` |
+
+For example:
+
+```tmux
+set -g @tama_icon_set pets
+```
+
+Override individual states to build a custom set. An individual option takes precedence
+over `@tama_icon_set`:
+
+```tmux
+set -g @tama_icon_running '▶'
+set -g @tama_icon_waiting '?'
+set -g @tama_icon_background '~'
+set -g @tama_icon_idle 'o'
+set -g @tama_icon_error 'x'
+```
+
+Reload the tmux configuration to apply a change:
+
+```sh
+tmux source-file ~/.tmux.conf
+```
 
 State definitions are in [`CONTEXT.md`](CONTEXT.md).
 
