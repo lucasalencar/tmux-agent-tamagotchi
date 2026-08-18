@@ -1,359 +1,244 @@
 # tmux-agent-tamagotchi
 
-A tmux plugin that shows you what the AI coding agents in your panes are doing, and tells
-you when one of them needs you.
+A tmux plugin for monitoring AI coding agents running in different panes.
 
-Two halves, and the second is the one nothing else does. In tmux, an icon per agent pane
-appears next to the window name, so a glance at the status line says which agents are
-working, which are waiting on you and which have fallen over. Outside tmux, a desktop
-banner arrives when an agent wants an answer or has finished — and **clicking it puts your
-cursor on the pane that spoke**: the window is selected, then the pane inside it, then your
-terminal comes to the front. Banners are grouped per window, so a chatty agent replaces its
-own banner instead of stacking, and arriving at the window takes it down.
+It adds agent status to the tmux window list and sends desktop notifications for events
+that need attention. You can work in another window without repeatedly checking each agent.
 
-The name is a joke: the agents are the pets, and this is the thing that tells you when one
-of them is hungry. It describes nothing, which is why the paragraph above had to.
+The plugin:
 
-```
+- Shows one status icon per agent pane.
+- Marks windows that need attention.
+- Sends desktop notifications when an agent needs input or finishes.
+- Opens the correct tmux pane when a supported notification is clicked.
+
+```text
 0:editor   1:api ●   2:tests ◐ *   3:docs ⚙   4:build ✕
 ```
 
-`api` is working. `tests` needs you, and the `*` marks the window because you are looking
-somewhere else. `docs` is idle but its delegated runs are still going. `build` ended its
-last turn on an error. `editor` has no agent in it, so it draws exactly as tmux would draw
-it — no icon, no padding, nothing.
-
-Agents report their own lifecycle by calling this plugin's CLI from their own hook system.
-The plugin never launches an agent, never talks to one, and never watches a process: an
-agent says what it is doing, or nothing appears. Claude Code has an adapter shipped here
-and needs one block of hook configuration; anything else that can run a command on an event
-can drive the same CLI.
+Agents report their lifecycle through hooks. The plugin does not launch or monitor agent
+processes. Claude Code has a bundled adapter; other agents can call the same CLI.
 
 ## Requirements
 
-| | |
+| Requirement | Details |
 | --- | --- |
-| **tmux** | 3.1a or newer. Below that the plugin warns and wires nothing at all. |
-| **bash** | Any. Every script here is written for bash 3.2.57, the one macOS ships. |
-| **Banners, macOS** | [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) — `brew install terminal-notifier`. |
-| **Banners, elsewhere** | `notify-send` (libnotify) plus a running freedesktop notification daemon. |
+| tmux | 3.1a or newer |
+| bash | Compatible with bash 3.2.57, included with macOS |
+| macOS notifications | [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) |
+| Other desktop notifications | `notify-send` and a freedesktop notification daemon |
 
-Nothing else. In particular **`jq` is not a dependency** and never will be: the CLI takes
-arguments, not JSON on stdin ([ADR-0001](docs/adr/0001-argv-instead-of-hook-payloads.md)).
-Nothing is written outside the plugin directory and nothing is installed onto `$PATH`
-([ADR-0003](docs/adr/0003-no-writes-outside-the-plugin-directory.md)).
+`jq` is not required. Without a supported notifier, icons and window marks still work.
 
-With no notifier installed the plugin is *quiet*, not broken: the icons and the window mark
-are inside tmux and cost nothing, and `@tama_backend auto` resolves to a no-op backend
-rather than to a process started to fail. So a headless box, a container or a CI runner
-needs no configuration to behave.
-
-The macOS backend supports every capability. The libnotify backend only delivers banners;
-it cannot dismiss them, detect focus or handle clicks. See
-[`backends/README.md`](backends/README.md) for the backend contract, platform limitations
-and configuration.
+Platform capabilities and limitations are documented in
+[`backends/README.md`](backends/README.md).
 
 ## Install
 
-With [TPM](https://github.com/tmux-plugins/tpm), in `tmux.conf`:
+### TPM
+
+Add to `tmux.conf`:
 
 ```tmux
 set -g @plugin 'lucasalencar/tmux-agent-tamagotchi'
 ```
 
-Without it, clone it anywhere and source the entrypoint — it resolves its own location, so
-a clone, a submodule and a symlinked worktree are all valid homes:
+Reload tmux and press the TPM install binding (`prefix` + <kbd>I</kbd>).
+
+### Manual
+
+Clone the repository and source its entrypoint:
 
 ```tmux
 run-shell '/path/to/tmux-agent-tamagotchi/tamagotchi.tmux'
 ```
 
-Either way, reload your configuration. Then **[the status line is yours to
-wire](#the-status-line-is-yours)** — the plugin exports two formats and writes no status
-line of its own, so nothing appears until you interpolate them.
+The plugin supports regular clones, submodules and symlinked worktrees. It does not install
+anything onto `$PATH` or write outside its directory.
 
-To try it before touching your own configuration at all, boot a throwaway server with
-[`examples/demo.tmux.conf`](examples/demo.tmux.conf), which is a commented tour of every
-option:
+## Configure the status line
 
-```sh
-cd /path/to/tmux-agent-tamagotchi
-tmux -L tama-demo -f examples/demo.tmux.conf new-session -d -s demo
-tmux -L tama-demo attach -t demo
-# and when you are done
-tmux -L tama-demo kill-server
-```
+The plugin exports two tmux formats:
 
-## The status line is yours
-
-The plugin never rewrites a status line somebody spent an afternoon on. What it does is
-export two tmux formats for you to put wherever you want them:
-
-| Format | What it draws |
+| Format | Output |
 | --- | --- |
-| `#{E:@tama_icons}` | One glyph per agent pane of that window, in pane order. |
-| `#{E:@tama_flag}` | The mark on a window that wants your attention. |
+| `#{E:@tama_icons}` | Agent state icons for the window |
+| `#{E:@tama_flag}` | Persistent attention mark |
 
-Both lines, or the window you are looking at is the one without icons. Keeping tmux's own
-`window_flags` keeps its zoom and bell markers — without the space it pads them with, since
-the icons bring their own:
+Add both formats to the regular and current-window status lines:
 
 ```tmux
 set -g window-status-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
 set -g window-status-current-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
 ```
 
-**A window with no agent in it draws as just its name, and that is correct.** There is
-nothing to draw, so the icons expand to nothing at all — not even a stray space. This is
-the single thing most often mistaken for the plugin not working, and it is most confusing on
-the window you are looking at, which is usually the one you test with. Open an agent in a
-pane and the icon appears on the next redraw. The icons for windows you are *not* looking at
-are drawn the same way and appear when the plugin's option write triggers a redraw.
+A window without an agent has no icon or additional padding.
 
-`#{E:@tama_flag}` draws `@tama_flag_text`, which is `" *"` unless you set it; put
-`#[fg=red]` in it if you would rather see colour.
+Available icon sets:
 
-## Wire your agent
+| Set | `running` | `waiting` | `background` | `idle` | `error` |
+| --- | --- | --- | --- | --- | --- |
+| glyphs | `●` | `◐` | `⚙` | `○` | `✕` |
+| ascii | `*` | `?` | `+` | `.` | `!` |
+| pets | `🐥` | `🍼` | `🥚` | `😴` | `💀` |
 
-**Claude Code:** one block of hook configuration, pasteable, in
-**[`integrations/claude-code/README.md`](integrations/claude-code/README.md)**. That page
-also says which events raise a banner and which only move an icon, and why. `tama doctor`
-prints the same block and checks your settings against it, so you can also get it from
-there.
+State definitions are in [`CONTEXT.md`](CONTEXT.md).
 
-**Anything else:** the CLI is agent-agnostic and nothing about it is private. Any hook
-system that can run a command can drive it — see
-[`integrations/README.md`](integrations/README.md) for the recipe and the two rules about
-banner arguments. Every recipe has the same shape, which is what keeps it working when you
-move the clone and quiet on a machine where the plugin is not installed:
+## Connect an agent
 
-```sh
-[ -n "$TMUX" ] || exit 0
-tama="$(tmux show -gqv @tama_bin)"
-[ -x "$tama" ] || exit 0
-exec "$tama" state running my-agent
-```
+- **Claude Code:** copy the hook configuration from
+  [`integrations/claude-code/README.md`](integrations/claude-code/README.md).
+- **Other agents:** follow the public CLI recipe in
+  [`integrations/README.md`](integrations/README.md).
 
-## When something does not work, run `tama doctor`
+Adapters are best effort. `bin/tama` is the stable interface; `integrations/` follows agent
+APIs that may change independently.
 
-It is the first thing to reach for and it answers most questions without you having to guess
-which one you have. In order: the tmux version, whether the plugin is loaded in *this*
-server, whether your status line ever asks for the icons, which notification backend was
-chosen **and why the others were not**, which notifier binary that resolves to and where it
-was found, whether your title configuration can ever match, and which Claude Code events are
-wired. Then it prints the setup recipes, whether or not anything is wrong.
+## Diagnose problems
+
+Run `doctor` from a tmux server where the plugin is loaded:
 
 ```sh
 "$(tmux show -gqv @tama_bin)" doctor
 ```
 
-Without a reachable tmux server, run it by path instead:
+Without a reachable server, use the plugin path:
 
 ```sh
 /path/to/tmux-agent-tamagotchi/bin/tama doctor
 ```
 
-It exits non-zero when it found something broken and 0 when it only found things worth
-knowing, so it works as a check in a script
-([ADR-0007](docs/adr/0007-doctor-is-the-one-command-that-fails.md)). It is also the one
-command that runs with no tmux server at all, because "there is no server here" is one of
-the answers it exists to give.
+It checks:
 
-## The wiring you own
+- tmux version and plugin loading;
+- status-line configuration;
+- selected backend and notifier binary;
+- terminal-title configuration;
+- Claude Code hook configuration.
 
-Three things the plugin deliberately does not do to your configuration. The first is
-unavoidable; the other two only matter if you already have opinions, and are the ones that
-break a power user's config silently.
+Broken setups exit non-zero. Warnings exit zero. See
+[ADR-0007](docs/adr/0007-doctor-is-the-one-command-that-fails.md).
 
-**1. The status line.** Covered above. This is the one piece of manual wiring nobody can
-skip, and it is the reason a fresh install can look like a broken install.
+## Configuration reference
 
-**2. Load order, if you set the same hooks yourself.** The plugin appends its hooks with
-`set-hook -ga` and never assigns them, so your own lines on those events keep working. The
-contract runs the other way: **a plain `set-hook` of your own, after the plugin has loaded,
-replaces the whole array — the plugin's line included** — and the plugin only puts it back on
-the next reload, because it skips hooks it can already see. Put your own assignments
-*before* the TPM line, or append them with `-ga` too. The four events involved are
-`after-select-window`, `after-select-pane`, `client-focus-in` and `client-attached`.
+Options are global tmux user options and are read on every invocation. Reloading tmux is
+enough to apply changes.
 
-If you would rather own them completely:
+An empty string is a configured value, not a missing option.
 
-```tmux
-set -g @tama_manage_hooks off
-```
+For boolean options, `off`, `no`, `0` and `false` turn it off; every other value leaves it on.
 
-Then nothing is wired for you, and whatever clears a window mark and sweeps dead agents has
-to be in your configuration — the `on-select` recipe below on window selection at least,
-since **a mark is cleared by you arriving at the window and by nothing else**. An
-agent moving on does not clear it: the mark records that something happened while you were
-away. `doctor` reports this as a deliberate choice rather than a fault, and reminds you what
-it now costs.
-
-**3. Mouse bindings — the plugin installs none, on purpose.** tmux cannot append to a key
-table, so a plugin that bound `MouseDown1Status` would silently replace a binding of yours.
-Nothing here binds a key or a mouse event at all, so your own bindings are untouched. The
-consequence to know: the plugin hooks `after-select-window`, so clicking a window in the
-status line clears its mark **as long as your binding actually selects the window** — tmux's
-default `select-window -t=` does. If yours does something else instead, such as opening a
-menu, add the plugin's own recipe to it:
-
-```tmux
-run-shell -b '#{q:@tama_bin} on-select --window #{window_id}'
-```
-
-That is verbatim the line the plugin appends to `after-select-window`, so it is also what to
-write anywhere else you need the same effect.
-
-## Configuring it
-
-Every option is a global tmux user option, set the way every tmux plugin is configured, and
-**read on every invocation rather than cached** — so `tmux source-file` is enough to see a
-change, with no server restart. An option set to the empty string is a configuration and not
-an absent one: `set -g @tama_icon_prefix ''` really means no prefix.
-
-Any option that reads on or off takes tmux's own vocabulary for a flag, so
-`off`, `no`, `0` and `false` all turn it off and every other value leaves it on — a typo you
-can see is kinder than one that quietly took a feature away.
-
-**The complete annotated reference is `tama --help`**, which documents every option with its
-default and every subcommand with its behaviour. It is deliberately the single source rather
-than something restated here. [`examples/demo.tmux.conf`](examples/demo.tmux.conf) is the
-same material as a file you can copy from. What follows is a map of what exists, so you know
-what to go and read about.
+Use `bin/tama --help` for defaults and detailed behavior. The table below is the complete
+option map.
 
 | Group | Options |
 | --- | --- |
-| **Icons** | `@tama_icon_set` (`glyphs`, `pets`, `ascii`), `@tama_icon_running`, `@tama_icon_waiting`, `@tama_icon_background`, `@tama_icon_idle`, `@tama_icon_error`, `@tama_show_idle`, `@tama_show_background`, `@tama_icon_prefix`, `@tama_icon_separator`, `@tama_icon_suffix` |
-| **The window mark** | `@tama_flag_text` |
-| **Notifications** | `@tama_notifications`, `@tama_backend`, `@tama_title_format`, `@tama_group_format`, `@tama_label_command` |
-| **Being left alone** | `@tama_suppress_when_focused` |
-| **Your terminal** | `@tama_terminal_app`, `@tama_terminal_bundle_id`, `@tama_terminal_notifier`, `@tama_notify_send` |
-| **Replacing a capability** | `@tama_notify_command`, `@tama_dismiss_command`, `@tama_focused_command`, `@tama_focus_command` |
-| **Sweeping dead agents** | `@tama_gc_shells` |
-| **Lifecycle** | `@tama_manage_hooks` |
-| **Read, not set** | `@tama_bin`, `@tama_bin_dir`, `@tama_icons`, `@tama_flag` — exported by the entrypoint. `@tama_pane_agent`, `@tama_pane_cwd`, `@tama_pane_label` — pane options a notification title can reach. |
+| Icons | `@tama_icon_set`, `@tama_icon_running`, `@tama_icon_waiting`, `@tama_icon_background`, `@tama_icon_idle`, `@tama_icon_error`, `@tama_show_idle`, `@tama_show_background`, `@tama_icon_prefix`, `@tama_icon_separator`, `@tama_icon_suffix` |
+| Window mark | `@tama_flag_text` |
+| Notifications | `@tama_notifications`, `@tama_backend`, `@tama_title_format`, `@tama_group_format`, `@tama_label_command` |
+| Focus suppression | `@tama_suppress_when_focused` |
+| Terminal | `@tama_terminal_app`, `@tama_terminal_bundle_id`, `@tama_terminal_notifier`, `@tama_notify_send` |
+| Capability overrides | `@tama_notify_command`, `@tama_dismiss_command`, `@tama_focused_command`, `@tama_focus_command` |
+| Stale state | `@tama_gc_shells` |
+| Lifecycle | `@tama_manage_hooks` |
+| Exported values | `@tama_bin`, `@tama_bin_dir`, `@tama_icons`, `@tama_flag`, `@tama_pane_agent`, `@tama_pane_cwd`, `@tama_pane_label` |
 
-The five states an icon can show are `running`, `waiting`, `background`, `idle` and `error`;
-[`CONTEXT.md`](CONTEXT.md) defines each one. Icon set `glyphs` is the default (`● ◐ ⚙ ○ ✕`),
-`ascii` is `* ? + . !` for terminals with no wide-glyph support, and `pets` is `🐥 🍼 🥚 😴 💀`
-for the joke — those are double-width, so they cost a column each and terminals do not all
-measure them the way tmux does.
+### Focus detection
 
-## Commands
+Notification suppression requires agreement from tmux and the backend. If either cannot
+confirm focus, the notification is delivered. See
+[ADR-0004](docs/adr/0004-focus-suppression-is-an-and.md).
 
-`bin/tama` is the whole public surface and the compatibility promise. Nothing is on `$PATH`;
-hooks find it by asking tmux for `@tama_bin`, which is also how they survive you moving the
-clone. Run `tama --help` for the full description of each.
-
-| | |
-| --- | --- |
-| `state` | What the agent in this pane is doing, and subagent start/stop tracking. |
-| `icons` | The glyphs for one window. This is what `@tama_icons` runs for you. |
-| `flag` / `unflag` | Raise and clear a window's attention mark. |
-| `notify` / `dismiss` | Raise a banner, and take one down. |
-| `focus-window` | Bring a session's terminal window forward — the last step of a click. |
-| `gc` | Clear the state of panes whose agent is gone. |
-| `on-select` | Clear the mark, dismiss its banner and sweep the selected window. |
-| `hook` | Hand an event to a shipped adapter, e.g. `tama hook claude-code Stop`. |
-| `doctor` | Say what this installation is doing and why it is not doing the rest. |
-| `version` | Print the plugin version. |
-
-Hook-facing commands keep three promises because they run inside an agent's turn:
-
-- **Outside tmux they are silent no-ops, exit 0**, so one hook configuration works in both
-  contexts.
-- **A usage error exits 2** with a message on stderr, so a hook you are still editing fails
-  loudly.
-- **Everything else that goes wrong exits 0 silently** and never fails an agent's turn or
-  prints into its transcript.
-
-`doctor` is the diagnostic exception: it runs without tmux and reports broken setups with a
-non-zero status. `focus-window` also runs outside tmux because notification clicks are
-started by the desktop.
-
-## Notifications, and being left alone
-
-A banner is suppressed only when **two answers agree** that you are already looking: tmux
-says that window is the current one in its own session with somebody attached, *and* the
-backend says the terminal really is in front. Either one saying no — including a backend
-that cannot tell — delivers the banner
-([ADR-0004](docs/adr/0004-focus-suppression-is-an-and.md)). That asymmetry is deliberate:
-extra noise is recoverable, and a minimized terminal swallowing the one notification you
-needed is not.
-
-The backend half recognises your terminal window by its **title**, which works because tmux
-can be told to put the session name there. Without this the focus check can never match, so
-you get banners about windows on your screen:
+The macOS backend identifies a session by the terminal window title:
 
 ```tmux
 set -g set-titles on
 set -g set-titles-string '#S'
 ```
 
-Backends are directories of optional capabilities, each replaceable by a command of your
-own. The complete contract, platform behavior and override examples live in
-[`backends/README.md`](backends/README.md); a macOS focus override is available at
-[`examples/focus-open-window`](examples/focus-open-window).
+Backend configuration, custom backends and capability overrides are covered in
+[`backends/README.md`](backends/README.md).
 
-## Behaviour that would otherwise surprise you
+### Hook management
 
-**Clicking a banner can repurpose another session's terminal window** when none currently
-shows the target session. This macOS fallback and its override are documented in
-[`backends/README.md`](backends/README.md)
-([#22](https://github.com/lucasalencar/tmux-agent-tamagotchi/issues/22)).
+The plugin appends its hooks. A later plain `set-hook` for the same event replaces the
+plugin hook. Put custom hook assignments before the plugin or append them with `-ga`.
 
-**Subagent tracking is best effort.** The background icon — an idle agent whose delegated
-runs are still working — is counted from ids the agent's hooks supply. An agent that starts
-a delegated run and dies before reporting it finished leaves that id behind, and the pane
-keeps showing the background icon until something sweeps it. This is known and open
-([#15](https://github.com/lucasalencar/tmux-agent-tamagotchi/issues/15)); it is not exact
-and is not promised to be. Everything else about the pane's state works without it.
+To manage hooks yourself:
 
-**Agents that exit without saying so are swept, by inference.** A pane is stale when it is
-back at a shell prompt but its state says an agent is working there — `@tama_gc_shells` is
-the list of shells. A pane running some other program is left alone: what tmux reports is
-whatever holds the pane's tty, so an agent whose tool call opened an editor or a pager looks
-exactly like one that walked out, and taking a live agent's icon away is the expensive
-mistake. A pane carrying the plugin's leftovers but no state at all — a `notify` from a pane
-whose state hooks were never wired — is swept whatever it is running, since it draws nothing
-and nothing else will ever clear it.
+```tmux
+set -g @tama_manage_hooks off
+```
 
-The sweep runs on window and pane selection for the window you are looking at, and over the
-whole server when you come back to the terminal. Coming back by *attaching* needs nothing
-from you; coming back because your terminal regained focus needs tmux's own `set -g
-focus-events on` for tmux to notice at all.
+If a mouse binding does not select the clicked window, run the selection recipe explicitly:
 
-**Adapters are best effort and outside the version promise.** `bin/tama` is stable;
-`integrations/` tracks agents that evolve independently. See
-[`integrations/README.md`](integrations/README.md) and
-[ADR-0002](docs/adr/0002-integrations-are-outside-the-contract.md).
+```tmux
+run-shell -b '#{q:@tama_bin} on-select --window #{window_id}'
+```
 
-## Documentation
+The plugin does not install mouse bindings.
 
-| | |
+## Commands
+
+`bin/tama` is the public CLI. Run `bin/tama --help` for arguments and defaults.
+
+| Command | Purpose |
 | --- | --- |
-| `tama --help` | Every option and every subcommand. The reference. |
-| `tama doctor` | What your installation is doing, and the recipes to paste. |
-| [`CONTEXT.md`](CONTEXT.md) | The domain glossary. |
-| [`docs/adr/`](docs/adr/) | Why the boundaries are where they are — the reasoning behind most of what looks arbitrary. |
-| [`backends/README.md`](backends/README.md) | The backend contract and what each platform can do. |
-| [`integrations/README.md`](integrations/README.md) | Wiring an agent, adapter or not. |
-| [`integrations/claude-code/README.md`](integrations/claude-code/README.md) | Claude Code: the hook block, and what each event does. |
-| [`examples/demo.tmux.conf`](examples/demo.tmux.conf) | A throwaway server with every option annotated. |
+| `state` | Record an agent state or subagent event. |
+| `icons` | Render the icons for one window. |
+| `flag` / `unflag` | Raise or clear a window mark. |
+| `notify` / `dismiss` | Raise or dismiss a notification. |
+| `focus-window` | Bring a session's terminal window forward. |
+| `gc` | Clear stale pane state. |
+| `on-select` | Clear a mark, dismiss its notification and sweep its window. |
+| `hook` | Dispatch an event to a bundled adapter. |
+| `doctor` | Diagnose an installation. |
+| `version` | Print the plugin version. |
+
+Hook-facing commands follow these rules:
+
+- Outside tmux, they exit zero without output.
+- Usage errors exit `2` with a message on stderr.
+- Operational errors exit zero without interrupting an agent turn.
+
+`doctor` reports broken setups with a non-zero status. `focus-window` runs outside tmux
+because desktop notification clicks do not inherit the hook environment.
+
+## Operational notes
+
+- **Notifications:** grouped per window; selecting the window dismisses its banner.
+- **macOS clicks:** may repurpose another tmux client's terminal window when the target
+  session is not visible. See [`backends/README.md`](backends/README.md) and
+  [#22](https://github.com/lucasalencar/tmux-agent-tamagotchi/issues/22).
+- **Subagents:** tracking is best effort. A leaked subagent id can leave a background icon
+  until the pane is swept ([#15](https://github.com/lucasalencar/tmux-agent-tamagotchi/issues/15)).
+- **Stale state:** a pane is cleared only after it returns to a shell listed in
+  `@tama_gc_shells`. Other commands may belong to a live agent and are left alone.
+- **Focus events:** server-wide sweeping on terminal focus requires `set -g focus-events on`.
+
+## More documentation
+
+| Document | Contents |
+| --- | --- |
+| `bin/tama --help` | Options, defaults and command arguments |
+| `bin/tama doctor` | Installation diagnostics and setup recipes |
+| [`CONTEXT.md`](CONTEXT.md) | Domain glossary |
+| [`docs/adr/`](docs/adr/) | Architectural decisions |
+| [`backends/README.md`](backends/README.md) | Backend contract and platform behavior |
+| [`integrations/README.md`](integrations/README.md) | Public integration recipe |
+| [`integrations/claude-code/README.md`](integrations/claude-code/README.md) | Claude Code adapter |
+| [`examples/demo.tmux.conf`](examples/demo.tmux.conf) | Runnable configuration example |
 
 ## Development
 
 ```sh
-make lint   # shellcheck over every executable and library, examples included
-make test   # the bats suite
-make        # both, which is what CI runs
+make lint
+make test
+make
 ```
 
-CI runs both targets on Ubuntu and macOS. The macOS leg is not a portability nicety: every
-script here is written for bash 3.2.57, which is what macOS ships and what an agent's hook
-runs under there, and there is no bash 3.2 on a Linux runner. Tests drive the plugin through
-`bin/tama` against their own isolated tmux servers and never source its libraries.
+CI runs shellcheck and the bats suite on Ubuntu and macOS.
 
-## Licence
+## License
 
 GPL-3.0. See [`LICENSE`](LICENSE).
