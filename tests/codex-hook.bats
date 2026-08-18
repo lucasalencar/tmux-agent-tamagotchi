@@ -414,6 +414,48 @@ PY
   assert_pane_option_unset "$PANE" agent
 }
 
+@test "truncated payloads cannot change source-dependent or subagent state" {
+  hook UserPromptSubmit "$(payload UserPromptSubmit)"
+  local oversized_start oversized_subagent
+  oversized_start="$(python3 - <<'PY'
+print('{"source":"startup","padding":"' + ('x' * 70000) + '"}')
+PY
+)"
+  oversized_subagent="$(python3 - <<'PY'
+print('{"agent_id":"ghost_1","padding":"' + ('x' * 70000) + '"}')
+PY
+)"
+
+  hook SessionStart "$oversized_start"
+  assert_success
+  assert_pane_option "$PANE" state_main running
+
+  hook SubagentStart "$oversized_subagent"
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
+
+  hook Stop "$(payload Stop)"
+  hook SubagentStart "$(payload SubagentStart ',"agent_id":"live_1"')"
+  hook SubagentStop "$oversized_subagent"
+  assert_success
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+}
+
+@test "truncated delegated payloads remain isolated when common fields precede event data" {
+  hook SessionStart "$(payload SessionStart ',"source":"startup"')"
+  local delegated
+  delegated="$(python3 - <<'PY'
+print('{"agent_id":"review_1","padding":"' + ('x' * 70000) + '"}')
+PY
+)"
+
+  hook UserPromptSubmit "$delegated"
+  hook PermissionRequest "$delegated"
+  assert_success
+  assert_pane_option "$PANE" state_main idle
+  refute_backend_called notify
+}
+
 @test "a text value that exhausts the escape bound uses its fallback" {
   local malformed
   malformed="$(python3 - <<'PY'

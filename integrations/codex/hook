@@ -291,7 +291,7 @@ esac
 
 case "$TAMA_CODEX_EVENT" in
   SessionStart)
-    if codex_token_field source; then
+    if [ "$TAMA_CODEX_PAYLOAD_TRUNCATED" = 'no' ] && codex_token_field source; then
       case "$TAMA_CODEX_FIELD" in
         startup | resume | clear) codex_state idle ;;
         compact) : ;;
@@ -320,7 +320,7 @@ case "$TAMA_CODEX_EVENT" in
     fi
     ;;
   SubagentStart | SubagentStop)
-    if codex_text_field agent_id top; then
+    if [ "$TAMA_CODEX_PAYLOAD_TRUNCATED" = 'no' ] && codex_text_field agent_id top; then
       case "$TAMA_CODEX_EVENT" in
         SubagentStart)
           "$TAMA_BIN" state subagent-start "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true

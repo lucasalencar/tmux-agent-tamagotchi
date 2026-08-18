@@ -152,8 +152,10 @@ or `--approve-for-me`, so the adapter cannot resolve those cases and deliberatel
 to human attention.
 
 Question text, approval descriptions and final assistant messages are decoded from the hook
-payload when usable. Reads and messages are bounded; malformed or truncated payloads use a
-short fallback instead of delaying or failing the Codex turn. The adapter never calls the
+payload when usable. Reads and messages are bounded. A truncated approval or completion uses
+a short fallback, while source-dependent session starts, questions and subagent bookkeeping
+are ignored because their partial fields cannot be trusted. Payload-independent main-turn
+transitions and `SessionEnd` cleanup still run. The adapter never calls the
 standalone flag command: waiting states and notifications compose with the core's existing
 focus suppression, persistent flag, grouping, dismissal and click behavior.
 
