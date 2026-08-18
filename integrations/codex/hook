@@ -140,7 +140,17 @@ codex_auto_review_is_configured() {
   [ "$found" -eq 1 ] && [ "$auto" = 'yes' ]
 }
 
-case "${1:-}" in
+TAMA_CODEX_EVENT="${1:-}"
+case "$TAMA_CODEX_EVENT" in
+  SubagentStart | SubagentStop) ;;
+  *)
+    if codex_text_field agent_id; then
+      exit 0
+    fi
+    ;;
+esac
+
+case "$TAMA_CODEX_EVENT" in
   SessionStart)
     if codex_token_field source; then
       case "$TAMA_CODEX_FIELD" in
@@ -164,6 +174,18 @@ case "${1:-}" in
     else
       codex_text_field description || TAMA_CODEX_TEXT='Codex needs your approval'
       codex_state_and_notify waiting "$TAMA_CODEX_TEXT"
+    fi
+    ;;
+  SubagentStart | SubagentStop)
+    if codex_text_field agent_id; then
+      case "$TAMA_CODEX_EVENT" in
+        SubagentStart)
+          "$TAMA_BIN" state subagent-start "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true
+          ;;
+        *)
+          "$TAMA_BIN" state subagent-stop "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true
+          ;;
+      esac
     fi
     ;;
   Stop)

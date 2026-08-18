@@ -97,6 +97,8 @@ expected = {
     "PreToolUse": ("^request_user_input$", 10),
     "PermissionRequest": ("*", 10),
     "PostToolUse": (None, 10),
+    "SubagentStart": ("*", 10),
+    "SubagentStop": ("*", 10),
     "Stop": (None, 10),
     "SessionEnd": ("other", 3),
 }
@@ -220,4 +222,65 @@ PY
   assert_pane_option "$PANE" state_main waiting
   assert_backend_called notify
   assert_flagged "$WINDOW"
+}
+
+@test "opaque subagent ids independently derive background until they stop" {
+  hook SessionStart "$(payload SessionStart ',"source":"startup"')"
+  hook SubagentStart "$(payload SubagentStart ',"agent_id":"agent_1","agent_type":"default"')"
+  hook SubagentStart "$(payload SubagentStart ',"agent_id":"agent-2","agent_type":"reviewer"')"
+  hook SubagentStart "$(payload SubagentStart ',"agent_id":"agent_1","agent_type":"default"')"
+  assert_success
+  assert_pane_option "$PANE" state_main idle
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+  refute_backend_called notify
+
+  hook SubagentStop "$(payload SubagentStop ',"agent_id":"agent_1","agent_type":"default"')"
+  hook SubagentStop "$(payload SubagentStop ',"agent_id":"agent_1","agent_type":"default"')"
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+
+  hook SubagentStop "$(payload SubagentStop ',"agent_id":"agent-2","agent_type":"reviewer"')"
+  assert_pane_option_unset "$PANE" subagents
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
+}
+
+@test "delegated lifecycle events cannot overwrite or interrupt the main turn" {
+  hook SessionStart "$(payload SessionStart ',"source":"startup"')"
+  hook SubagentStart "$(payload SubagentStart ',"agent_id":"review_1","agent_type":"reviewer"')"
+
+  local event extra
+  for event in UserPromptSubmit PostToolUse Stop PermissionRequest; do
+    extra=',"agent_id":"review_1"'
+    if [ "$event" = PermissionRequest ]; then
+      extra="$extra,"'"tool_name":"Bash","tool_input":{"description":"Approve delegated work?"}'
+    fi
+    hook "$event" "$(payload "$event" "$extra")"
+    assert_success
+    assert_pane_option "$PANE" state_main idle
+  done
+
+  hook PreToolUse "$(payload PreToolUse ',"agent_id":"review_1","tool_name":"request_user_input","tool_input":{"questions":[{"question":"Delegated question?"}]}}')"
+  assert_success
+  assert_pane_option "$PANE" state_main idle
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+  refute_backend_called notify
+}
+
+@test "missing, malformed, and invalid subagent ids are silent and harmless" {
+  hook SessionStart "$(payload SessionStart ',"source":"startup"')"
+  hook SubagentStart "$(payload SubagentStart ',"agent_id":"agent.alpha:1"')"
+  assert_success
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+
+  hook SubagentStart "$(payload SubagentStart)"
+  hook SubagentStart "$(payload SubagentStart ',"agent_id":42')"
+  hook SubagentStart '{"agent_id":"unterminated}'
+  hook SubagentStart "$(payload SubagentStart ',"agent_id":"two ids"')"
+  hook SubagentStop "$(payload SubagentStop ',"agent_id":"two ids"')"
+  assert_success
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+  refute_backend_called notify
+
+  hook SessionEnd "$(payload SessionEnd ',"reason":"other"')"
+  assert_pane_option_unset "$PANE" subagents
+  assert_equal "$(tama_icons "$WINDOW")" ''
 }

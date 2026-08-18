@@ -77,6 +77,30 @@ review their source and trust the exact definitions before expecting them to run
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook codex SubagentStart >/dev/null 2>&1 || :",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook codex SubagentStop >/dev/null 2>&1 || :",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -134,11 +158,20 @@ short fallback instead of delaying or failing the Codex turn. The adapter never 
 standalone flag command: waiting states and notifications compose with the core's existing
 focus suppression, persistent flag, grouping, dismissal and click behavior.
 
+`SubagentStart` and `SubagentStop` maintain only the non-empty opaque `agent_id` supplied by
+Codex. An idle pane with live subagents uses the core's existing derived background state;
+multiple ids and duplicate events are harmless. These hooks do not inspect the subagent's
+type, prompt, output, progress or transcript and never notify. Any other lifecycle event
+carrying an `agent_id` is treated as delegated work and ignored completely, so a reviewer or
+subagent cannot overwrite or interrupt the main pane's lifecycle.
+
 ## Smoke test
 
 From a tmux pane with the plugin loaded, start Codex and submit a harmless prompt. Confirm the
-icon moves from idle to running and back to idle. Archive or end the Codex session and confirm
-the icon disappears. If nothing moves, check that `tmux show -gqv @tama_bin` prints the
-plugin's executable path and use `/hooks` to confirm the definitions are trusted.
+icon moves from idle to running and back to idle. Start a delegated agent, let the main turn
+become idle and confirm the background icon remains until that agent stops. Archive or end
+the Codex session and confirm the icon and any subagent state disappear. If nothing moves,
+check that `tmux show -gqv @tama_bin` prints the plugin's executable path and use `/hooks` to
+confirm the definitions are trusted.
 
 The adapter requires neither `jq` nor a Codex process in the plugin's automated test suite.
