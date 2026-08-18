@@ -114,7 +114,6 @@ review their source and trust the exact definitions before expecting them to run
     ],
     "SessionEnd": [
       {
-        "matcher": "other",
         "hooks": [
           {
             "type": "command",

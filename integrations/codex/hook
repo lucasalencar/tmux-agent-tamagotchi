@@ -46,20 +46,114 @@ codex_locate_string() { # <field>
   esac
 }
 
+codex_locate_top_level_string() { # <field>
+  TAMA_CODEX_REST=''
+  codex_read_payload
+
+  # Delegation is signalled only by the common top-level agent_id. A tool is free
+  # to use the same key inside tool_input, where treating it as delegation would
+  # silently suppress a real question or approval request.
+  local rest="$TAMA_CODEX_PAYLOAD" structural char raw before_quote before_escape probe
+  local object_depth=0 array_depth=0
+  while :; do
+    case "$rest" in *'"'*) ;; *) return 1 ;; esac
+    structural="${rest%%\"*}"
+    rest="${rest#*\"}"
+
+    while [ -n "$structural" ]; do
+      char="${structural:0:1}"
+      structural="${structural#?}"
+      case "$char" in
+        '{') object_depth=$((object_depth + 1)) ;;
+        '}') object_depth=$((object_depth - 1)) ;;
+        '[') array_depth=$((array_depth + 1)) ;;
+        ']') array_depth=$((array_depth - 1)) ;;
+      esac
+    done
+
+    raw=''
+    while :; do
+      case "$rest" in *'"'*) ;; *) return 1 ;; esac
+      before_quote="${rest%%\"*}"
+      case "$rest" in
+        *\\*) before_escape="${rest%%\\*}" ;;
+        *) before_escape="$before_quote" ;;
+      esac
+      if [ "${#before_escape}" -ge "${#before_quote}" ]; then
+        raw="$raw$before_quote"
+        rest="${rest#*\"}"
+        break
+      fi
+      raw="$raw$before_escape"
+      rest="${rest#*\\}"
+      [ -n "$rest" ] || return 1
+      raw="$raw\\${rest:0:1}"
+      rest="${rest#?}"
+    done
+
+    if [ "$object_depth" -eq 1 ] && [ "$array_depth" -eq 0 ] && [ "$raw" = "$1" ]; then
+      probe="$rest"
+      while :; do
+        case "$probe" in [[:space:]]*) probe="${probe#?}" ;; *) break ;; esac
+      done
+      case "$probe" in :*) probe="${probe#:}" ;; *) continue ;; esac
+      while :; do
+        case "$probe" in [[:space:]]*) probe="${probe#?}" ;; *) break ;; esac
+      done
+      case "$probe" in
+        '"'*) TAMA_CODEX_REST="${probe#\"}"; return 0 ;;
+        *) return 1 ;;
+      esac
+    fi
+  done
+}
+
 codex_token_field() { # <field>
   TAMA_CODEX_FIELD=''
-  codex_locate_string "$1" || return 1
+  codex_locate_top_level_string "$1" || return 1
   TAMA_CODEX_FIELD="${TAMA_CODEX_REST%%\"*}"
   case "$TAMA_CODEX_FIELD" in
     '' | -* | *[!A-Za-z0-9_-]*) TAMA_CODEX_FIELD=''; return 1 ;;
   esac
 }
 
-codex_text_field() { # <field>
-  TAMA_CODEX_TEXT=''
-  codex_locate_string "$1" || return 1
+TAMA_CODEX_CHAR=''
 
-  local rest="$TAMA_CODEX_REST" out='' before_quote before_escape char escapes=0
+codex_utf8_char() { # <codepoint>
+  local codepoint="$1" encoded
+  TAMA_CODEX_CHAR=''
+  # Bash 3.2 has no Unicode escape formatter. Build the UTF-8 bytes as octal so
+  # valid JSON text remains useful without adding a JSON utility dependency.
+  [ "$codepoint" -gt 0 ] || return 1
+  if [ "$codepoint" -le 127 ]; then
+    printf -v encoded '\\%03o' "$codepoint"
+  elif [ "$codepoint" -le 2047 ]; then
+    printf -v encoded '\\%03o\\%03o' \
+      $((192 | codepoint >> 6)) $((128 | codepoint & 63))
+  elif [ "$codepoint" -le 65535 ]; then
+    printf -v encoded '\\%03o\\%03o\\%03o' \
+      $((224 | codepoint >> 12)) $((128 | codepoint >> 6 & 63)) \
+      $((128 | codepoint & 63))
+  elif [ "$codepoint" -le 1114111 ]; then
+    printf -v encoded '\\%03o\\%03o\\%03o\\%03o' \
+      $((240 | codepoint >> 18)) $((128 | codepoint >> 12 & 63)) \
+      $((128 | codepoint >> 6 & 63)) $((128 | codepoint & 63))
+  else
+    return 1
+  fi
+  printf -v TAMA_CODEX_CHAR '%b' "$encoded"
+}
+
+codex_text_field() { # <field> [top]
+  TAMA_CODEX_TEXT=''
+  if [ "${2:-}" = 'top' ]; then
+    codex_locate_top_level_string "$1" || return 1
+  else
+    codex_locate_string "$1" || return 1
+  fi
+
+  local rest="$TAMA_CODEX_REST" out='' before_quote before_escape char hex low_hex
+  local escapes=0 codepoint low_codepoint
   while :; do
     case "$rest" in
       *'"'*) ;;
@@ -82,7 +176,26 @@ codex_text_field() { # <field>
       n) out="$out"$'\n' ;;
       t) out="$out"$'\t' ;;
       r | b | f) ;;
-      u) rest="${rest#[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]}" ;;
+      u)
+        hex="${rest:0:4}"
+        [ "${#hex}" -eq 4 ] || return 1
+        case "$hex" in *[!0-9A-Fa-f]*) return 1 ;; esac
+        rest="${rest:4}"
+        codepoint=$((16#$hex))
+        if [ "$codepoint" -ge 55296 ] && [ "$codepoint" -le 56319 ]; then
+          case "$rest" in \\u????*) ;; *) return 1 ;; esac
+          low_hex="${rest:2:4}"
+          case "$low_hex" in *[!0-9A-Fa-f]*) return 1 ;; esac
+          low_codepoint=$((16#$low_hex))
+          [ "$low_codepoint" -ge 56320 ] && [ "$low_codepoint" -le 57343 ] || return 1
+          rest="${rest:6}"
+          codepoint=$((65536 + (codepoint - 55296) * 1024 + low_codepoint - 56320))
+        elif [ "$codepoint" -ge 56320 ] && [ "$codepoint" -le 57343 ]; then
+          return 1
+        fi
+        codex_utf8_char "$codepoint" || return 1
+        out="$out$TAMA_CODEX_CHAR"
+        ;;
       *) out="$out$char" ;;
     esac
     escapes=$((escapes + 1))
@@ -144,7 +257,7 @@ TAMA_CODEX_EVENT="${1:-}"
 case "$TAMA_CODEX_EVENT" in
   SubagentStart | SubagentStop) ;;
   *)
-    if codex_text_field agent_id; then
+    if codex_text_field agent_id top; then
       exit 0
     fi
     ;;
@@ -177,7 +290,7 @@ case "$TAMA_CODEX_EVENT" in
     fi
     ;;
   SubagentStart | SubagentStop)
-    if codex_text_field agent_id; then
+    if codex_text_field agent_id top; then
       case "$TAMA_CODEX_EVENT" in
         SubagentStart)
           "$TAMA_BIN" state subagent-start "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true
@@ -189,7 +302,7 @@ case "$TAMA_CODEX_EVENT" in
     fi
     ;;
   Stop)
-    codex_text_field last_assistant_message || TAMA_CODEX_TEXT='Codex finished its turn'
+    codex_text_field last_assistant_message top || TAMA_CODEX_TEXT='Codex finished its turn'
     codex_state_and_notify idle "$TAMA_CODEX_TEXT"
     ;;
   SessionEnd)

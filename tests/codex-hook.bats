@@ -100,7 +100,7 @@ expected = {
     "SubagentStart": ("*", 10),
     "SubagentStop": ("*", 10),
     "Stop": (None, 10),
-    "SessionEnd": ("other", 3),
+    "SessionEnd": (None, 3),
 }
 assert set(data["hooks"]) == set(expected)
 for event, (matcher, timeout) in expected.items():
@@ -161,6 +161,10 @@ PY
   assert_success
   assert_backend_value notify argv2 "$(printf 'He asked "now or later?"\nPlease choose.')"
 
+  hook Stop "$(payload Stop ',"last_assistant_message":"Revisão concluída \u2705"')"
+  assert_success
+  assert_backend_value notify argv2 'Revisão concluída ✅'
+
   hook PermissionRequest '{"tool_name":"Bash","tool_input":{"description":"truncated}'
   assert_success
   assert_backend_value notify argv2 'Codex needs your approval'
@@ -209,11 +213,14 @@ PY
     $'[profiles.work]\napprovals_reviewer = "auto_review"' \
     $'approvals_reviewer = "auto_review"\napprovals_reviewer = "auto_review"' \
     'approvals_reviewer = auto_review'; do
+    local before
+    before="$(tama_backend_calls notify)"
     printf '%s\n' "$config" >"$CODEX_HOME/config.toml"
     hook UserPromptSubmit "$(payload UserPromptSubmit)"
     hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash"')"
     assert_success
     assert_pane_option "$PANE" state_main waiting
+    [ "$(tama_backend_calls notify)" -eq $((before + 1)) ]
   done
 
   : >"$CODEX_HOME/config.toml"
@@ -222,6 +229,29 @@ PY
   assert_pane_option "$PANE" state_main waiting
   assert_backend_called notify
   assert_flagged "$WINDOW"
+}
+
+@test "unreadable and oversized reviewer configuration require human attention" {
+  export CODEX_HOME="$BATS_TEST_TMPDIR/codex-home"
+  mkdir -p "$CODEX_HOME/config.toml"
+
+  hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash"')"
+  assert_success
+  assert_pane_option "$PANE" state_main waiting
+  [ "$(tama_backend_calls notify)" -eq 1 ]
+
+  rmdir "$CODEX_HOME/config.toml"
+  python3 - "$CODEX_HOME/config.toml" <<'PY'
+import sys
+with open(sys.argv[1], "w", encoding="utf-8") as config:
+    config.write('approvals_reviewer = "auto_review"\n')
+    config.write("#" * 65537)
+PY
+  hook UserPromptSubmit "$(payload UserPromptSubmit)"
+  hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash"')"
+  assert_success
+  assert_pane_option "$PANE" state_main waiting
+  [ "$(tama_backend_calls notify)" -eq 2 ]
 }
 
 @test "opaque subagent ids independently derive background until they stop" {
@@ -248,8 +278,11 @@ PY
   hook SubagentStart "$(payload SubagentStart ',"agent_id":"review_1","agent_type":"reviewer"')"
 
   local event extra
-  for event in UserPromptSubmit PostToolUse Stop PermissionRequest; do
+  for event in SessionStart UserPromptSubmit PostToolUse Stop PermissionRequest SessionEnd; do
     extra=',"agent_id":"review_1"'
+    if [ "$event" = SessionStart ]; then
+      extra="$extra,"'"source":"clear"'
+    fi
     if [ "$event" = PermissionRequest ]; then
       extra="$extra,"'"tool_name":"Bash","tool_input":{"description":"Approve delegated work?"}'
     fi
@@ -263,6 +296,13 @@ PY
   assert_pane_option "$PANE" state_main idle
   assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
   refute_backend_called notify
+}
+
+@test "nested agent_id fields do not turn a main event into delegated work" {
+  hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"mcp__deploy","tool_input":{"agent_id":"production","description":"Deploy the service?"}}')"
+  assert_success
+  assert_pane_option "$PANE" state_main waiting
+  assert_backend_value notify argv2 'Deploy the service?'
 }
 
 @test "missing, malformed, and invalid subagent ids are silent and harmless" {
