@@ -46,7 +46,7 @@ codex_locate_string() { # <field>
   esac
 }
 
-codex_locate_top_level_string() { # <field>
+codex_locate_structured_string() { # <field> <object-depth> <array-depth>
   TAMA_CODEX_REST=''
   codex_read_payload
 
@@ -55,6 +55,7 @@ codex_locate_top_level_string() { # <field>
   # silently suppress a real question or approval request.
   local rest="$TAMA_CODEX_PAYLOAD" structural char raw before_quote before_escape probe
   local object_depth=0 array_depth=0
+  case "$rest" in *"\"$1\""*) ;; *) return 1 ;; esac
   while :; do
     case "$rest" in *'"'*) ;; *) return 1 ;; esac
     structural="${rest%%\"*}"
@@ -91,7 +92,7 @@ codex_locate_top_level_string() { # <field>
       rest="${rest#?}"
     done
 
-    if [ "$object_depth" -eq 1 ] && [ "$array_depth" -eq 0 ] && [ "$raw" = "$1" ]; then
+    if [ "$object_depth" -eq "$2" ] && [ "$array_depth" -eq "$3" ] && [ "$raw" = "$1" ]; then
       probe="$rest"
       while :; do
         case "$probe" in [[:space:]]*) probe="${probe#?}" ;; *) break ;; esac
@@ -106,6 +107,10 @@ codex_locate_top_level_string() { # <field>
       esac
     fi
   done
+}
+
+codex_locate_top_level_string() { # <field>
+  codex_locate_structured_string "$1" 1 0
 }
 
 codex_token_field() { # <field>
@@ -144,13 +149,14 @@ codex_utf8_char() { # <codepoint>
   printf -v TAMA_CODEX_CHAR '%b' "$encoded"
 }
 
-codex_text_field() { # <field> [top]
+codex_text_field() { # <field> [location]
   TAMA_CODEX_TEXT=''
-  if [ "${2:-}" = 'top' ]; then
-    codex_locate_top_level_string "$1" || return 1
-  else
-    codex_locate_string "$1" || return 1
-  fi
+  case "${2:-any}" in
+    top) codex_locate_top_level_string "$1" || return 1 ;;
+    tool-input) codex_locate_structured_string "$1" 2 0 || return 1 ;;
+    first-question) codex_locate_structured_string "$1" 3 1 || return 1 ;;
+    *) codex_locate_string "$1" || return 1 ;;
+  esac
 
   local rest="$TAMA_CODEX_REST" out='' before_quote before_escape char hex low_hex
   local escapes=0 codepoint low_codepoint
@@ -196,7 +202,8 @@ codex_text_field() { # <field> [top]
         codex_utf8_char "$codepoint" || return 1
         out="$out$TAMA_CODEX_CHAR"
         ;;
-      *) out="$out$char" ;;
+      '"' | \\ | /) out="$out$char" ;;
+      *) return 1 ;;
     esac
     escapes=$((escapes + 1))
     [ "$escapes" -lt "$TAMA_CODEX_ESCAPES_MAX" ] || break
@@ -226,22 +233,38 @@ codex_state_and_notify() { # <state> <message>
 
 codex_auto_review_is_configured() {
   local codex_dir="${CODEX_HOME:-$HOME/.codex}"
-  local path="$codex_dir/config.toml" config line compact found=0 auto='no'
+  local path="$codex_dir/config.toml" config line found=0 auto='no'
   [ -r "$path" ] || return 1
 
-  config="$(dd if="$path" bs=65537 count=1 2>/dev/null)" || return 1
+  config="$(dd if="$path" bs=65537 count=1 2>/dev/null && printf x)" || return 1
+  config="${config%x}"
   [ "${#config}" -le 65536 ] || return 1
 
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%%#*}"
-    compact="${line//[[:space:]]/}"
-    case "$compact" in
+    while :; do
+      case "$line" in [[:space:]]*) line="${line#?}" ;; *) break ;; esac
+    done
+    case "$line" in
       '') continue ;;
       '['*) break ;;
       approvals_reviewer*)
         found=$((found + 1))
-        case "$compact" in
-          'approvals_reviewer="auto_review"' | "approvals_reviewer='auto_review'")
+        local key value
+        case "$line" in *'='*) ;; *) auto='no'; continue ;; esac
+        key="${line%%=*}"
+        value="${line#*=}"
+        while :; do
+          case "$key" in *[[:space:]]) key="${key%?}" ;; *) break ;; esac
+        done
+        while :; do
+          case "$value" in [[:space:]]*) value="${value#?}" ;; *) break ;; esac
+        done
+        while :; do
+          case "$value" in *[[:space:]]) value="${value%?}" ;; *) break ;; esac
+        done
+        case "$key:$value" in
+          'approvals_reviewer:"auto_review"' | "approvals_reviewer:'auto_review'")
             auto='yes'
             ;;
           *) auto='no' ;;
@@ -277,7 +300,7 @@ case "$TAMA_CODEX_EVENT" in
     ;;
   PreToolUse)
     if codex_token_field tool_name && [ "$TAMA_CODEX_FIELD" = 'request_user_input' ]; then
-      codex_text_field question || TAMA_CODEX_TEXT='Codex has a question'
+      codex_text_field question first-question || TAMA_CODEX_TEXT='Codex has a question'
       codex_state_and_notify waiting "$TAMA_CODEX_TEXT"
     fi
     ;;
@@ -285,7 +308,7 @@ case "$TAMA_CODEX_EVENT" in
     if codex_auto_review_is_configured; then
       codex_state running
     else
-      codex_text_field description || TAMA_CODEX_TEXT='Codex needs your approval'
+      codex_text_field description tool-input || TAMA_CODEX_TEXT='Codex needs your approval'
       codex_state_and_notify waiting "$TAMA_CODEX_TEXT"
     fi
     ;;

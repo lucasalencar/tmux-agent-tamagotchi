@@ -169,6 +169,10 @@ PY
   assert_success
   assert_backend_value notify argv2 'Codex needs your approval'
 
+  hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash","tool_input":{"description":"Run \q now"}}')"
+  assert_success
+  assert_backend_value notify argv2 'Codex needs your approval'
+
   local long='The result is ready' i=0
   while [ "$i" -lt 200 ]; do
     long="$long word$i"
@@ -212,6 +216,8 @@ PY
     'approvals_reviewer = "user"' \
     $'[profiles.work]\napprovals_reviewer = "auto_review"' \
     $'approvals_reviewer = "auto_review"\napprovals_reviewer = "auto_review"' \
+    'approvals_reviewer = "auto_ review"' \
+    'approvals_ reviewer = "auto_review"' \
     'approvals_reviewer = auto_review'; do
     local before
     before="$(tama_backend_calls notify)"
@@ -245,7 +251,7 @@ PY
 import sys
 with open(sys.argv[1], "w", encoding="utf-8") as config:
     config.write('approvals_reviewer = "auto_review"\n')
-    config.write("#" * 65537)
+    config.write("\n" * 65537)
 PY
   hook UserPromptSubmit "$(payload UserPromptSubmit)"
   hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash"')"
@@ -303,6 +309,12 @@ PY
   assert_success
   assert_pane_option "$PANE" state_main waiting
   assert_backend_value notify argv2 'Deploy the service?'
+}
+
+@test "text-shaped content cannot impersonate the documented payload field" {
+  hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash","tool_input":{"command":"printf '\''\\\"description\\\":\\\"fake\\\"'\''","description":"Approve the real command?"}}')"
+  assert_success
+  assert_backend_value notify argv2 'Approve the real command?'
 }
 
 @test "missing, malformed, and invalid subagent ids are silent and harmless" {
