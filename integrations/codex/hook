@@ -9,8 +9,12 @@ TAMA_CODEX_AGENT='codex'
 TAMA_CODEX_PAYLOAD=''
 TAMA_CODEX_PAYLOAD_READ='no'
 TAMA_CODEX_FIELD=''
+TAMA_CODEX_TEXT=''
+TAMA_CODEX_REST=''
 TAMA_CODEX_PAYLOAD_MAX=65536
 TAMA_CODEX_PAYLOAD_TIMEOUT=2
+TAMA_CODEX_TEXT_MAX=500
+TAMA_CODEX_ESCAPES_MAX=256
 
 codex_read_payload() {
   [ "$TAMA_CODEX_PAYLOAD_READ" = 'no' ] || return 0
@@ -20,8 +24,8 @@ codex_read_payload() {
     -t "$TAMA_CODEX_PAYLOAD_TIMEOUT" TAMA_CODEX_PAYLOAD || true
 }
 
-codex_token_field() { # <field>
-  TAMA_CODEX_FIELD=''
+codex_locate_string() { # <field>
+  TAMA_CODEX_REST=''
   codex_read_payload
 
   local rest="$TAMA_CODEX_PAYLOAD"
@@ -37,17 +41,103 @@ codex_token_field() { # <field>
     esac
   done
   case "$rest" in
-    '"'*) rest="${rest#\"}" ;;
+    '"'*) TAMA_CODEX_REST="${rest#\"}" ;;
     *) return 1 ;;
   esac
-  TAMA_CODEX_FIELD="${rest%%\"*}"
+}
+
+codex_token_field() { # <field>
+  TAMA_CODEX_FIELD=''
+  codex_locate_string "$1" || return 1
+  TAMA_CODEX_FIELD="${TAMA_CODEX_REST%%\"*}"
   case "$TAMA_CODEX_FIELD" in
     '' | -* | *[!A-Za-z0-9_-]*) TAMA_CODEX_FIELD=''; return 1 ;;
   esac
 }
 
+codex_text_field() { # <field>
+  TAMA_CODEX_TEXT=''
+  codex_locate_string "$1" || return 1
+
+  local rest="$TAMA_CODEX_REST" out='' before_quote before_escape char escapes=0
+  while :; do
+    case "$rest" in
+      *'"'*) ;;
+      *) return 1 ;;
+    esac
+    before_quote="${rest%%\"*}"
+    case "$rest" in
+      *\\*) before_escape="${rest%%\\*}" ;;
+      *) before_escape="$before_quote" ;;
+    esac
+    if [ "${#before_escape}" -ge "${#before_quote}" ]; then
+      out="$out$before_quote"
+      break
+    fi
+    out="$out$before_escape"
+    rest="${rest#*\\}"
+    char="${rest:0:1}"
+    rest="${rest#?}"
+    case "$char" in
+      n) out="$out"$'\n' ;;
+      t) out="$out"$'\t' ;;
+      r | b | f) ;;
+      u) rest="${rest#[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]}" ;;
+      *) out="$out$char" ;;
+    esac
+    escapes=$((escapes + 1))
+    [ "$escapes" -lt "$TAMA_CODEX_ESCAPES_MAX" ] || break
+    [ "${#out}" -lt "$TAMA_CODEX_TEXT_MAX" ] || break
+  done
+
+  if [ "${#out}" -gt "$TAMA_CODEX_TEXT_MAX" ]; then
+    out="${out:0:$TAMA_CODEX_TEXT_MAX}"
+    case "$out" in *' '*) out="${out% *}" ;; esac
+  fi
+  case "$out" in
+    '' | *[![:space:]]*) ;;
+    *) return 1 ;;
+  esac
+  [ -n "$out" ] || return 1
+  TAMA_CODEX_TEXT="$out"
+}
+
 codex_state() {
   "$TAMA_BIN" state "$1" "$TAMA_CODEX_AGENT" >/dev/null 2>&1 || true
+}
+
+codex_state_and_notify() { # <state> <message>
+  codex_state "$1"
+  "$TAMA_BIN" notify -- "$TAMA_CODEX_AGENT" "$2" >/dev/null 2>&1 || true
+}
+
+codex_auto_review_is_configured() {
+  local codex_dir="${CODEX_HOME:-$HOME/.codex}"
+  local path="$codex_dir/config.toml" config line compact found=0 auto='no'
+  [ -r "$path" ] || return 1
+
+  config="$(dd if="$path" bs=65537 count=1 2>/dev/null)" || return 1
+  [ "${#config}" -le 65536 ] || return 1
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    compact="${line//[[:space:]]/}"
+    case "$compact" in
+      '') continue ;;
+      '['*) break ;;
+      approvals_reviewer*)
+        found=$((found + 1))
+        case "$compact" in
+          'approvals_reviewer="auto_review"' | "approvals_reviewer='auto_review'")
+            auto='yes'
+            ;;
+          *) auto='no' ;;
+        esac
+        ;;
+    esac
+  done <<<"$config"
+
+  [ "$found" -eq 1 ] && [ "$auto" = 'yes' ]
 }
 
 case "${1:-}" in
@@ -62,8 +152,23 @@ case "${1:-}" in
   UserPromptSubmit | PostToolUse)
     codex_state running
     ;;
+  PreToolUse)
+    if codex_token_field tool_name && [ "$TAMA_CODEX_FIELD" = 'request_user_input' ]; then
+      codex_text_field question || TAMA_CODEX_TEXT='Codex has a question'
+      codex_state_and_notify waiting "$TAMA_CODEX_TEXT"
+    fi
+    ;;
+  PermissionRequest)
+    if codex_auto_review_is_configured; then
+      codex_state running
+    else
+      codex_text_field description || TAMA_CODEX_TEXT='Codex needs your approval'
+      codex_state_and_notify waiting "$TAMA_CODEX_TEXT"
+    fi
+    ;;
   Stop)
-    codex_state idle
+    codex_text_field last_assistant_message || TAMA_CODEX_TEXT='Codex finished its turn'
+    codex_state_and_notify idle "$TAMA_CODEX_TEXT"
     ;;
   SessionEnd)
     codex_state clear

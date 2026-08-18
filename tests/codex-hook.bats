@@ -8,6 +8,8 @@ setup() {
   tama_fake_backend_env
   tama_start_server
   tama_use_fake_backend
+  export CODEX_HOME="$BATS_TEST_TMPDIR/default-codex-home"
+  mkdir -p "$CODEX_HOME"
   PANE="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
   WINDOW="$(test_tmux display-message -p -t "$PANE" '#{window_id}')"
 }
@@ -92,6 +94,8 @@ data = json.load(open(sys.argv[1], encoding="utf-8"))
 expected = {
     "SessionStart": ("startup|resume|clear|compact", 10),
     "UserPromptSubmit": (None, 10),
+    "PreToolUse": ("^request_user_input$", 10),
+    "PermissionRequest": ("*", 10),
     "PostToolUse": (None, 10),
     "Stop": (None, 10),
     "SessionEnd": ("other", 3),
@@ -121,4 +125,99 @@ PY
   [ "$status" -ne 0 ]
   run grep -F 'hook codex SessionStart' "$PLUGIN_ROOT/integrations/README.md"
   [ "$status" -ne 0 ]
+}
+
+@test "request_user_input waits and notifies with the first question" {
+  hook UserPromptSubmit "$(payload UserPromptSubmit)"
+  hook PreToolUse "$(payload PreToolUse ',"tool_name":"request_user_input","tool_input":{"questions":[{"header":"Database","question":"Which database should we use?","options":[]}]}}')"
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+  assert_pane_option "$PANE" state_main waiting
+  assert_backend_value notify argv2 'Which database should we use?'
+
+  hook PostToolUse "$(payload PostToolUse ',"tool_name":"request_user_input"')"
+  assert_success
+  assert_pane_option "$PANE" state_main running
+}
+
+@test "human approval and completed turns notify with useful text after state" {
+  hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash","tool_input":{"command":"deploy","description":"Deploy the release to production?"}}')"
+  assert_success
+  assert_pane_option "$PANE" state_main waiting
+  assert_backend_value notify argv2 'Deploy the release to production?'
+  assert_contains "$(tama_backend_value notify argv1)" 'codex - ' 'the notification title'
+
+  hook Stop "$(payload Stop ',"last_assistant_message":"The release is ready for review."')"
+  assert_success
+  assert_pane_option "$PANE" state_main idle
+  assert_backend_value notify argv2 'The release is ready for review.'
+}
+
+@test "attention text decoding and fallbacks stay useful and bounded" {
+  hook PreToolUse "$(payload PreToolUse ',"tool_name":"request_user_input","tool_input":{"questions":[{"question":"He asked \"now or later?\"\nPlease choose."}]}}')"
+  assert_success
+  assert_backend_value notify argv2 "$(printf 'He asked "now or later?"\nPlease choose.')"
+
+  hook PermissionRequest '{"tool_name":"Bash","tool_input":{"description":"truncated}'
+  assert_success
+  assert_backend_value notify argv2 'Codex needs your approval'
+
+  local long='The result is ready' i=0
+  while [ "$i" -lt 200 ]; do
+    long="$long word$i"
+    i=$((i + 1))
+  done
+  hook Stop "$(payload Stop ",\"last_assistant_message\":\"$long\"")"
+  assert_success
+  local got
+  got="$(tama_backend_value notify argv2)"
+  [ "${#got}" -le 500 ]
+  case "$long" in "$got"*) ;; *) return 1 ;; esac
+}
+
+@test "a confidently selected top-level auto reviewer suppresses false attention" {
+  export CODEX_HOME="$BATS_TEST_TMPDIR/codex-home"
+  mkdir -p "$CODEX_HOME"
+  local reviewer
+  for reviewer in '"auto_review"' "'auto_review'"; do
+    printf '%s\n' \
+      '# user-level reviewer' \
+      "approvals_reviewer = $reviewer # let the reviewer decide" \
+      '[profiles.work]' \
+      'approvals_reviewer = "user"' >"$CODEX_HOME/config.toml"
+
+    hook UserPromptSubmit "$(payload UserPromptSubmit)"
+    hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash","tool_input":{"description":"Run a privileged command?"}}')"
+    assert_success
+    assert_pane_option "$PANE" state_main running
+  done
+  refute_backend_called notify
+}
+
+@test "uncertain reviewer configuration falls back to human attention" {
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+  export CODEX_HOME="$BATS_TEST_TMPDIR/codex-home"
+  mkdir -p "$CODEX_HOME"
+
+  local config
+  for config in \
+    'approvals_reviewer = "user"' \
+    $'[profiles.work]\napprovals_reviewer = "auto_review"' \
+    $'approvals_reviewer = "auto_review"\napprovals_reviewer = "auto_review"' \
+    'approvals_reviewer = auto_review'; do
+    printf '%s\n' "$config" >"$CODEX_HOME/config.toml"
+    hook UserPromptSubmit "$(payload UserPromptSubmit)"
+    hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash"')"
+    assert_success
+    assert_pane_option "$PANE" state_main waiting
+  done
+
+  : >"$CODEX_HOME/config.toml"
+  hook UserPromptSubmit "$(payload UserPromptSubmit)"
+  hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash"')"
+  assert_pane_option "$PANE" state_main waiting
+  assert_backend_called notify
+  assert_flagged "$WINDOW"
 }

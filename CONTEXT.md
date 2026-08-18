@@ -38,11 +38,11 @@ is best-effort: a leaked id makes a pane look busier than it is until the pane i
 ## Flag
 
 A per-window mark meaning *this window wants your attention*, rendered next to the window
-name. Raised when an agent pane enters `waiting` while that window is not the active window
-of its own session. Only the user clears it, by selecting the window — an agent moving on
-to another state does not, because the flag records that something happened while nobody
-was looking. Distinct from a **notification**: the flag is inside tmux and persists until
-seen; a notification is an OS-level banner.
+name. Raised when an unseen event requires attention: an agent pane enters `waiting` or
+`error`, or raises a **notification**. Only the user clears it, by selecting the window — an
+agent moving on to another state does not, because the flag records that something happened
+while nobody was looking. Distinct from a notification: the flag is inside tmux and persists
+until seen; a notification is an OS-level banner.
 
 ## Notification
 

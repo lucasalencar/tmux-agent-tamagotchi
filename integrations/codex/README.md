@@ -42,6 +42,30 @@ review their source and trust the exact definitions before expecting them to run
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "^request_user_input$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook codex PreToolUse >/dev/null 2>&1 || :",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook codex PermissionRequest >/dev/null 2>&1 || :",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "hooks": [
@@ -88,9 +112,27 @@ order; the shorter `SessionEnd` timeout is Codex's documented maximum.
 ## What this slice reports
 
 `SessionStart` from startup, resume or clear makes the pane idle; compact startup preserves
-the existing state. `UserPromptSubmit` and `PostToolUse` report running, `Stop` reports idle,
-and `SessionEnd` clears the pane. `PreCompact`, `PostCompact` and unknown events are harmless
-no-ops.
+the existing state. `UserPromptSubmit` and `PostToolUse` report running. A
+`request_user_input` call or a human `PermissionRequest` reports waiting and requests a
+notification through the core; `Stop` reports idle before requesting its completion
+notification. `SessionEnd` clears the pane. `PreCompact`, `PostCompact` and unknown events
+are harmless no-ops.
+
+For permission requests, the adapter reads only the top-level
+`approvals_reviewer = "auto_review"` value from the user-level
+`$CODEX_HOME/config.toml` (normally `~/.codex/config.toml`). When that exact value can be
+identified unambiguously, the reviewer is automatic, so the pane remains running and no
+notification or flag is requested. Missing, unreadable, malformed, duplicated or non-auto
+values conservatively request human attention. Official hook payloads do not reveal the
+effective value contributed by a selected profile, project override, one-off configuration
+or `--approve-for-me`, so the adapter cannot resolve those cases and deliberately falls back
+to human attention.
+
+Question text, approval descriptions and final assistant messages are decoded from the hook
+payload when usable. Reads and messages are bounded; malformed or truncated payloads use a
+short fallback instead of delaying or failing the Codex turn. The adapter never calls the
+standalone flag command: waiting states and notifications compose with the core's existing
+focus suppression, persistent flag, grouping, dismissal and click behavior.
 
 ## Smoke test
 
