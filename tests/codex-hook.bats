@@ -251,6 +251,27 @@ PY
   refute_backend_called notify
 }
 
+@test "large whitespace in reviewer configuration stays fast and unambiguous" {
+  export CODEX_HOME="$BATS_TEST_TMPDIR/codex-home"
+  mkdir -p "$CODEX_HOME"
+  python3 - "$CODEX_HOME/config.toml" <<'PY'
+import sys
+with open(sys.argv[1], "w", encoding="utf-8") as config:
+    config.write(" " * 60000 + 'approvals_reviewer = "auto_review"\n')
+PY
+
+  local started="$SECONDS"
+  hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash"')"
+  local elapsed=$((SECONDS - started))
+  assert_success
+  [ "$elapsed" -lt 5 ] || {
+    echo "large reviewer configuration took ${elapsed}s (expected under 5s)" >&2
+    return 1
+  }
+  assert_pane_option "$PANE" state_main running
+  refute_backend_called notify
+}
+
 @test "uncertain reviewer configuration falls back to human attention" {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
