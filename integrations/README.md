@@ -9,6 +9,7 @@ One directory per agent, holding an executable named `hook`:
 
 ```
 integrations/claude-code/hook   ->  tama hook claude-code <event> [args]
+integrations/codex/hook         ->  tama hook codex <event> [args]
 ```
 
 `tama hook` routes by directory name and holds no list of known agents, so adding an agent

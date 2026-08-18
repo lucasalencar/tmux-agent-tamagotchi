@@ -17,7 +17,7 @@ The plugin:
 ```
 
 Agents report their lifecycle through hooks. The plugin does not launch or monitor agent
-processes. Claude Code has a bundled adapter; other agents can call the same CLI.
+processes. Claude Code and Codex have bundled adapters; other agents can call the same CLI.
 
 ## Requirements
 
@@ -113,6 +113,8 @@ State definitions are in [`CONTEXT.md`](CONTEXT.md).
 
 - **Claude Code:** copy the hook configuration from
   [`integrations/claude-code/README.md`](integrations/claude-code/README.md).
+- **Codex:** copy the hook configuration from
+  [`integrations/codex/README.md`](integrations/codex/README.md).
 - **Other agents:** follow the public CLI recipe in
   [`integrations/README.md`](integrations/README.md).
 

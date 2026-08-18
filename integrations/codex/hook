@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Codex lifecycle adapter. Codex-specific policy stays outside the stable core.
+
+set -o nounset
+
+[ -n "${TAMA_BIN:-}" ] || exit 0
+
+TAMA_CODEX_AGENT='codex'
+TAMA_CODEX_PAYLOAD=''
+TAMA_CODEX_PAYLOAD_READ='no'
+TAMA_CODEX_FIELD=''
+TAMA_CODEX_PAYLOAD_MAX=65536
+TAMA_CODEX_PAYLOAD_TIMEOUT=2
+
+codex_read_payload() {
+  [ "$TAMA_CODEX_PAYLOAD_READ" = 'no' ] || return 0
+  TAMA_CODEX_PAYLOAD_READ='yes'
+  [ -t 0 ] && return 0
+  IFS= read -r -d '' -n "$TAMA_CODEX_PAYLOAD_MAX" \
+    -t "$TAMA_CODEX_PAYLOAD_TIMEOUT" TAMA_CODEX_PAYLOAD || true
+}
+
+codex_token_field() { # <field>
+  TAMA_CODEX_FIELD=''
+  codex_read_payload
+
+  local rest="$TAMA_CODEX_PAYLOAD"
+  case "$rest" in
+    *"\"$1\""*) rest="${rest#*\""$1"\"}" ;;
+    *) return 1 ;;
+  esac
+  rest="${rest#*:}"
+  while :; do
+    case "$rest" in
+      [[:space:]]*) rest="${rest#?}" ;;
+      *) break ;;
+    esac
+  done
+  case "$rest" in
+    '"'*) rest="${rest#\"}" ;;
+    *) return 1 ;;
+  esac
+  TAMA_CODEX_FIELD="${rest%%\"*}"
+  case "$TAMA_CODEX_FIELD" in
+    '' | -* | *[!A-Za-z0-9_-]*) TAMA_CODEX_FIELD=''; return 1 ;;
+  esac
+}
+
+codex_state() {
+  "$TAMA_BIN" state "$1" "$TAMA_CODEX_AGENT" >/dev/null 2>&1 || true
+}
+
+case "${1:-}" in
+  SessionStart)
+    if codex_token_field source; then
+      case "$TAMA_CODEX_FIELD" in
+        startup | resume | clear) codex_state idle ;;
+        compact) : ;;
+      esac
+    fi
+    ;;
+  UserPromptSubmit | PostToolUse)
+    codex_state running
+    ;;
+  Stop)
+    codex_state idle
+    ;;
+  SessionEnd)
+    codex_state clear
+    ;;
+  PreCompact | PostCompact | *)
+    :
+    ;;
+esac
+
+exit 0
