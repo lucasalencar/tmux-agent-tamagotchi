@@ -67,221 +67,83 @@ usage() {
   cat <<EOF
 tama — tmux-agent-tamagotchi
 
-Shows what the AI agents running in your tmux panes are doing: an icon per agent
-pane in the window name, a flag on windows that want your attention, and a
-desktop notification that clicks back to the pane that spoke. Agents report
-their own lifecycle by calling this command from their hook system; the plugin
-never talks to an agent.
-
 Usage: tama <subcommand> [args]
 
-Subcommands:
-  state <state> [name]  Report what the agent in this pane is doing, as one of
-                        running, waiting, idle, error, or clear to leave no
-                        trace. The optional name is the agent's, remembered
-                        until the next one is given.
+Commands:
+  state <state> [name]  Set pane state: running, waiting, idle, error, or clear.
   state subagent-start <id> / subagent-stop <id>
-                        Track a delegated run by an opaque id of your choosing.
-                        An agent that is idle with one still live shows as
-                        working in the background rather than as finished.
-  icons <window_id>     Print one glyph per agent pane of that window, in pane
-                        order. This is what @tama_icons runs for you.
-  flag [target]         Mark a window as wanting your attention, unless you are
-                        already looking at it. Reported states do this for you:
-                        waiting and error both raise it.
-  unflag [target]       Take the mark off. Nothing an agent does clears a flag —
-                        it records that something happened while you were away,
-                        so only you clear it, by selecting the window.
-  notify <agent> <msg>  Raise a desktop banner saying that agent needs you, unless
-                        you are demonstrably already looking at its window. Marks
-                        the window too, and a click on the banner selects the
-                        window, then the pane, then brings the terminal forward.
-  dismiss [target]      Take down the banner that window has pending. Arriving at
-                        the window does this for you.
-  focus-window <sess>   Bring the terminal window showing that session to the
-                        front. The last step of a banner's click action, and the
-                        one command here that works outside tmux, because that is
-                        where a click arrives.
-  gc [--all]            Clear the state of panes whose agent is gone, so a dead
-                        agent stops looking busy. One window by default; --all
-                        sweeps every pane on the server.
-  on-select [--all]     What the after-select-window hook runs: you arrived at a
-                        window, so its flag goes and its panes are swept. With
-                        --all the sweep covers the whole server, which is what
-                        the client-focus-in and client-attached hooks ask for.
-  doctor                Say what this installation is doing and why it is not doing
-                        the rest — the tmux version, which backend was chosen and for
-                        what reason, which notifier binary and from where, and what
-                        your configuration would defeat. Prints the setup recipes too,
-                        and exits non-zero when something is broken, so it can be
-                        dropped into a script. The one command here that reports a
-                        failure rather than exiting 0 quietly, and it runs with no
-                        tmux server, because that is one of the answers it gives.
-  hook <agent> <event>  Hand an event to the adapter shipped for that agent, in
-                        integrations/<agent>/hook, which is where everything
-                        particular to it lives. Claude Code users wire this and
-                        nothing else; see integrations/claude-code/README.md.
+                        Track a delegated run by opaque id.
+  icons <window_id>     Print pane-state icons in pane order.
+  flag [target]         Mark a window. No-op for the current window.
+  unflag [target]       Clear a window mark.
+  notify <agent> <msg>  Mark the window and send a desktop notification.
+  dismiss [target]      Dismiss a window notification.
+  focus-window <sess>   Focus the terminal showing a tmux session.
+  gc [--all]            Clear stale pane state. Default: current window.
+  on-select [--all]     Clear mark, dismiss notification, and run gc.
+  doctor                Print installation diagnostics. Exit 1 on failure.
+  hook <agent> <event>  Dispatch to integrations/<agent>/hook.
   version               Print the plugin version.
-  --help, -h, help      Print this message.
+  --help, -h, help      Print help.
 
-Put the icons in your status line wherever you want them — the plugin never
-rewrites it for you. Set both formats, or the window you are looking at is the
-one without icons; keep tmux's own window_flags to keep its zoom and bell
-markers, but without the space it pads with, since the icons bring their own:
+Common option:
+  --pane <pane_id>      Target pane. Default: \$TMUX_PANE.
+
+Status line:
 
   set -g window-status-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
   set -g window-status-current-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
 
-@tama_flag draws @tama_flag_text — " *" unless you set it — on the windows that
-want you. Set it to something with #[fg=red] in it if you would rather see colour.
-
-The icons are yours. Every option below is read on every redraw, so tmux
-source-file is enough to see a change; the values shown are the defaults:
+Configuration (defaults shown):
 
   set -g @tama_icon_set glyphs     # or 'pets' (emoji) or 'ascii'
-  set -g @tama_icon_running '●'    # one per state; an individual icon always
-  set -g @tama_icon_waiting '◐'    # wins over the set it came from
+  set -g @tama_icon_running '●'
+  set -g @tama_icon_waiting '◐'
   set -g @tama_icon_background '⚙'
   set -g @tama_icon_idle '○'
   set -g @tama_icon_error '✕'
-  set -g @tama_show_idle on        # 'off' leaves idle panes without an icon
-  set -g @tama_show_background on  # 'off' draws them as running instead: the
-                                   # agent is working either way, you just stop
-                                   # being told it is its subagents working
-  set -g @tama_icon_prefix ' '     # drawn only when there is an icon to draw
-  set -g @tama_icon_separator ''   # between two agent panes of one window
+  set -g @tama_show_idle on
+  set -g @tama_show_background on
+  set -g @tama_icon_prefix ' '
+  set -g @tama_icon_separator ''
   set -g @tama_icon_suffix ''
-
-Any option here that reads on or off takes tmux's own vocabulary for a flag, so
-'off', 'no', '0' and 'false' all turn it off and every other value leaves it on —
-a typo you can see is kinder than one that quietly took a feature away.
-
-An option set to the empty string is a configuration and not an absent one, so
-@tama_icon_prefix '' really means no prefix. The 'pets' emoji are double width:
-they cost a column each, so a status line full of windows truncates sooner, and
-terminals do not all measure them the way tmux does. 'ascii' is single-column and
-free of the characters a status line would have to escape.
-
-Notifications are the same story one layer out: off with one option, and the
-icons and the window mark carry on without them.
-
   set -g @tama_notifications on
-  set -g @tama_backend auto      # a directory of up to four executables: 'auto'
-                                 # picks one that works on this machine, a bare
-                                 # name is one shipped here, an absolute path is
-                                 # your own and needs no fork of this plugin
+  set -g @tama_backend auto        # auto, macos, libnotify, none, or absolute path
+  set -g @tama_title_format '$TAMA_NOTIFY_TITLE_DEFAULT'
+  set -g @tama_group_format '$TAMA_NOTIFY_GROUP_DEFAULT'
+  set -g @tama_label_command ''
+  set -g @tama_suppress_when_focused on
+  set -g @tama_notify_command ''
+  set -g @tama_dismiss_command ''
+  set -g @tama_focused_command ''
+  set -g @tama_focus_command ''
+  set -g @tama_terminal_app ''
+  set -g @tama_terminal_bundle_id ''
+  set -g @tama_terminal_notifier ''
+  set -g @tama_notify_send ''
+  set -g @tama_gc_shells 'sh bash zsh fish dash ksh mksh ash csh tcsh'
+  set -g @tama_manage_hooks off
 
-'auto' means 'macos' on a Mac with terminal-notifier installed, 'libnotify' anywhere
-else with notify-send installed, and 'none' — silence, no errors — where there is
-neither, so a machine with no notifier needs no configuration to be quiet. It only
-ever picks a backend whose binary is really there; 'tama doctor' says which one and
-why. What each of them can do, and what libnotify cannot, is in backends/README.md.
+Boolean values: 'off', 'no', '0', and 'false' turn it off. Other values enable it.
+An empty string is a configured value. Options are read on each invocation/redraw.
 
-The macOS backend recognises the terminal window showing a session by its title,
-which is worth setting up, because it is what stops you being notified about a window
-you are looking at:
+macOS session-title setup:
 
   set -g set-titles on
   set -g set-titles-string '#S'
 
-A banner's title is a real tmux format string, expanded against the pane that
-spoke — there is no template language here to learn, and no idea of a "project":
-that is a basename modifier on the pane's path, and anything else is whatever you
-write. The plugin adds what only it knows as pane options for you to reach:
-@tama_pane_agent, @tama_pane_cwd — where the pane was when it last reported a
-state, which the default falls back on because tmux cannot always say where a
-pane is now — and @tama_pane_label when you have a label provider.
+Runtime contract:
+  - No \$TMUX: commands exit 0 without output.
+  - Usage error: exit 2; diagnostic on stderr.
+  - Operational error: exit 0 without output.
+  - doctor: exit 1 when checks fail; works outside tmux.
+  - focus-window: works outside tmux.
+  - No command reads stdin. jq is not required.
+  - Focus suppression requires confirmation from tmux and the backend.
+  - gc clears state only after the pane returns to @tama_gc_shells.
+  - Global focus sweeping requires: set -g focus-events on
 
-  set -g @tama_title_format '$TAMA_NOTIFY_TITLE_DEFAULT'
-  set -g @tama_group_format '$TAMA_NOTIFY_GROUP_DEFAULT'
-  set -g @tama_label_command ''  # your own window-naming script, given the window
-                                 # id, its first line of output is the label;
-                                 # empty means nothing is ever run
-
-Banners are grouped per window from that format. A banner keeps the group it was
-raised with until it is dismissed, so a newer one replaces the older one. Arriving at
-the window takes it down even if you changed the format meanwhile.
-
-If your own tooling already names your windows, point @tama_label_command at it and
-the banners will say what your status line says.
-
-On macOS, do not make @tama_group_format expand to ALL: terminal-notifier reserves
-that group to remove every notification, so tama leaves such a banner alone.
-
-You are not notified about a window you are looking at, and that takes two
-answers agreeing: tmux says that window is current in its own session with
-somebody attached, and the backend says the terminal really is in front. Either
-one saying no — including a backend that cannot tell — means the banner is
-delivered, because a minimized terminal swallowing a notification is the worst
-thing this plugin could do to you.
-
-  set -g @tama_suppress_when_focused on
-  set -g @tama_notify_command ''    # any one capability, replaced by your own
-  set -g @tama_dismiss_command ''   # script: same arguments, same environment
-  set -g @tama_focused_command ''
-  set -g @tama_focus_command ''
-  set -g @tama_terminal_app ''         # what a backend calls your terminal:
-  set -g @tama_terminal_bundle_id ''   # the process name and the bundle id, both
-                                       # Ghostty unless \$TERMINAL_APP_NAME and
-                                       # \$TERMINAL_BUNDLE_ID say otherwise
-  set -g @tama_terminal_notifier ''    # the macOS notifier, if PATH and the two
-                                       # Homebrew prefixes are not where yours is
-  set -g @tama_notify_send ''          # likewise notify-send, if PATH, /usr/bin
-                                       # and /usr/local/bin are not where yours is
-
-An agent that exits without saying so would otherwise leave its icon behind
-forever, so the state is swept: a pane is stale when its state says an agent is
-working there and it is back at a shell prompt instead. A pane running some
-other program is left alone — tmux reports whichever process holds the pane's
-tty, so an agent whose tool call opened an editor looks just like one that
-walked out, and clearing a live agent is the expensive mistake. A pane with the
-plugin's leftovers on it but no state at all is swept whatever it is running.
-
-  set -g @tama_gc_shells 'sh bash zsh fish dash ksh mksh ash csh tcsh'
-
-The sweep runs on window selection and pane selection for the window you are
-looking at, and over the whole server when you come back to the terminal —
-either by attaching, or by your terminal regaining focus, which needs tmux's own
-'set -g focus-events on' to be reported at all. Coming back also takes the mark
-off the window you land on, which no selection would have done. Everything the
-sweep clears is unset rather than emptied, including a subagent id a crashed
-delegated run leaked, so a swept pane is indistinguishable from one that never
-ran an agent.
-
-The plugin appends its hooks with 'set-hook -ga' and never assigns them, so your
-own lines on those events keep working. Load order is yours to get right,
-though: a plain 'set-hook' of your own after the plugin loads replaces the whole
-array, the plugin's line included, and the next reload puts it back. Put your
-own assignments before the TPM line, or append them too. Mouse bindings cannot
-be appended at all, which is why the plugin installs none.
-
-  set -g @tama_manage_hooks off   # wire the hooks yourself, from your own config
-
-An agent whose adapter ships here needs one block of hook configuration and
-nothing else — a call to 'tama hook <agent> <event>' per event, with no payload
-knowledge and no path to this plugin in it. Claude Code's block is in
-$TAMA_PLUGIN_DIR/integrations/claude-code/README.md. Adapters are best effort and
-outside the version promise, which integrations/README.md explains, along with
-the recipe for driving this CLI from an agent that has no adapter yet.
-
-Common options:
-  --pane <pane_id>      Act on this pane instead of \$TMUX_PANE (on the
-                        subcommands that act on a pane).
-
-Behaviour agent hooks rely on:
-  * Outside tmux (no \$TMUX) every command is a silent no-op, exit 0, so one
-    hook configuration works in both contexts.
-  * A usage error exits 2 with a message on stderr, so a wrong hook fails
-    loudly while you are editing it.
-  * Anything else that goes wrong — no such pane, missing notifier, a banner
-    that would not appear — exits 0 silently and never fails an agent's turn.
-    'doctor' is the deliberate exception: nothing runs it from a hook, and it
-    exits 1 when it found something broken so a script can act on it.
-  * No subcommand reads stdin. All input is arguments; jq is not a dependency.
-
-Nothing is installed onto \$PATH. Hooks find this file by asking tmux, which is
-also how they keep working if you move the plugin, and how they stay quiet on a
-machine where the plugin is not installed:
+Hook-safe executable lookup:
 
   [ -n "\$TMUX" ] || exit 0
   tama="\$(tmux show -gqv @tama_bin)"
