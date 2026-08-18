@@ -11,6 +11,8 @@ TAMA_CODEX_PAYLOAD_READ='no'
 TAMA_CODEX_FIELD=''
 TAMA_CODEX_TEXT=''
 TAMA_CODEX_REST=''
+TAMA_CODEX_SCOPE=''
+TAMA_CODEX_PAYLOAD_TRUNCATED='no'
 TAMA_CODEX_PAYLOAD_MAX=65536
 TAMA_CODEX_PAYLOAD_TIMEOUT=2
 TAMA_CODEX_TEXT_MAX=500
@@ -20,8 +22,12 @@ codex_read_payload() {
   [ "$TAMA_CODEX_PAYLOAD_READ" = 'no' ] || return 0
   TAMA_CODEX_PAYLOAD_READ='yes'
   [ -t 0 ] && return 0
-  IFS= read -r -d '' -n "$TAMA_CODEX_PAYLOAD_MAX" \
+  IFS= read -r -d '' -n "$((TAMA_CODEX_PAYLOAD_MAX + 1))" \
     -t "$TAMA_CODEX_PAYLOAD_TIMEOUT" TAMA_CODEX_PAYLOAD || true
+  if [ "${#TAMA_CODEX_PAYLOAD}" -gt "$TAMA_CODEX_PAYLOAD_MAX" ]; then
+    TAMA_CODEX_PAYLOAD="${TAMA_CODEX_PAYLOAD:0:$TAMA_CODEX_PAYLOAD_MAX}"
+    TAMA_CODEX_PAYLOAD_TRUNCATED='yes'
+  fi
 }
 
 codex_locate_string() { # <field>
@@ -46,15 +52,17 @@ codex_locate_string() { # <field>
   esac
 }
 
-codex_locate_structured_string() { # <field> <object-depth> <array-depth>
+codex_locate_structured_value() { # <field> <object-depth> <array-depth> <type> [scope]
   TAMA_CODEX_REST=''
+  TAMA_CODEX_SCOPE=''
   codex_read_payload
 
   # Delegation is signalled only by the common top-level agent_id. A tool is free
   # to use the same key inside tool_input, where treating it as delegation would
   # silently suppress a real question or approval request.
-  local rest="$TAMA_CODEX_PAYLOAD" structural char raw before_quote before_escape probe
+  local rest structural char raw before_quote before_escape probe
   local object_depth=0 array_depth=0
+  if [ "$#" -ge 5 ]; then rest="$5"; else rest="$TAMA_CODEX_PAYLOAD"; fi
   case "$rest" in *"\"$1\""*) ;; *) return 1 ;; esac
   while :; do
     case "$rest" in *'"'*) ;; *) return 1 ;; esac
@@ -101,8 +109,10 @@ codex_locate_structured_string() { # <field> <object-depth> <array-depth>
       while :; do
         case "$probe" in [[:space:]]*) probe="${probe#?}" ;; *) break ;; esac
       done
-      case "$probe" in
-        '"'*) TAMA_CODEX_REST="${probe#\"}"; return 0 ;;
+      case "$4:$probe" in
+        string:'"'*) TAMA_CODEX_REST="${probe#\"}"; return 0 ;;
+        object:'{'*) TAMA_CODEX_SCOPE="${probe#\{}"; return 0 ;;
+        array:'['*) TAMA_CODEX_SCOPE="${probe#\[}"; return 0 ;;
         *) return 1 ;;
       esac
     fi
@@ -110,7 +120,23 @@ codex_locate_structured_string() { # <field> <object-depth> <array-depth>
 }
 
 codex_locate_top_level_string() { # <field>
-  codex_locate_structured_string "$1" 1 0
+  codex_locate_structured_value "$1" 1 0 string
+}
+
+codex_locate_tool_input_string() { # <field>
+  local scope
+  codex_locate_structured_value tool_input 1 0 object || return 1
+  scope="$TAMA_CODEX_SCOPE"
+  codex_locate_structured_value "$1" 0 0 string "$scope"
+}
+
+codex_locate_first_question() {
+  local tool_scope questions_scope
+  codex_locate_structured_value tool_input 1 0 object || return 1
+  tool_scope="$TAMA_CODEX_SCOPE"
+  codex_locate_structured_value questions 0 0 array "$tool_scope" || return 1
+  questions_scope="$TAMA_CODEX_SCOPE"
+  codex_locate_structured_value question 1 0 string "$questions_scope"
 }
 
 codex_token_field() { # <field>
@@ -153,8 +179,8 @@ codex_text_field() { # <field> [location]
   TAMA_CODEX_TEXT=''
   case "${2:-any}" in
     top) codex_locate_top_level_string "$1" || return 1 ;;
-    tool-input) codex_locate_structured_string "$1" 2 0 || return 1 ;;
-    first-question) codex_locate_structured_string "$1" 3 1 || return 1 ;;
+    tool-input) codex_locate_tool_input_string "$1" || return 1 ;;
+    first-question) codex_locate_first_question || return 1 ;;
     *) codex_locate_string "$1" || return 1 ;;
   esac
 
@@ -206,8 +232,8 @@ codex_text_field() { # <field> [location]
       *) return 1 ;;
     esac
     escapes=$((escapes + 1))
-    [ "$escapes" -lt "$TAMA_CODEX_ESCAPES_MAX" ] || break
-    [ "${#out}" -lt "$TAMA_CODEX_TEXT_MAX" ] || break
+    [ "$escapes" -lt "$TAMA_CODEX_ESCAPES_MAX" ] || return 1
+    [ "${#out}" -lt "$TAMA_CODEX_TEXT_MAX" ] || return 1
   done
 
   if [ "${#out}" -gt "$TAMA_CODEX_TEXT_MAX" ]; then
@@ -277,6 +303,8 @@ codex_auto_review_is_configured() {
 }
 
 TAMA_CODEX_EVENT="${1:-}"
+codex_read_payload
+[ "$TAMA_CODEX_PAYLOAD_TRUNCATED" = 'no' ] || exit 0
 case "$TAMA_CODEX_EVENT" in
   SubagentStart | SubagentStop) ;;
   *)

@@ -66,12 +66,15 @@ payload() { # <event> [extra JSON]
   assert_pane_option "$PANE" state_main running
 
   hook PreCompact "$(payload PreCompact ',"trigger":"auto"')"
+  assert_success
   hook PostCompact "$(payload PostCompact ',"trigger":"auto"')"
+  assert_success
   hook SomeFutureEvent "$(payload SomeFutureEvent)"
   assert_success
   assert_pane_option "$PANE" state_main running
 
   hook Stop "$(payload Stop)"
+  assert_success
   hook PostToolUse "$(payload PostToolUse ',"tool_name":"Bash"')"
   assert_success
   assert_pane_option "$PANE" state_main running
@@ -80,6 +83,14 @@ payload() { # <event> [extra JSON]
 codex_recipe() {
   sed -n '/^```json$/,/^```$/p' "$PLUGIN_ROOT/integrations/codex/README.md" |
     sed '1d;$d'
+}
+
+codex_recipe_command() { # <event>
+  codex_recipe | python3 -c '
+import json, sys
+event = sys.argv[1]
+print(json.load(sys.stdin)["hooks"][event][0]["hooks"][0]["command"])
+' "$1"
 }
 
 @test "the canonical Codex recipe is valid JSON and binds lifecycle events" {
@@ -127,6 +138,37 @@ PY
   [ "$status" -ne 0 ]
   run grep -F 'hook codex SessionStart' "$PLUGIN_ROOT/integrations/README.md"
   [ "$status" -ne 0 ]
+}
+
+@test "the pasted recipe command drives the adapter and stays harmless when unloaded" {
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+  tama_shim_tmux_on_path
+  local command
+  command="$(codex_recipe_command UserPromptSubmit)"
+
+  TMUX_PANE="$PANE" run --separate-stderr sh -c "$command" \
+    <<<"$(payload UserPromptSubmit)"
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+  assert_pane_option "$PANE" state_main running
+
+  local plugin_with_spaces="$BATS_TEST_TMPDIR/plugin with spaces"
+  tama_copy_plugin "$plugin_with_spaces"
+  test_tmux set -g @tama_bin "$plugin_with_spaces/bin/tama"
+  TMUX_PANE="$PANE" run --separate-stderr sh -c "$command" \
+    <<<"$(payload UserPromptSubmit)"
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+
+  test_tmux set -gu @tama_bin
+  TMUX_PANE="$PANE" run --separate-stderr sh -c "$command" \
+    <<<"$(payload UserPromptSubmit)"
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
 }
 
 @test "request_user_input waits and notifies with the first question" {
@@ -312,9 +354,33 @@ PY
 }
 
 @test "text-shaped content cannot impersonate the documented payload field" {
-  hook PermissionRequest "$(payload PermissionRequest ',"tool_name":"Bash","tool_input":{"command":"printf '\''\\\"description\\\":\\\"fake\\\"'\''","description":"Approve the real command?"}}')"
+  hook PermissionRequest "$(payload PermissionRequest ',"metadata":{"description":"Metadata only"},"tool_name":"Bash","tool_input":{"command":"deploy","description":"Approve the real command?"}}')"
   assert_success
   assert_backend_value notify argv2 'Approve the real command?'
+}
+
+@test "a payload cut at the input bound cannot raise attention from partial JSON" {
+  hook SessionStart "$(payload SessionStart ',"source":"startup"')"
+  local oversized
+  oversized="$(python3 - <<'PY'
+print('{"hook_event_name":"PreToolUse","tool_name":"request_user_input","tool_input":{"questions":[{"question":"Partial question"}]},"padding":"' + ('x' * 70000) + '"}')
+PY
+)"
+  hook PreToolUse "$oversized"
+  assert_success
+  assert_pane_option "$PANE" state_main idle
+  refute_backend_called notify
+}
+
+@test "a text value that exhausts the escape bound uses its fallback" {
+  local malformed
+  malformed="$(python3 - <<'PY'
+print('{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"description":"' + ('word\\n' * 256) + 'unterminated},"other":"quote"}')
+PY
+)"
+  hook PermissionRequest "$malformed"
+  assert_success
+  assert_backend_value notify argv2 'Codex needs your approval'
 }
 
 @test "missing, malformed, and invalid subagent ids are silent and harmless" {
@@ -323,12 +389,21 @@ PY
   assert_success
   assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
 
-  hook SubagentStart "$(payload SubagentStart)"
-  hook SubagentStart "$(payload SubagentStart ',"agent_id":42')"
-  hook SubagentStart '{"agent_id":"unterminated}'
-  hook SubagentStart "$(payload SubagentStart ',"agent_id":"two ids"')"
+  local event_payload
+  for event_payload in \
+    "$(payload SubagentStart)" \
+    "$(payload SubagentStart ',"agent_id":42')" \
+    '{"agent_id":"unterminated}' \
+    "$(payload SubagentStart ',"agent_id":"two ids"')"; do
+    hook SubagentStart "$event_payload"
+    assert_success
+    [ -z "$output" ]
+    [ -z "$stderr" ]
+  done
   hook SubagentStop "$(payload SubagentStop ',"agent_id":"two ids"')"
   assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
   assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
   refute_backend_called notify
 
