@@ -1,0 +1,71 @@
+import { describe, expect, test } from "bun:test"
+
+import { createEffectRunner, type ProcessExecutor, type ProcessResult } from "../effect-runner"
+
+describe("tama effect runner", () => {
+  test("resolves the public CLI through tmux and invokes it only with argv", async () => {
+    const calls: string[][] = []
+    const execute: ProcessExecutor = async (argv) => {
+      calls.push([...argv])
+      return argv[0] === "tmux"
+        ? { exitCode: 0, stdout: "/repo with spaces/bin/tama\n" }
+        : { exitCode: 0, stdout: "" }
+    }
+    const completions: Array<{ sessionId: string; messageId: string }> = []
+    const runner = createEffectRunner({
+      execute,
+      onCompletionEligible: async (completion) => {
+        completions.push(completion)
+      },
+    })
+
+    await runner.run({ type: "pane-state", state: "waiting" })
+    await runner.run({ type: "root-error", sessionId: "root-a", message: "provider failed" })
+    await runner.run({ type: "subagent-start", sessionId: "child; touch /tmp/not-executed" })
+    await runner.run({ type: "subagent-stop", sessionId: "-child" })
+    await runner.run({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    await runner.clearPane()
+
+    expect(calls).toEqual([
+      ["tmux", "show", "-gqv", "@tama_bin"],
+      ["/repo with spaces/bin/tama", "state", "waiting", "OpenCode"],
+      ["tmux", "show", "-gqv", "@tama_bin"],
+      ["/repo with spaces/bin/tama", "notify", "--", "OpenCode", "provider failed"],
+      ["tmux", "show", "-gqv", "@tama_bin"],
+      ["/repo with spaces/bin/tama", "state", "subagent-start", "--", "child; touch /tmp/not-executed"],
+      ["tmux", "show", "-gqv", "@tama_bin"],
+      ["/repo with spaces/bin/tama", "state", "subagent-stop", "--", "-child"],
+      ["tmux", "show", "-gqv", "@tama_bin"],
+      ["/repo with spaces/bin/tama", "state", "clear"],
+    ])
+    expect(completions).toEqual([{ sessionId: "root-a", messageId: "message-a" }])
+  })
+
+  test("contains missing executables, malformed paths, process failures, and completion failures", async () => {
+    const results: Array<ProcessResult | Error> = [
+      new Error("tmux missing"),
+      { exitCode: 1, stdout: "" },
+      { exitCode: 0, stdout: "/tmp/tama\nmalicious\n" },
+    ]
+    const execute: ProcessExecutor = async () => {
+      const result = results.shift()
+      if (result instanceof Error) throw result
+      return result ?? { exitCode: 0, stdout: "" }
+    }
+    const runner = createEffectRunner({
+      execute,
+      onCompletionEligible: async () => {
+        throw new Error("scheduler unavailable")
+      },
+    })
+
+    await expect(runner.run({ type: "pane-state", state: "running" })).resolves.toBeUndefined()
+    await expect(runner.run({ type: "root-error", sessionId: "root-a" })).resolves.toBeUndefined()
+    await expect(runner.clearPane()).resolves.toBeUndefined()
+    await expect(runner.run({
+      type: "completion-eligible",
+      sessionId: "root-a",
+      messageId: "message-a",
+    })).resolves.toBeUndefined()
+  })
+})
