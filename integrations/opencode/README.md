@@ -28,7 +28,9 @@ OpenCode versions remains best effort. Bun and TypeScript match the versions rec
   named export in a legacy module as a plugin function.
 - The `event` hook receives `{ event }`. OpenCode invokes these callbacks without awaiting them, so
   the completed integration must own event ordering and catch every rejection.
-- OpenCode unregisters its event listener before awaiting each hook's optional `dispose` callback.
+- During scope shutdown, OpenCode awaits each hook's optional `dispose` callback before its listener
+  unsubscribe finalizer runs. The integration must therefore stop accepting callbacks itself before
+  it drains accepted work.
 - Sessions expose an optional `parentID`. `session.status` carries `busy`, `retry`, or `idle`; the
   documented events also provide creation, deletion, attributed errors, messages, and permissions.
 - The SDK supports exact session and message lookup with
