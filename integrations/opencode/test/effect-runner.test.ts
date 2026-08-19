@@ -68,4 +68,28 @@ describe("tama effect runner", () => {
       messageId: "message-a",
     })).resolves.toBeUndefined()
   })
+
+  test("sanitizes and bounds root error banners with a safe fallback", async () => {
+    const calls: string[][] = []
+    const runner = createEffectRunner({
+      execute: async (argv) => {
+        calls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+    const longError = `Provider failed\u0000\r\n${"detail ".repeat(100)}tail`
+
+    await runner.run({ type: "root-error", sessionId: "root-a", message: longError })
+    await runner.run({ type: "root-error", sessionId: "root-b", message: "\u0000\u0007 " })
+
+    const messages = calls
+      .filter((argv) => argv[1] === "notify")
+      .map((argv) => argv[4])
+    expect(messages[0]).toStartWith("Provider failed\n")
+    expect(messages[0]).not.toContain("\u0000")
+    expect(Array.from(messages[0]).length).toBeLessThanOrEqual(500)
+    expect(messages[1]).toBe("OpenCode session failed")
+  })
 })

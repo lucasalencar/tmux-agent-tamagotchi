@@ -1,3 +1,4 @@
+import { sanitizeNotificationText, type CompletionReference } from "./completion-scheduler"
 import type { StateMachineEffect } from "./state-machine"
 
 export type ProcessResult = Readonly<{
@@ -7,11 +8,6 @@ export type ProcessResult = Readonly<{
 
 export type ProcessExecutor = (argv: readonly string[]) => Promise<ProcessResult>
 
-export type CompletionReference = Readonly<{
-  sessionId: string
-  messageId: string
-}>
-
 export type EffectRunnerDependencies = Readonly<{
   execute: ProcessExecutor
   onCompletionEligible?(completion: CompletionReference): Promise<void>
@@ -19,11 +15,13 @@ export type EffectRunnerDependencies = Readonly<{
 
 export type EffectRunner = Readonly<{
   run(effect: StateMachineEffect): Promise<void>
+  notify(message: string): Promise<void>
   clearPane(): Promise<void>
 }>
 
 const AGENT_NAME = "OpenCode"
 const GENERIC_ERROR = "OpenCode session failed"
+const GENERIC_COMPLETION = "OpenCode finished its turn"
 
 export function createEffectRunner(dependencies: EffectRunnerDependencies): EffectRunner {
   async function invokeTama(args: readonly string[]): Promise<void> {
@@ -45,7 +43,12 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
           await invokeTama(["state", effect.state, AGENT_NAME])
           break
         case "root-error":
-          await invokeTama(["notify", "--", AGENT_NAME, effect.message || GENERIC_ERROR])
+          await invokeTama([
+            "notify",
+            "--",
+            AGENT_NAME,
+            sanitizeNotificationText(effect.message ?? "") ?? GENERIC_ERROR,
+          ])
           break
         case "subagent-start":
         case "subagent-stop":
@@ -65,6 +68,12 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
 
   return {
     run,
+    notify: (message) => invokeTama([
+      "notify",
+      "--",
+      AGENT_NAME,
+      sanitizeNotificationText(message) ?? GENERIC_COMPLETION,
+    ]),
     clearPane: () => invokeTama(["state", "clear"]),
   }
 }

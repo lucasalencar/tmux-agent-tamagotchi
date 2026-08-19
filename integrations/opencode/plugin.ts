@@ -1,15 +1,20 @@
 import type { Plugin } from "@opencode-ai/plugin"
 
 import {
+  createCompletionScheduler,
+  type CompletionClock,
+  type CompletionReference,
+} from "./completion-scheduler"
+import {
   createEffectRunner,
   executeWithBun,
-  type CompletionReference,
   type ProcessExecutor,
 } from "./effect-runner"
 import { createOpenCodeRuntime } from "./runtime"
 
 export type PluginDependencies = Readonly<{
   execute?: ProcessExecutor
+  clock?: CompletionClock
   onCompletionEligible?(completion: CompletionReference): Promise<void>
   disposeLateWork?(): Promise<void> | void
 }>
@@ -19,6 +24,17 @@ export function createTmuxAgentTamagotchiPlugin(dependencies: PluginDependencies
     const runner = createEffectRunner({
       execute: dependencies.execute ?? executeWithBun,
       onCompletionEligible: dependencies.onCompletionEligible,
+    })
+    const scheduler = createCompletionScheduler({
+      clock: dependencies.clock,
+      lookupMessage: async ({ sessionId, messageId }) => {
+        const response = await input.client.session.message({
+          path: { id: sessionId, messageID: messageId },
+          query: { directory: input.directory },
+        })
+        return response.data
+      },
+      notify: runner.notify,
     })
     const runtime = createOpenCodeRuntime({
       lookupSession: async (sessionId) => {
@@ -36,9 +52,15 @@ export function createTmuxAgentTamagotchiPlugin(dependencies: PluginDependencies
             }
           : undefined
       },
-      runEffect: runner.run,
+      runEffect: async (effect) => {
+        scheduler.handle(effect)
+        await runner.run(effect)
+      },
       clearPane: runner.clearPane,
-      disposeLateWork: dependencies.disposeLateWork,
+      disposeLateWork: async () => {
+        scheduler.dispose()
+        await dependencies.disposeLateWork?.()
+      },
     })
 
     return {
