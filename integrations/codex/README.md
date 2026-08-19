@@ -141,6 +141,12 @@ notification through the core; `Stop` reports idle before requesting its complet
 notification. `SessionEnd` clears the pane. `PreCompact`, `PostCompact` and unknown events
 are harmless no-ops.
 
+Opening the Codex TUI does not itself create a Codex session or emit `SessionStart`. For a
+fresh TUI, Codex emits `SessionStart` with source `startup` only when the first prompt is
+submitted, immediately followed by `UserPromptSubmit`. The intermediate idle state may
+therefore never be visible: the first visible icon can be running, followed by idle when the
+turn stops. This is expected lifecycle ordering, not a failed hook.
+
 For permission requests, the adapter reads only the top-level
 `approvals_reviewer = "auto_review"` value from the user-level
 `$CODEX_HOME/config.toml` (normally `~/.codex/config.toml`). When that exact value can be
@@ -168,11 +174,12 @@ subagent cannot overwrite or interrupt the main pane's lifecycle.
 
 ## Smoke test
 
-From a tmux pane with the plugin loaded, start Codex and submit a harmless prompt. Confirm the
-icon moves from idle to running and back to idle. Start a delegated agent, let the main turn
-become idle and confirm the background icon remains until that agent stops. Archive or end
-the Codex session and confirm the icon and any subagent state disappear. If nothing moves,
-check that `tmux show -gqv @tama_bin` prints the plugin's executable path and use `/hooks` to
+From a tmux pane with the plugin loaded, start Codex and submit a harmless prompt. No icon is
+expected before that first prompt. Confirm an icon then appears as running and returns to
+idle when the turn stops. Start a delegated agent, let the main turn become idle and confirm
+the background icon remains until that agent stops. Archive or end the Codex session and
+confirm the icon and any subagent state disappear. If nothing moves after a prompt, check
+that `tmux show -gqv @tama_bin` prints the plugin's executable path and use `/hooks` to
 confirm the definitions are trusted.
 
 The adapter requires neither `jq` nor a Codex process in the plugin's automated test suite.
