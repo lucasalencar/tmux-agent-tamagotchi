@@ -6,7 +6,8 @@
 # executable, so the find below leaves it alone.
 SHELL_DIRS := $(wildcard bin lib libexec backends integrations examples tests/fixtures)
 SHELL_FILES := tamagotchi.tmux tests/helper.bash \
-	$(shell find $(SHELL_DIRS) -type f \( -perm -u+x -o -name '*.sh' \) | sort)
+	$(shell find $(SHELL_DIRS) -path '*/node_modules' -prune -o \
+		-type f \( -perm -u+x -o -name '*.sh' \) -print | sort)
 
 .PHONY: all lint test
 

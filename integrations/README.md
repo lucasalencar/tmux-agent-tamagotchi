@@ -5,16 +5,19 @@ agent-agnostic CLI. It knows everything particular about its agent — what its 
 called, which of them matter, what shape its payload has, what a delegated run means — and
 the rest of the plugin knows none of it.
 
-One directory per agent, holding an executable named `hook`:
+One directory per agent. Shell integrations hold an executable named `hook`; an agent whose
+native plugin runtime gives materially better lifecycle events may instead expose its native
+entrypoint (ADR-0010):
 
 ```
 integrations/claude-code/hook   ->  tama hook claude-code <event> [args]
 integrations/codex/hook         ->  tama hook codex <event> [args]
+integrations/opencode/index.ts   ->  loaded directly by OpenCode
 ```
 
-`tama hook` routes by directory name and holds no list of known agents, so adding an agent
-is adding a directory. The adapter talks to the core through the same public CLI a
-hand-wired agent uses; it gets no private entry point.
+`tama hook` routes shell adapters by directory name and holds no list of known agents. Every
+integration talks to the core through the same public CLI a hand-wired agent uses; native
+entrypoints get no private core API.
 
 ## These are best effort, and outside the version promise
 
@@ -28,8 +31,9 @@ track agents that change on their own schedule, so:
 - an event an adapter does not recognise is ignored in silence, so a configuration written
   against a newer plugin stays harmless on an older one.
 
-Adapters are shell only. No adapter may add a dependency the plugin does not already have —
-in particular, none of them uses `jq` (ADR-0001).
+Shell adapters add no dependency the plugin does not already have — in particular, none of them
+uses `jq` (ADR-0001). A native integration keeps its runtime, dependencies, lockfile, and tests
+inside its own directory so its toolchain does not become a core requirement (ADR-0010).
 
 ## Wiring an agent that has no adapter here
 
