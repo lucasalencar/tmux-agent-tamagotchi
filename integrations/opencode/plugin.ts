@@ -4,6 +4,7 @@ import {
   createCompletionScheduler,
   type CompletionClock,
   type CompletionReference,
+  type CompletionScheduler,
 } from "./completion-scheduler"
 import {
   createEffectRunner,
@@ -25,17 +26,7 @@ export function createTmuxAgentTamagotchiPlugin(dependencies: PluginDependencies
       execute: dependencies.execute ?? executeWithBun,
       onCompletionEligible: dependencies.onCompletionEligible,
     })
-    const scheduler = createCompletionScheduler({
-      clock: dependencies.clock,
-      lookupMessage: async ({ sessionId, messageId }) => {
-        const response = await input.client.session.message({
-          path: { id: sessionId, messageID: messageId },
-          query: { directory: input.directory },
-        })
-        return response.data
-      },
-      notify: runner.notify,
-    })
+    let scheduler: CompletionScheduler
     const runtime = createOpenCodeRuntime({
       lookupSession: async (sessionId) => {
         const response = await input.client.session.get({
@@ -61,6 +52,20 @@ export function createTmuxAgentTamagotchiPlugin(dependencies: PluginDependencies
         scheduler.dispose()
         await dependencies.disposeLateWork?.()
       },
+    })
+    scheduler = createCompletionScheduler({
+      clock: dependencies.clock,
+      lookupMessage: async ({ sessionId, messageId }) => {
+        const response = await input.client.session.message({
+          path: { id: sessionId, messageID: messageId },
+          query: { directory: input.directory },
+        })
+        return response.data
+      },
+      enqueue: (work) => {
+        void runtime.enqueueLateWork(work)
+      },
+      notify: runner.notify,
     })
 
     return {

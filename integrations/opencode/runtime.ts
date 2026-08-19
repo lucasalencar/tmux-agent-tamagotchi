@@ -9,6 +9,7 @@ export type OpenCodeRuntimeDependencies = EventAdapterDependencies & Readonly<{
 
 export type OpenCodeRuntime = Readonly<{
   event(event: unknown): Promise<void>
+  enqueueLateWork(work: () => Promise<void>): Promise<void>
   dispose(): Promise<void>
 }>
 
@@ -21,9 +22,21 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
   let tail = Promise.resolve()
   let disposal: Promise<void> | undefined
 
-  function event(event: unknown): Promise<void> {
+  function enqueue(work: () => Promise<void>): Promise<void> {
     if (phase !== "active") return Promise.resolve()
     const accepted = async () => {
+      try {
+        await work()
+      } catch {
+        // Operational boundaries cannot reject back into OpenCode or stop the FIFO.
+      }
+    }
+    tail = tail.then(accepted, accepted)
+    return tail
+  }
+
+  function event(event: unknown): Promise<void> {
+    return enqueue(async () => {
       try {
         const lifecycleEvent = await adapter.adapt(event)
         if (!lifecycleEvent) return
@@ -34,16 +47,16 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
           try {
             await dependencies.runEffect(effect)
           } catch {
-            // Operational boundaries cannot reject back into OpenCode or stop the FIFO.
+            // One effect failure must not suppress the remaining reduction effects.
           }
         }
       } catch {
         // Malformed upstream data and lookup failures are ignored conservatively.
       }
-    }
-    tail = tail.then(accepted, accepted)
-    return tail
+    })
   }
+
+  const enqueueLateWork = (work: () => Promise<void>) => enqueue(work)
 
   function dispose(): Promise<void> {
     if (disposal) return disposal
@@ -69,7 +82,7 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
     return disposal
   }
 
-  return { event, dispose }
+  return { event, enqueueLateWork, dispose }
 }
 
 async function settle(operation: (() => Promise<void> | void) | undefined): Promise<void> {

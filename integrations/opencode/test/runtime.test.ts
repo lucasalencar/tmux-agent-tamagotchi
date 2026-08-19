@@ -65,6 +65,33 @@ describe("OpenCode runtime", () => {
     expect(lookups).toBe(1)
   })
 
+  test("serializes admitted late work before later pane activity", async () => {
+    const workStarted = deferred<void>()
+    const releaseWork = deferred<void>()
+    const log: string[] = []
+    const runtime = createOpenCodeRuntime({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      runEffect: async (effect) => {
+        if (effect.type === "pane-state") log.push(`state:${effect.state}`)
+      },
+      clearPane: async () => undefined,
+    })
+
+    const work = runtime.enqueueLateWork(async () => {
+      log.push("notify:start")
+      workStarted.resolve()
+      await releaseWork.promise
+      log.push("notify:end")
+    })
+    await workStarted.promise
+    const activity = runtime.event(statusEvent("root-a", "busy"))
+
+    expect(log).toEqual(["notify:start"])
+    releaseWork.resolve()
+    await expect(Promise.all([work, activity])).resolves.toEqual([undefined, undefined])
+    expect(log).toEqual(["notify:start", "notify:end", "state:running"])
+  })
+
   test("drains admitted events, suppresses their late effects, and makes disposal idempotent", async () => {
     const errorEffectStarted = deferred<void>()
     const releaseErrorEffect = deferred<void>()

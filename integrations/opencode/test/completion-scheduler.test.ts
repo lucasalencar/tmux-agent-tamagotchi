@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import {
   createCompletionScheduler,
+  type CompletionSchedulerDependencies,
   type MessageResponse,
 } from "../completion-scheduler"
 import { FakeClock } from "./fake-clock"
@@ -11,7 +12,7 @@ describe("completion scheduler", () => {
     const clock = new FakeClock()
     const notifications: string[] = []
     const lookups: Array<{ sessionId: string; messageId: string }> = []
-    const scheduler = createCompletionScheduler({
+    const scheduler = createScheduler({
       clock,
       lookupMessage: async (completion) => {
         lookups.push(completion)
@@ -36,7 +37,7 @@ describe("completion scheduler", () => {
   test("new pane activity at 9.9 seconds cancels the pending completion", async () => {
     const clock = new FakeClock()
     const notifications: string[] = []
-    const scheduler = createCompletionScheduler({
+    const scheduler = createScheduler({
       clock,
       lookupMessage: async () => message("root-a", "message-a", [
         { type: "text", text: "stale completion" },
@@ -57,7 +58,7 @@ describe("completion scheduler", () => {
   test("a subagent starting at 9.9 seconds cancels the pending completion", async () => {
     const clock = new FakeClock()
     const notifications: string[] = []
-    const scheduler = createCompletionScheduler({
+    const scheduler = createScheduler({
       clock,
       lookupMessage: async () => message("root-a", "message-a", [
         { type: "text", text: "stale completion" },
@@ -78,7 +79,7 @@ describe("completion scheduler", () => {
   test("duplicate idle state does not restart the completion delay", async () => {
     const clock = new FakeClock()
     const notifications: string[] = []
-    const scheduler = createCompletionScheduler({
+    const scheduler = createScheduler({
       clock,
       lookupMessage: async () => message("root-a", "message-a", [
         { type: "text", text: "done" },
@@ -102,7 +103,7 @@ describe("completion scheduler", () => {
     const clock = new FakeClock()
     const lookup = deferred<MessageResponse | undefined>()
     const notifications: string[] = []
-    const scheduler = createCompletionScheduler({
+    const scheduler = createScheduler({
       clock,
       lookupMessage: async () => lookup.promise,
       notify: async (text) => {
@@ -125,7 +126,7 @@ describe("completion scheduler", () => {
     const clock = new FakeClock()
     const lookup = deferred<MessageResponse | undefined>()
     const notifications: string[] = []
-    const scheduler = createCompletionScheduler({
+    const scheduler = createScheduler({
       clock,
       lookupMessage: async () => lookup.promise,
       notify: async (text) => {
@@ -154,7 +155,7 @@ describe("completion scheduler", () => {
       { type: "compaction", text: "summary" },
       { type: "text", text: "Second\tline\u0007  " },
     ])
-    const scheduler = createCompletionScheduler({
+    const scheduler = createScheduler({
       clock,
       lookupMessage: async () => response,
       notify: async (text) => {
@@ -189,7 +190,7 @@ describe("completion scheduler", () => {
   ] as const)("uses fallback for %s", async (_case, lookupMessage) => {
     const clock = new FakeClock()
     const notifications: string[] = []
-    const scheduler = createCompletionScheduler({
+    const scheduler = createScheduler({
       clock,
       lookupMessage,
       notify: async (text) => {
@@ -207,7 +208,7 @@ describe("completion scheduler", () => {
     const clock = new FakeClock()
     const notifications: string[] = []
     const longText = `✅ **result**\u0000\r\n${"word ".repeat(120)}tail`
-    const scheduler = createCompletionScheduler({
+    const scheduler = createScheduler({
       clock,
       lookupMessage: async () => message("root-a", "message-a", [
         { type: "text", text: longText },
@@ -231,7 +232,7 @@ describe("completion scheduler", () => {
     const clock = new FakeClock()
     const firstLookup = deferred<MessageResponse | undefined>()
     const notifications: string[] = []
-    const scheduler = createCompletionScheduler({
+    const scheduler = createScheduler({
       clock,
       lookupMessage: async ({ messageId }) => messageId === "message-a"
         ? firstLookup.promise
@@ -252,11 +253,38 @@ describe("completion scheduler", () => {
     expect(notifications).toEqual(["second result"])
   })
 
+  test("rechecks pane activity immediately before running an admitted notification", async () => {
+    const clock = new FakeClock()
+    const admitted: Array<() => Promise<void>> = []
+    const notifications: string[] = []
+    const scheduler = createScheduler({
+      clock,
+      lookupMessage: async () => message("root-a", "message-a", [
+        { type: "text", text: "stale completion" },
+      ]),
+      enqueue: (work) => {
+        admitted.push(work)
+      },
+      notify: async (text) => {
+        notifications.push(text)
+      },
+    })
+
+    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    await clock.advance(10_000)
+    expect(admitted).toHaveLength(1)
+
+    scheduler.handle({ type: "pane-state", state: "running" })
+    await admitted[0]()
+
+    expect(notifications).toEqual([])
+  })
+
   test("disposal cancels timers and suppresses late lookup work", async () => {
     const clock = new FakeClock()
     const lookup = deferred<MessageResponse | undefined>()
     const notifications: string[] = []
-    const scheduler = createCompletionScheduler({
+    const scheduler = createScheduler({
       clock,
       lookupMessage: async () => lookup.promise,
       notify: async (text) => {
@@ -291,4 +319,16 @@ function deferred<T>() {
     resolve = done
   })
   return { promise, resolve }
+}
+
+function createScheduler(
+  dependencies: Omit<CompletionSchedulerDependencies, "enqueue">
+    & Partial<Pick<CompletionSchedulerDependencies, "enqueue">>,
+) {
+  return createCompletionScheduler({
+    enqueue: (work) => {
+      void work()
+    },
+    ...dependencies,
+  })
 }

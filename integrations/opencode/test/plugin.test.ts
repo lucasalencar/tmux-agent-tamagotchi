@@ -239,6 +239,90 @@ describe("wired plugin", () => {
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
     ])
   })
+
+  test("keeps a blocked notification ordered before later pane activity", async () => {
+    const clock = new FakeClock()
+    const commandCalls: string[][] = []
+    const notificationStarted = deferred<void>()
+    const releaseNotification = deferred<void>()
+    const plugin = createTmuxAgentTamagotchiPlugin({
+      clock,
+      execute: async (argv) => {
+        commandCalls.push([...argv])
+        if (argv[0] === "tmux") return { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+        if (argv[1] === "notify") {
+          notificationStarted.resolve()
+          await releaseNotification.promise
+        }
+        return { exitCode: 0, stdout: "" }
+      },
+    })
+    const hooks = await plugin(fakePluginInput(
+      async ({ path }) => ({ id: path.id }),
+      async ({ path }) => ({
+        info: { id: path.messageID, sessionID: path.id, role: "assistant" },
+        parts: [{ type: "text", text: "finished" }],
+      }),
+    ))
+
+    await completeTurn(hooks, "root-a", "message-a")
+    await clock.advance(10_000)
+    expect(tamaCalls(commandCalls).at(-1)).toEqual([
+      "/plugin/bin/tama", "notify", "--", "OpenCode", "finished",
+    ])
+    await notificationStarted.promise
+
+    const activity = hooks.event?.({ event: statusEvent("root-b", "busy") as never })
+    await Promise.resolve()
+    expect(tamaCalls(commandCalls).at(-1)?.[1]).toBe("notify")
+
+    releaseNotification.resolve()
+    await activity
+    expect(tamaCalls(commandCalls).at(-1)).toEqual([
+      "/plugin/bin/tama", "state", "running", "OpenCode",
+    ])
+  })
+
+  test("drains a blocked admitted notification before disposal clears the pane", async () => {
+    const clock = new FakeClock()
+    const commandCalls: string[][] = []
+    const notificationStarted = deferred<void>()
+    const releaseNotification = deferred<void>()
+    const plugin = createTmuxAgentTamagotchiPlugin({
+      clock,
+      execute: async (argv) => {
+        commandCalls.push([...argv])
+        if (argv[0] === "tmux") return { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+        if (argv[1] === "notify") {
+          notificationStarted.resolve()
+          await releaseNotification.promise
+        }
+        return { exitCode: 0, stdout: "" }
+      },
+    })
+    const hooks = await plugin(fakePluginInput(
+      async ({ path }) => ({ id: path.id }),
+      async ({ path }) => ({
+        info: { id: path.messageID, sessionID: path.id, role: "assistant" },
+        parts: [{ type: "text", text: "finished" }],
+      }),
+    ))
+
+    await completeTurn(hooks, "root-a", "message-a")
+    await clock.advance(10_000)
+    expect(tamaCalls(commandCalls).at(-1)?.[1]).toBe("notify")
+    await notificationStarted.promise
+
+    const disposal = hooks.dispose?.()
+    await Promise.resolve()
+    expect(tamaCalls(commandCalls).some((argv) => argv[2] === "clear")).toBe(false)
+
+    releaseNotification.resolve()
+    await disposal
+    expect(tamaCalls(commandCalls).at(-1)).toEqual([
+      "/plugin/bin/tama", "state", "clear",
+    ])
+  })
 })
 
 function fakePluginInput(
@@ -272,6 +356,28 @@ function statusEvent(sessionID: string, type: "busy" | "retry" | "idle") {
 
 function tamaCalls(calls: string[][]): string[][] {
   return calls.filter((argv) => argv[0] !== "tmux")
+}
+
+async function completeTurn(
+  hooks: Awaited<ReturnType<Plugin>>,
+  sessionId: string,
+  messageId: string,
+): Promise<void> {
+  await hooks.event?.({ event: statusEvent(sessionId, "busy") as never })
+  await hooks.event?.({
+    event: {
+      type: "message.updated",
+      properties: {
+        info: {
+          id: messageId,
+          sessionID: sessionId,
+          role: "assistant",
+          time: { completed: 1 },
+        },
+      },
+    } as never,
+  })
+  await hooks.event?.({ event: statusEvent(sessionId, "idle") as never })
 }
 
 function deferred<T>() {

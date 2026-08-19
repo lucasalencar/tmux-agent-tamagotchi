@@ -17,6 +17,7 @@ export type CompletionClock = Readonly<{
 
 export type CompletionSchedulerDependencies = Readonly<{
   lookupMessage(completion: CompletionReference): Promise<MessageResponse | undefined>
+  enqueue(work: () => Promise<void>): void
   notify(message: string): Promise<void>
   clock?: CompletionClock
 }>
@@ -97,13 +98,20 @@ export function createCompletionScheduler(
     })
     own.notificationTimer = clock.setTimeout(() => {
       own.notificationTimer = undefined
-      void content.then(async (message) => {
-        if (pending !== own || own.generation !== generation) return
-        pending = undefined
+      void content.then((message) => {
         try {
-          await dependencies.notify(message || GENERIC_COMPLETION)
+          dependencies.enqueue(async () => {
+            if (pending !== own || own.generation !== generation) return
+            try {
+              await dependencies.notify(message || GENERIC_COMPLETION)
+            } catch {
+              // A notification backend cannot reject into OpenCode.
+            } finally {
+              if (pending === own && own.generation === generation) pending = undefined
+            }
+          })
         } catch {
-          // A notification backend cannot reject into OpenCode.
+          if (pending === own && own.generation === generation) pending = undefined
         }
       })
     }, COMPLETION_DELAY_MS)
