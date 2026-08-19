@@ -7,7 +7,6 @@ export type SessionInfo = Readonly<{
 
 export type EventAdapterDependencies = Readonly<{
   lookupSession(sessionId: string): Promise<SessionInfo | undefined>
-  maxParentDepth?: number
 }>
 
 export type EventAdapter = Readonly<{
@@ -15,76 +14,39 @@ export type EventAdapter = Readonly<{
   clear(): void
 }>
 
-type SessionRecord = Readonly<{ parentId: string | null }>
-
-const DEFAULT_MAX_PARENT_DEPTH = 64
-
 export function createEventAdapter(dependencies: EventAdapterDependencies): EventAdapter {
-  const records = new Map<string, SessionRecord>()
   const classifications = new Map<string, SessionKind>()
-  const maxParentDepth = dependencies.maxParentDepth ?? DEFAULT_MAX_PARENT_DEPTH
 
-  function remember(info: SessionInfo): boolean {
-    if (!isIdentifier(info.id)) return false
+  function remember(info: SessionInfo): SessionKind | undefined {
+    if (!isIdentifier(info.id)) return undefined
     const parent = readParentId(info)
-    if (parent === undefined) return false
-    records.set(info.id, { parentId: parent })
-    classifications.clear()
-    return true
-  }
-
-  async function recordFor(sessionId: string): Promise<SessionRecord | undefined> {
-    const cached = records.get(sessionId)
-    if (cached) return cached
-    try {
-      const info = await dependencies.lookupSession(sessionId)
-      if (!info || info.id !== sessionId || !remember(info)) return undefined
-      return records.get(sessionId)
-    } catch {
-      return undefined
-    }
+    if (parent === undefined) return undefined
+    const kind = parent === null ? "root" : "delegated"
+    classifications.set(info.id, kind)
+    return kind
   }
 
   async function classify(sessionId: string): Promise<SessionKind | undefined> {
     const cached = classifications.get(sessionId)
     if (cached) return cached
-
-    const path: string[] = []
-    const visited = new Set<string>()
-    let current = sessionId
-    for (let depth = 0; depth <= maxParentDepth; depth += 1) {
-      if (visited.has(current)) return undefined
-      visited.add(current)
-
-      const known = classifications.get(current)
-      if (known) {
-        path.forEach((id) => classifications.set(id, "delegated"))
-        return path.length === 0 ? known : "delegated"
-      }
-
-      const record = await recordFor(current)
-      if (!record) return undefined
-      if (record.parentId === null) {
-        classifications.set(current, "root")
-        path.forEach((id) => classifications.set(id, "delegated"))
-        return path.length === 0 ? "root" : "delegated"
-      }
-      path.push(current)
-      current = record.parentId
+    try {
+      const info = await dependencies.lookupSession(sessionId)
+      if (!info || info.id !== sessionId) return undefined
+      return remember(info)
+    } catch {
+      return undefined
     }
-    return undefined
   }
 
   async function adapt(event: unknown): Promise<LifecycleEvent | undefined> {
     if (!isRecord(event) || !isRecord(event.properties)) return undefined
     const properties = event.properties
     if (event.type === "session.created" || event.type === "session.deleted") {
-      if (!isSessionInfo(properties.info) || !remember(properties.info)) return undefined
+      if (!isSessionInfo(properties.info)) return undefined
       const sessionId = properties.info.id
-      const kind = await classify(sessionId)
+      const kind = remember(properties.info)
       if (event.type === "session.deleted") {
-        records.delete(sessionId)
-        classifications.clear()
+        classifications.delete(sessionId)
       }
       if (!kind) return undefined
       return {
@@ -154,7 +116,6 @@ export function createEventAdapter(dependencies: EventAdapterDependencies): Even
   return {
     adapt,
     clear() {
-      records.clear()
       classifications.clear()
     },
   }

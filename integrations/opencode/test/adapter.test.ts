@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test"
 import { createEventAdapter } from "../adapter"
 
 describe("OpenCode event adapter", () => {
-  test("classifies session events from their parent metadata and cached ancestry", async () => {
+  test("classifies session events from their parent metadata and cached session kind", async () => {
     const adapter = createEventAdapter({
       lookupSession: async () => {
         throw new Error("cached session metadata should avoid a lookup")
@@ -12,12 +12,12 @@ describe("OpenCode event adapter", () => {
 
     await expect(adapter.adapt({
       type: "session.created",
-      properties: { info: { id: "root-a", parentID: undefined } },
-    })).resolves.toEqual({ type: "session-created", sessionId: "root-a", kind: "root" })
-    await expect(adapter.adapt({
-      type: "session.created",
       properties: { info: { id: "child-a", parentID: "root-a" } },
     })).resolves.toEqual({ type: "session-created", sessionId: "child-a", kind: "delegated" })
+    await expect(adapter.adapt({
+      type: "session.created",
+      properties: { info: { id: "root-a", parentID: undefined } },
+    })).resolves.toEqual({ type: "session-created", sessionId: "root-a", kind: "root" })
     await expect(adapter.adapt({
       type: "session.status",
       properties: { sessionID: "child-a", status: { type: "busy" } },
@@ -110,32 +110,24 @@ describe("OpenCode event adapter", () => {
     })).resolves.toBeUndefined()
   })
 
-  test("ignores unknown, cyclic, and over-deep parent chains and invalidates ancestry on deletion", async () => {
+  test("ignores unavailable or invalid session metadata and invalidates a deleted session", async () => {
     const sessions = new Map<string, { id: string; parentID?: string }>([
-      ["root-a", { id: "root-a" }],
       ["child-a", { id: "child-a", parentID: "root-a" }],
-      ["unknown-child", { id: "unknown-child", parentID: "missing-parent" }],
-      ["cycle-a", { id: "cycle-a", parentID: "cycle-b" }],
-      ["cycle-b", { id: "cycle-b", parentID: "cycle-a" }],
-      ["deep-a", { id: "deep-a", parentID: "deep-b" }],
-      ["deep-b", { id: "deep-b", parentID: "deep-c" }],
-      ["deep-c", { id: "deep-c", parentID: "root-a" }],
+      ["invalid-child", { id: "invalid-child", parentID: "" }],
     ])
     const adapter = createEventAdapter({
       lookupSession: async (sessionId) => sessions.get(sessionId),
-      maxParentDepth: 2,
     })
 
     await expect(adapter.adapt(statusEvent("unknown-child"))).resolves.toBeUndefined()
-    await expect(adapter.adapt(statusEvent("cycle-a"))).resolves.toBeUndefined()
-    await expect(adapter.adapt(statusEvent("deep-a"))).resolves.toBeUndefined()
+    await expect(adapter.adapt(statusEvent("invalid-child"))).resolves.toBeUndefined()
     await expect(adapter.adapt(statusEvent("child-a"))).resolves.toMatchObject({ kind: "delegated" })
 
     await expect(adapter.adapt({
       type: "session.deleted",
-      properties: { info: { id: "root-a", parentID: undefined } },
-    })).resolves.toEqual({ type: "session-deleted", sessionId: "root-a", kind: "root" })
-    sessions.delete("root-a")
+      properties: { info: { id: "child-a", parentID: "root-a" } },
+    })).resolves.toEqual({ type: "session-deleted", sessionId: "child-a", kind: "delegated" })
+    sessions.delete("child-a")
     await expect(adapter.adapt(statusEvent("child-a"))).resolves.toBeUndefined()
   })
 })

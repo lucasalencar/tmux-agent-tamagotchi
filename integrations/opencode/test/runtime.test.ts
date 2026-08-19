@@ -163,6 +163,52 @@ describe("OpenCode runtime", () => {
       "clear",
     ])
   })
+
+  test("deletes an active child from event metadata after its root is already gone", async () => {
+    const sessions = new Map<string, { id: string; parentID?: string }>([
+      ["root-a", { id: "root-a" }],
+      ["child-a", { id: "child-a", parentID: "root-a" }],
+    ])
+    const effects: StateMachineEffect[] = []
+    const runtime = createOpenCodeRuntime({
+      lookupSession: async (sessionId) => sessions.get(sessionId),
+      runEffect: async (effect) => {
+        effects.push(effect)
+      },
+      clearPane: async () => undefined,
+    })
+
+    await runtime.event({
+      type: "session.created",
+      properties: { info: { id: "root-a" } },
+    })
+    await runtime.event({
+      type: "session.created",
+      properties: { info: { id: "child-a", parentID: "root-a" } },
+    })
+    await runtime.event(statusEvent("child-a", "busy"))
+    await runtime.event({
+      type: "permission.asked",
+      properties: { id: "request-a", sessionID: "child-a" },
+    })
+    await runtime.event({
+      type: "session.deleted",
+      properties: { info: { id: "root-a" } },
+    })
+    sessions.delete("root-a")
+    await runtime.event({
+      type: "session.deleted",
+      properties: { info: { id: "child-a", parentID: "root-a" } },
+    })
+
+    expect(effects).toEqual([
+      { type: "pane-state", state: "idle" },
+      { type: "subagent-start", sessionId: "child-a" },
+      { type: "pane-state", state: "waiting" },
+      { type: "pane-state", state: "idle" },
+      { type: "subagent-stop", sessionId: "child-a" },
+    ])
+  })
 })
 
 function statusEvent(sessionID: string, type: "busy" | "retry" | "idle") {
