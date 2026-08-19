@@ -16,3 +16,7 @@ when a root session is created or the aggregate does. Creation establishes that 
 present but does not represent a completed turn. Completion is notified only after an eligible
 turn — one with an observed terminal assistant message — leaves the aggregate idle for ten
 seconds; leaving idle cancels the timer, and duplicate idle events do not postpone it.
+A live delegated session suppresses completion eligibility even when every root is idle, and a
+delegated session that starts during the ten-second delay cancels the pending notification. Its
+later stop does not resurrect that completion: a future root turn must become independently
+eligible.

@@ -240,6 +240,46 @@ describe("wired plugin", () => {
     ])
   })
 
+  test("parent metadata starts delegated tracking and cancels the pending completion", async () => {
+    const clock = new FakeClock()
+    const commandCalls: string[][] = []
+    const plugin = createTmuxAgentTamagotchiPlugin({
+      clock,
+      execute: async (argv) => {
+        commandCalls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+    const hooks = await plugin(fakePluginInput(
+      async ({ path }) => ({ id: path.id }),
+      async ({ path }) => ({
+        info: { id: path.messageID, sessionID: path.id, role: "assistant" },
+        parts: [{ type: "text", text: "root finished" }],
+      }),
+    ))
+
+    await completeTurn(hooks, "root-a", "message-a")
+    await clock.advance(9_900)
+    await hooks.event?.({
+      event: {
+        type: "session.created",
+        properties: { info: { id: "child-a", parentID: "root-a" } },
+      } as never,
+    })
+    await hooks.event?.({ event: statusEvent("child-a", "busy") as never })
+    await clock.advance(10_000)
+    await hooks.event?.({ event: statusEvent("child-a", "idle") as never })
+
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "subagent-start", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "subagent-stop", "--", "child-a"],
+    ])
+  })
+
   test("keeps a blocked notification ordered before later pane activity", async () => {
     const clock = new FakeClock()
     const commandCalls: string[][] = []
