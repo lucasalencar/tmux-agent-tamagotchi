@@ -1,5 +1,10 @@
 ## Agent skills
 
+### Commits
+
+This is a personal project: commit directly to `main`. Changes do not require a branch or
+code review before committing.
+
 ### Issue tracker
 
 Issues tracked as GitHub Issues via `gh` CLI, against `lucasalencar/tmux-agent-tamagotchi`. See `docs/agents/issue-tracker.md`.
