@@ -50,6 +50,21 @@ export function createLifecycleState(): LifecycleState {
   }
 }
 
+function establishesPaneState(event: LifecycleEvent): boolean {
+  switch (event.type) {
+    case "permission-asked":
+      return true
+    case "session-created":
+    case "session-deleted":
+    case "session-error":
+    case "session-status":
+      return event.kind === "root"
+    case "permission-replied":
+    case "terminal-assistant-message":
+      return false
+  }
+}
+
 export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): Reduction {
   const roots = new Map(state.roots)
   const permissions = new Map(state.permissions)
@@ -57,16 +72,13 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
   const terminalAssistantMessages = new Map(state.terminalAssistantMessages)
   let delegatedEffect: StateMachineEffect | undefined
   let completionEffect: StateMachineEffect | undefined
-  let paneStateMayChange = false
   if (event.type === "permission-asked") {
     if (!permissions.has(event.requestId)) {
       permissions.set(event.requestId, event.sessionId)
-      paneStateMayChange = true
     }
   } else if (event.type === "permission-replied") {
-    paneStateMayChange = permissions.delete(event.requestId)
+    permissions.delete(event.requestId)
   } else if (event.type === "session-deleted") {
-    paneStateMayChange = true
     if (event.kind === "root") {
       roots.delete(event.sessionId)
       terminalAssistantMessages.delete(event.sessionId)
@@ -92,14 +104,11 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
   } else if (event.type === "terminal-assistant-message") {
     terminalAssistantMessages.set(event.sessionId, event.messageId)
   } else if (event.type === "session-created") {
-    paneStateMayChange = true
     if (!roots.has(event.sessionId)) roots.set(event.sessionId, "idle")
   } else if (event.type === "session-error") {
-    paneStateMayChange = true
     roots.set(event.sessionId, "error")
     terminalAssistantMessages.delete(event.sessionId)
   } else {
-    paneStateMayChange = true
     const current = roots.get(event.sessionId)
     if (event.status !== "idle" || current !== "error") {
       roots.set(event.sessionId, event.status === "idle" ? "idle" : "running")
@@ -129,7 +138,7 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
       : "idle"
   if (paneState !== "idle") completionEffect = undefined
   const shouldPublish =
-    paneStateMayChange && (!state.paneStatePublished || paneState !== state.paneState)
+    paneState !== state.paneState || (!state.paneStatePublished && establishesPaneState(event))
   const effects: StateMachineEffect[] = shouldPublish ? [{ type: "pane-state", state: paneState }] : []
   if (event.type === "session-error" && event.kind === "root") {
     effects.push({ type: "root-error", sessionId: event.sessionId, message: event.message })
@@ -143,7 +152,7 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
       permissions,
       activeDelegatedSessions,
       terminalAssistantMessages,
-      paneStatePublished: state.paneStatePublished || paneStateMayChange,
+      paneStatePublished: state.paneStatePublished || shouldPublish,
     },
     effects,
   }
