@@ -136,7 +136,7 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
     : rootStates.includes("running")
       ? "running"
       : "idle"
-  if (paneState !== "idle") completionEffect = undefined
+  if (paneState !== "idle" || activeDelegatedSessions.size > 0) completionEffect = undefined
   const shouldPublish =
     paneState !== state.paneState || (!state.paneStatePublished && establishesPaneState(event))
   const effects: StateMachineEffect[] = shouldPublish ? [{ type: "pane-state", state: paneState }] : []

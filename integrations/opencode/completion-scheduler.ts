@@ -57,6 +57,10 @@ export function createCompletionScheduler(
   }
 
   function handle(effect: StateMachineEffect): void {
+    if (effect.type === "subagent-start") {
+      cancelPending()
+      return
+    }
     if (effect.type === "pane-state") {
       if (effect.state !== "idle") cancelPending()
       return

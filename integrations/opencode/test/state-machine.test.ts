@@ -322,6 +322,36 @@ describe("delegated sessions", () => {
 })
 
 describe("completion eligibility", () => {
+  test("a root completion remains ineligible while a delegated session keeps the pane in background", () => {
+    run(createLifecycleState(), [
+      {
+        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+        paneState: "running",
+        effects: [{ type: "pane-state", state: "running" }],
+      },
+      {
+        event: { type: "session-status", sessionId: "child-a", kind: "delegated", status: "busy" },
+        paneState: "running",
+        effects: [{ type: "subagent-start", sessionId: "child-a" }],
+      },
+      {
+        event: {
+          type: "terminal-assistant-message",
+          sessionId: "root-a",
+          kind: "root",
+          messageId: "message-a",
+        },
+        paneState: "running",
+        effects: [],
+      },
+      {
+        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "idle" },
+        paneState: "idle",
+        effects: [{ type: "pane-state", state: "idle" }],
+      },
+    ])
+  })
+
   test("only a terminal assistant message from the root whose completion makes the pane idle is eligible", () => {
     run(createLifecycleState(), [
       {

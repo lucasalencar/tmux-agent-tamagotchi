@@ -54,6 +54,27 @@ describe("completion scheduler", () => {
     expect(notifications).toEqual([])
   })
 
+  test("a subagent starting at 9.9 seconds cancels the pending completion", async () => {
+    const clock = new FakeClock()
+    const notifications: string[] = []
+    const scheduler = createCompletionScheduler({
+      clock,
+      lookupMessage: async () => message("root-a", "message-a", [
+        { type: "text", text: "stale completion" },
+      ]),
+      notify: async (text) => {
+        notifications.push(text)
+      },
+    })
+
+    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    await clock.advance(9_900)
+    scheduler.handle({ type: "subagent-start", sessionId: "child-a" })
+    await clock.advance(10_000)
+
+    expect(notifications).toEqual([])
+  })
+
   test("duplicate idle state does not restart the completion delay", async () => {
     const clock = new FakeClock()
     const notifications: string[] = []
