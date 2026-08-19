@@ -202,6 +202,24 @@ describe("pane aggregation", () => {
 })
 
 describe("delegated sessions", () => {
+  test("deleting an unobserved delegated session does not establish the agent pane", () => {
+    const delegatedDeletion = reduceLifecycle(createLifecycleState(), {
+      type: "session-deleted",
+      sessionId: "child-a",
+      kind: "delegated",
+    })
+
+    expect(delegatedDeletion.state.paneState).toBe("idle")
+    expect(delegatedDeletion.effects).toEqual([])
+
+    const rootCreation = reduceLifecycle(delegatedDeletion.state, {
+      type: "session-created",
+      sessionId: "root-a",
+      kind: "root",
+    })
+    expect(rootCreation.effects).toEqual([{ type: "pane-state", state: "idle" }])
+  })
+
   test("busy starts a subagent and idle, error, or deletion stops it without failing the pane", () => {
     run(createLifecycleState(), [
       {
