@@ -279,7 +279,7 @@ payload() { # <event> [extra JSON…]
 
 @test "a notification that means the user is wanted shows the agent waiting" {
   local type
-  for type in permission_prompt idle_prompt agent_needs_input elicitation_dialog elicitation_url_dialog; do
+  for type in permission_prompt agent_needs_input elicitation_dialog elicitation_url_dialog; do
     hook SessionStart
     hook Notification <<<"$(payload Notification ",\"notification_type\":\"$type\"")"
     assert_success
@@ -291,10 +291,11 @@ payload() { # <event> [extra JSON…]
   hook SessionStart
   assert_pane_option "$PANE" state_main idle
 
-  # Signing in is not a reason to say an agent needs the user, and a pane wrongly
-  # left in `waiting` outlives whatever caused it.
+  # Signing in and the routine reminder Claude emits after a turn ends are not reasons
+  # to say an agent needs the user, and a pane wrongly left in `waiting` outlives
+  # whatever caused it.
   local type
-  for type in auth_success elicitation_complete elicitation_response agent_completed; do
+  for type in auth_success elicitation_complete elicitation_response agent_completed idle_prompt; do
     hook Notification <<<"$(payload Notification ",\"notification_type\":\"$type\"")"
     assert_success
     assert_pane_option "$PANE" state_main idle
@@ -614,22 +615,19 @@ PAYLOAD
   refute_backend_called notify
 }
 
-@test "the idle prompt moves the icon without interrupting the user" {
-  # The same parting of the state half and the banner half as `PermissionRequest`
-  # above, at the other end of the turn. Claude Code raises this one 60s after every
-  # turn ends — measured at exactly +60s on three consecutive turns of a 2.1.228
-  # session — and its message is always the same sentence, which says nothing.
-  #
-  # The state is asserted as well as the silence, on purpose: the wrong way to keep
-  # this quiet is to drop `idle_prompt` out of the types that mean the user is
-  # wanted, and this test is what says so.
+@test "the idle prompt leaves a finished turn idle without interrupting the user" {
+  # Claude Code raises this routine reminder 60s after a turn ends. It must not
+  # overwrite the state recorded by Stop or repeat its banner.
   hook SessionStart
+  hook Stop <<<"$(payload Stop ',"last_assistant_message":"I have finished the migration"')"
+  assert_success
   hook Notification \
     <<<"$(payload Notification ',"notification_type":"idle_prompt","message":"Claude is waiting for your input"')"
   assert_success
 
-  assert_pane_option "$PANE" state_main waiting
-  refute_backend_called notify
+  assert_pane_option "$PANE" state_main idle
+  assert_equal "$(tama_backend_calls notify)" 1
+  assert_backend_value notify argv2 'I have finished the migration'
 }
 
 @test "the idle prompt does not replace what the agent said with a sentence that says nothing" {

@@ -4,8 +4,8 @@
 # Unknown events remain silent so newer Claude Code versions cannot fail a turn.
 #
 # `PermissionRequest` moves state but its later `Notification` owns the banner so
-# one interruption produces one message. `idle_prompt` likewise changes state
-# without replacing the more useful banner already raised by `Stop`.
+# one interruption produces one message. `idle_prompt` is routine confirmation that
+# a turn ended, so it leaves the `idle` state set by `Stop` alone.
 #
 # Events carrying `agent_id` still update state but never banner. Claude Code emits
 # subagent permission prompts again as session-level notifications, so the user does
@@ -349,7 +349,7 @@ cc_message() { # <field> <fallback>
 # Whether it is also worth an interruption is decided after it, per type.
 cc_notification_wants_user() { # <type>
   case "$1" in
-    permission_prompt | idle_prompt | agent_needs_input) return 0 ;;
+    permission_prompt | agent_needs_input) return 0 ;;
     elicitation_dialog | elicitation_url_dialog) return 0 ;;
     *) return 1 ;;
   esac
@@ -384,16 +384,6 @@ main() {
       # guessing wrong leaves a pane asking for the user forever.
       cc_field notification_type || exit 0
       cc_notification_wants_user "$TAMA_CC_FIELD" || exit 0
-      # The icon and the window mark, and no banner — the same trade as
-      # `PermissionRequest` above, at the other end of the turn: this one arrives 60s
-      # after `Stop` has already bannered what the agent said, and would replace it
-      # with a sentence that says nothing. See the note at the top of this file.
-      #
-      # The state is still worth moving, and moving it ends the hook, because
-      # `cc_state` execs.
-      if [ "$TAMA_CC_FIELD" = 'idle_prompt' ]; then
-        cc_state waiting "$@"
-      fi
       if cc_is_delegated; then
         cc_state waiting "$@"
       fi
