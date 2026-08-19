@@ -222,6 +222,7 @@ The plugin does not install mouse bindings.
 | `gc` | Clear stale pane state. |
 | `on-select` | Clear a mark, dismiss its notification and sweep its window. |
 | `hook` | Dispatch an event to a bundled adapter. |
+| `setup` | Configure an integration that provides a setup helper. |
 | `doctor` | Diagnose an installation. |
 | `version` | Print the plugin version. |
 
@@ -231,8 +232,9 @@ Hook-facing commands follow these rules:
 - Usage errors exit `2` with a message on stderr.
 - Operational errors exit zero without interrupting an agent turn.
 
-`doctor` reports broken setups with a non-zero status. `focus-window` runs outside tmux
-because desktop notification clicks do not inherit the hook environment.
+`doctor` and `setup` report failures with a non-zero status. Both `setup` and `focus-window`
+run outside tmux: setup may configure an agent before tmux starts, while desktop notification
+clicks do not inherit the hook environment.
 
 ## Operational notes
 
