@@ -19,6 +19,11 @@ integrations/opencode/index.ts   ->  loaded directly by OpenCode
 integration talks to the core through the same public CLI a hand-wired agent uses; native
 entrypoints get no private core API.
 
+OpenCode uses the native entrypoint above rather than a shell hook because its plugin API exposes
+the session relationships and overlapping lifecycle needed for correct pane aggregation. Follow
+the one canonical global configuration recipe in [`opencode/README.md`](opencode/README.md); this
+document deliberately does not duplicate that JSON.
+
 ## These are best effort, and outside the version promise
 
 `bin/tama` is the compatibility promise. `integrations/` is not (ADR-0002). The adapters

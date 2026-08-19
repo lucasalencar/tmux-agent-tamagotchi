@@ -16,8 +16,9 @@ The plugin:
 0:editor   1:api ●   2:tests ◐ *   3:docs ⚙   4:build ✕
 ```
 
-Agents report their lifecycle through hooks. The plugin does not launch or monitor agent
-processes. Claude Code and Codex have bundled adapters; other agents can call the same CLI.
+Agents report their lifecycle through command hooks or native plugin APIs. The plugin does not
+launch or monitor agent processes. Claude Code, Codex, and OpenCode have bundled integrations;
+other agents can call the same CLI.
 
 ## Requirements
 
@@ -115,6 +116,8 @@ State definitions are in [`CONTEXT.md`](CONTEXT.md).
   [`integrations/claude-code/README.md`](integrations/claude-code/README.md).
 - **Codex:** copy the hook configuration from
   [`integrations/codex/README.md`](integrations/codex/README.md).
+- **OpenCode:** load the native TypeScript plugin using the canonical global configuration in
+  [`integrations/opencode/README.md`](integrations/opencode/README.md).
 - **Other agents:** follow the public CLI recipe in
   [`integrations/README.md`](integrations/README.md).
 
@@ -254,6 +257,8 @@ because desktop notification clicks do not inherit the hook environment.
 | [`backends/README.md`](backends/README.md) | Backend contract and platform behavior |
 | [`integrations/README.md`](integrations/README.md) | Public integration recipe |
 | [`integrations/claude-code/README.md`](integrations/claude-code/README.md) | Claude Code adapter |
+| [`integrations/codex/README.md`](integrations/codex/README.md) | Codex adapter |
+| [`integrations/opencode/README.md`](integrations/opencode/README.md) | OpenCode native plugin and canonical setup |
 | [`examples/demo.tmux.conf`](examples/demo.tmux.conf) | Runnable configuration example |
 
 ## Development
