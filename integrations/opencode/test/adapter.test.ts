@@ -12,7 +12,7 @@ describe("OpenCode event adapter", () => {
 
     await expect(adapter.adapt({
       type: "session.created",
-      properties: { info: { id: "root-a" } },
+      properties: { info: { id: "root-a", parentID: undefined } },
     })).resolves.toEqual({ type: "session-created", sessionId: "root-a", kind: "root" })
     await expect(adapter.adapt({
       type: "session.created",
@@ -133,7 +133,7 @@ describe("OpenCode event adapter", () => {
 
     await expect(adapter.adapt({
       type: "session.deleted",
-      properties: { info: { id: "root-a" } },
+      properties: { info: { id: "root-a", parentID: undefined } },
     })).resolves.toEqual({ type: "session-deleted", sessionId: "root-a", kind: "root" })
     sessions.delete("root-a")
     await expect(adapter.adapt(statusEvent("child-a"))).resolves.toBeUndefined()

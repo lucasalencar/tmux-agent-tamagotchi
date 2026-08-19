@@ -173,7 +173,7 @@ function isSessionInfo(value: unknown): value is SessionInfo {
 }
 
 function readParentId(info: SessionInfo): string | null | undefined {
-  if (!("parentID" in info)) return null
+  if (info.parentID === undefined) return null
   return isIdentifier(info.parentID) ? info.parentID : undefined
 }
 

@@ -102,7 +102,13 @@ describe("OpenCode runtime", () => {
 
     releaseErrorEffect.resolve()
     await expect(Promise.all([admitted, late, disposal])).resolves.toEqual([undefined, undefined, undefined])
-    expect(log).toEqual(["state:idle", "state:error", "cancel-late-work", "clear"])
+    expect(log).toEqual([
+      "state:idle",
+      "state:error",
+      "cancel-late-work",
+      "cancel-late-work",
+      "clear",
+    ])
   })
 
   test("stops tracked delegated sessions before clearing the pane", async () => {

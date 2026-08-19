@@ -53,6 +53,7 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
     disposal = (async () => {
       await drained
       await lateWorkDisposed
+      await settle(dependencies.disposeLateWork)
       for (const sessionId of Array.from(state.activeDelegatedSessions)) {
         await settle(() => dependencies.runEffect({ type: "subagent-stop", sessionId }))
       }
