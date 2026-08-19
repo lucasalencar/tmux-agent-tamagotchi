@@ -55,6 +55,42 @@ describe("completion scheduler", () => {
     expect(notifications).toEqual([])
   })
 
+  test("a new terminal turn starts a fresh completion delay after activity cancels the prior one", async () => {
+    const clock = new FakeClock()
+    const notifications: string[] = []
+    const scheduler = createScheduler({
+      clock,
+      lookupMessage: async ({ sessionId, messageId }) => message(sessionId, messageId, [
+        { type: "text", text: messageId === "message-old" ? "stale completion" : "fresh completion" },
+      ]),
+      notify: async (text) => {
+        notifications.push(text)
+      },
+    })
+
+    scheduler.handle({
+      type: "completion-eligible",
+      sessionId: "root-a",
+      messageId: "message-old",
+    })
+    await clock.advance(5_000)
+    scheduler.handle({ type: "pane-state", state: "running" })
+    await clock.advance(10_000)
+    expect(notifications).toEqual([])
+
+    scheduler.handle({
+      type: "completion-eligible",
+      sessionId: "root-a",
+      messageId: "message-new",
+    })
+    await clock.advance(9_999)
+    expect(notifications).toEqual([])
+    await clock.advance(1)
+    await clock.advance(10_000)
+
+    expect(notifications).toEqual(["fresh completion"])
+  })
+
   test("a subagent starting at 9.9 seconds cancels the pending completion", async () => {
     const clock = new FakeClock()
     const notifications: string[] = []

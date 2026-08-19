@@ -18,18 +18,21 @@ opencode_global_recipe() {
   local recipe="$BATS_TEST_TMPDIR/opencode.json"
   opencode_global_recipe >"$recipe"
 
-  run python3 - "$recipe" <<'PY'
+  run python3 - "$recipe" "$OPENCODE_README" <<'PY'
 import json
 import pathlib
 import sys
 
 data = json.load(open(sys.argv[1], encoding="utf-8"))
+documentation = " ".join(open(sys.argv[2], encoding="utf-8").read().split())
 assert set(data) == {"$schema", "plugin"}
 assert data["$schema"] == "https://opencode.ai/config.json"
 assert len(data["plugin"]) == 1
 entrypoint = data["plugin"][0]
 assert pathlib.PurePosixPath(entrypoint).is_absolute()
-assert entrypoint.endswith("/tmux-agent-tamagotchi/integrations/opencode/index.ts")
+placeholder = "/absolute/path/to/tmux-agent-tamagotchi"
+assert entrypoint == f"{placeholder}/integrations/opencode/index.ts"
+assert f"replacing the entire placeholder `{placeholder}`" in documentation
 PY
   assert_success
 }
