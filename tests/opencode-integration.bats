@@ -6,6 +6,7 @@ load helper
 
 PROJECT_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 OPENCODE_README="$PROJECT_ROOT/integrations/opencode/README.md"
+OPENCODE_CONFIGURE="$PROJECT_ROOT/integrations/opencode/configure"
 
 opencode_global_recipe() {
   sed -n '/^<!-- opencode-global-config:start -->$/,/^<!-- opencode-global-config:end -->$/p' \
@@ -47,6 +48,39 @@ PY
   run grep -F 'opencode-global-config:start' "$PROJECT_ROOT/README.md" \
     "$PROJECT_ROOT/integrations/README.md"
   [ "$status" -ne 0 ]
+}
+
+@test "the OpenCode helper creates an idempotent global configuration" {
+  local config="$BATS_TEST_TMPDIR/opencode.json"
+
+  run "$OPENCODE_CONFIGURE" "$config"
+  assert_success
+
+  run "$OPENCODE_CONFIGURE" "$config"
+  assert_success
+
+  run jq -e --arg plugin "$PROJECT_ROOT/integrations/opencode/index.ts" \
+    '.plugin == [$plugin]' "$config"
+  assert_success
+  [ -f "$config.backup" ]
+}
+
+@test "the OpenCode helper preserves settings and rejects malformed JSON safely" {
+  local config="$BATS_TEST_TMPDIR/opencode.json"
+  printf '%s\n' '{"theme":"tamagotchi","plugin":["existing.ts"]}' >"$config"
+
+  run "$OPENCODE_CONFIGURE" "$config"
+  assert_success
+  run jq -e \
+    '.theme == "tamagotchi" and (.plugin | index("existing.ts") != null)' \
+    "$config"
+  assert_success
+
+  printf '%s\n' '{invalid' >"$config"
+  run "$OPENCODE_CONFIGURE" "$config"
+  [ "$status" -ne 0 ]
+  run cat "$config"
+  [ "$output" = '{invalid' ]
 }
 
 @test "CI validates OpenCode with pinned Bun without coupling the shell suite" {

@@ -238,6 +238,31 @@ extract_hook_recipe() {
   [ -n "$output" ]
 }
 
+@test "setup delegates to an integration helper outside tmux" {
+  local config="$BATS_TEST_TMPDIR/opencode.json"
+  unset TMUX
+
+  run "$PLUGIN_ROOT/bin/tama" setup opencode "$config"
+  assert_success
+
+  run jq -e --arg plugin "$PLUGIN_ROOT/integrations/opencode/index.ts" \
+    '.plugin == [$plugin]' "$config"
+  assert_success
+}
+
+@test "setup rejects missing and unsafe integration names" {
+  unset TMUX
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" setup
+  assert_usage_error 'integration name'
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" setup ../opencode
+  assert_usage_error 'invalid integration name'
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" setup unknown
+  assert_usage_error 'no setup helper'
+}
+
 @test "a plugin directory without its libraries says so and exits non-zero" {
   local broken="$BATS_TEST_TMPDIR/broken"
   mkdir -p "$broken/bin"

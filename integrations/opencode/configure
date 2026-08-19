@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+set -o errexit
+set -o nounset
+
+command -v jq >/dev/null 2>&1 || {
+  printf 'error: jq is required to configure OpenCode\n' >&2
+  exit 1
+}
+
+integration_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"
+plugin="$integration_dir/index.ts"
+config="${1:-$HOME/.config/opencode/opencode.json}"
+config_dir="$(dirname -- "$config")"
+
+mkdir -p "$config_dir"
+tmp="$(mktemp "$config_dir/.opencode.json.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+
+if [ -f "$config" ]; then
+  jq --arg plugin "$plugin" \
+    '.plugin = (((.plugin // []) + [$plugin]) | unique)' \
+    "$config" >"$tmp"
+  cp "$config" "$config.backup"
+else
+  jq -n --arg plugin "$plugin" \
+    '{"$schema":"https://opencode.ai/config.json","plugin":[$plugin]}' \
+    >"$tmp"
+fi
+
+mv "$tmp" "$config"
+trap - EXIT
+
+printf 'OpenCode configured with: %s\n' "$plugin"
+printf 'Restart OpenCode to load the integration.\n'

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+# shellcheck source=lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+[ "$#" -gt 0 ] || die_usage 'setup needs an integration name'
+
+integration="$1"
+shift
+
+case "$integration" in
+  '' | -* | .* | */* | *[!A-Za-z0-9_-]*)
+    die_usage "invalid integration name: $integration"
+    ;;
+esac
+
+configure="$TAMA_PLUGIN_DIR/integrations/$integration/configure"
+if [ ! -f "$configure" ] || [ ! -x "$configure" ]; then
+  die_usage "integration has no setup helper: $integration"
+fi
+
+exec "$configure" "$@"

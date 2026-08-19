@@ -13,7 +13,8 @@
 #   * $TMUX is non-empty (the dispatcher has already made an absent tmux a no-op),
 #     unless it is one of the subcommands exempted in main() — `focus-window`, which
 #     runs from a notification click where there is no $TMUX to have, and `doctor`,
-#     which has to be able to say that there is no server
+#     which has to be able to say that there is no server, and `setup`, which
+#     configures integrations without needing a running tmux server
 #   * $TAMA_PLUGIN_DIR and $TAMA_BIN are exported; it must source lib/common.sh
 #     itself, since it runs as its own process
 #   * exit 2 is reserved for usage errors; every other failure exits 0 silently —
@@ -83,6 +84,7 @@ Commands:
   on-select [--all]     Clear mark, dismiss notification, and run gc.
   doctor                Print installation diagnostics. Exit 1 on failure.
   hook <agent> <event>  Dispatch to integrations/<agent>/hook.
+  setup <integration>   Configure an integration that provides a setup helper.
   version               Print the plugin version.
   --help, -h, help      Print help.
 
@@ -137,6 +139,7 @@ Runtime contract:
   - Usage error: exit 2; diagnostic on stderr.
   - Operational error: exit 0 without output.
   - doctor: exit 1 when checks fail; works outside tmux.
+  - setup: reports configuration failures; works outside tmux.
   - focus-window: works outside tmux.
   - No command reads stdin. jq is not required.
   - Focus suppression requires confirmation from tmux and the backend.
@@ -201,7 +204,7 @@ main() {
   # server to run it from. A doctor that goes quiet outside tmux is silent exactly when
   # it is needed.
   case "$subcommand" in
-    focus-window | doctor) ;;
+    focus-window | doctor | setup) ;;
     *) require_tmux ;;
   esac
 

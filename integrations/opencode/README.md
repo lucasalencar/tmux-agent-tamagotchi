@@ -12,10 +12,22 @@ event or plugin API change may require an integration update.
 
 ## Configure the global plugin
 
-OpenCode reads the global configuration from `~/.config/opencode/opencode.json`. Add the `plugin`
-entry below, replacing the entire placeholder `/absolute/path/to/tmux-agent-tamagotchi` with the
-absolute path returned by the command below. Keep any other configuration keys and merge this
-string into an existing `plugin` array instead of replacing it.
+OpenCode reads the global configuration from `~/.config/opencode/opencode.json`. With `jq`
+installed, run:
+
+```sh
+"$(tmux show -gqv @tama_bin)" setup opencode
+```
+
+The generic `tama setup` command delegates to the helper owned by the named integration. The
+OpenCode helper finds its entrypoint from its own location, preserves existing settings, avoids
+duplicate plugin entries, and creates `opencode.json.backup` before changing an existing
+configuration. Restart OpenCode afterward. It exits without changing the configuration if the
+existing file is not valid JSON.
+
+To configure it manually instead, add the `plugin` entry below, replacing the entire placeholder
+`/absolute/path/to/tmux-agent-tamagotchi` with the absolute repository path. Keep any other
+configuration keys and merge this string into an existing `plugin` array instead of replacing it.
 
 To locate a TPM or manual clone after tmux-agent-tamagotchi is loaded, run
 `dirname "$(dirname "$(tmux show -gqv @tama_bin)")"` inside tmux. The resulting configuration must
