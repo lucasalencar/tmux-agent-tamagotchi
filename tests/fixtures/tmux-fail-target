@@ -1,0 +1,11 @@
+#!/bin/sh
+
+previous=''
+for argument in "$@"; do
+  if [ "$previous" = '-t' ] && [ "$argument" = "$TAMA_FAIL_TARGET" ]; then
+    exit 1
+  fi
+  previous="$argument"
+done
+
+exec @TMUX@ -L @SOCKET@ "$@"

@@ -11,7 +11,7 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 main() {
-  local session='' sessions windows panes window_fields pane_fields
+  local session='' records sorted
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -20,6 +20,9 @@ main() {
         if [ "$#" -lt 2 ] || [ -z "$2" ]; then
           die_usage '--session needs a session name or id'
         fi
+        case "$2" in
+          -*) die_usage '--session needs a session name or id' ;;
+        esac
         session="$2"
         shift 2
         ;;
@@ -27,6 +30,19 @@ main() {
       *) die_usage "list takes no arguments, got: $1" ;;
     esac
   done
+
+  records="$(tama_list_records "$session")" || return 0
+  [ -n "$records" ] || return 0
+  sorted="$(printf '%s\n' "$records" | LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k3,3n -k6,6n)" || return 0
+  [ -n "$sorted" ] && printf '%s\n' "$sorted"
+}
+
+# Build the complete snapshot before printing any of it. If any query fails,
+# the caller discards this function's captured output rather than exposing a
+# plausible-looking partial inventory to scripts.
+tama_list_records() { # [session_name_or_id]
+  local session="$1" sessions windows panes session_id window_id pane_id
+  local window_fields pane_fields
 
   window_fields='#{session_name}
 #{session_id}
@@ -41,22 +57,22 @@ main() {
 #{@tama_pane_subagents}
 #{@tama_pane_label}
 .'
-  sessions="$(tmux_run list-sessions -F '#{session_id}' 2>/dev/null)" || return 0
+  sessions="$(tmux_run list-sessions -F '#{session_id}' 2>/dev/null)" || return 1
   [ -n "$sessions" ] || return 0
 
   # tmux 3.4 escapes control characters embedded in -F formats. Enumerate only
   # stable IDs there, then use the project's newline-field reader for values.
   # Reading through the session/window pair preserves each linked-window record.
   while IFS= read -r session_id; do
-    windows="$(tmux_run list-windows -t "$session_id" -F '#{window_id}' 2>/dev/null)" || continue
+    windows="$(tmux_run list-windows -t "$session_id" -F '#{window_id}' 2>/dev/null)" || return 1
     while IFS= read -r window_id; do
-      tama_list_read_window "${session_id}:${window_id}" "$window_fields" || continue
+      tama_list_read_window "${session_id}:${window_id}" "$window_fields" || return 1
       if [ -n "$session" ] && [ "$session" != "$TAMA_LIST_SESSION_NAME" ] && [ "$session" != "$TAMA_LIST_SESSION_ID" ]; then
         continue
       fi
-      panes="$(tmux_run list-panes -t "$window_id" -F '#{pane_id}' 2>/dev/null)" || continue
+      panes="$(tmux_run list-panes -t "$window_id" -F '#{pane_id}' 2>/dev/null)" || return 1
       while IFS= read -r pane_id; do
-        tama_list_read_pane "$pane_id" "$pane_fields" || continue
+        tama_list_read_pane "$pane_id" "$pane_fields" || return 1
         [ -n "$TAMA_LIST_STATE" ] || continue
         tama_pane_derive "$TAMA_LIST_STATE" "$TAMA_LIST_SUBAGENTS"
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
@@ -69,7 +85,7 @@ EOF
     done <<EOF
 $windows
 EOF
-  done <<EOF | LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k3,3n -k6,6n
+  done <<EOF
 $sessions
 EOF
 }

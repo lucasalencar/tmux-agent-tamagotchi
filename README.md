@@ -227,6 +227,12 @@ The plugin does not install mouse bindings.
 | `doctor` | Diagnose an installation. |
 | `version` | Print the plugin version. |
 
+`tama list` prints headerless TSV in this fixed column order:
+`session_name`, `session_id`, `window_index`, `window_name`, `window_id`, `pane_index`,
+`pane_id`, `agent`, `state`, and `label`. With no arguments it covers every session in
+the current server. Pass `--session <session>` with one exact session name or tmux session
+ID to limit the same output to that session; a missing or empty session produces no output.
+
 Hook-facing commands follow these rules:
 
 - Outside tmux, they exit zero without output.

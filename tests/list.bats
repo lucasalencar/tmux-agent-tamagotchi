@@ -152,10 +152,37 @@ record_for() { # <session target> <pane> <agent> <state> <label>
   assert_usage_error '--session'
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" list --session one --session two
   assert_usage_error '--session'
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" list --session --unknown
+  assert_usage_error '--session'
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" list --unknown
   assert_usage_error '--unknown'
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" list extra
   assert_usage_error 'extra'
+}
+
+@test "list discards records already collected when a later query fails" {
+  test_tmux rename-session -t t first
+  local first second wrapper
+  first="$(tama_pane_of first:0)"
+  set_pane_value "$first" state_main running
+  test_tmux new-session -d -s second
+  second="$(tama_pane_of second:0)"
+  set_pane_value "$second" state_main waiting
+
+  wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
+  sed \
+    -e "s|@TMUX@|$(command -v tmux)|g" \
+    -e "s|@SOCKET@|$TAMA_SOCKET|g" \
+    "$PLUGIN_ROOT/tests/fixtures/tmux-fail-target" >"$wrapper"
+  chmod +x "$wrapper"
+  export TAMA_FAIL_TARGET="$(tama_window_id second:0)"
+  TAMA_TMUX="$wrapper"
+  TAMA_TMUX_ARGS=''
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" list
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
 }
 
 @test "list is byte-empty without tmux" {
