@@ -95,6 +95,31 @@ session_id() {
   assert_equal "$("$PLUGIN_ROOT/bin/tama" summary "$(session_id t)")" '● 0 ◐ 0 ○ 0'
 }
 
+@test "gc refreshes linked current summaries and unrelated all summaries" {
+  local pane window linked_client all_client current_client
+  pane="$(tama_pane_of t:0)"
+  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  test_tmux new-session -d -s linked
+  test_tmux link-window -s t:0 -t linked:
+  test_tmux new-session -d -s all-view
+  test_tmux new-session -d -s current-view
+  test_tmux set-option -t all-view @tama_summary_scope all
+  attach_client linked linked_client
+  attach_client all-view all_client
+  attach_client current-view current_client
+  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$pane"
+  test_tmux set-option -p -t "$pane" @tama_pane_cmd definitely-stale
+
+  tama_log_tmux_calls
+  run "$PLUGIN_ROOT/bin/tama" gc --window "$window"
+  assert_success
+
+  assert_equal "$(grep -cx refresh-client "$TAMA_FAKE_TMUX_LOG")" 2
+  assert_equal "$(grep -cx -- "$linked_client" "$TAMA_FAKE_TMUX_LOG")" 1
+  assert_equal "$(grep -cx -- "$all_client" "$TAMA_FAKE_TMUX_LOG")" 1
+  assert_equal "$(grep -cx -- "$current_client" "$TAMA_FAKE_TMUX_LOG")" 0
+}
+
 @test "refresh discovery and redraw failures cannot fail a state hook" {
   local pane
   pane="$(tama_pane_of t:0)"

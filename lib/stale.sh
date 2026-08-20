@@ -6,7 +6,7 @@
 
 # tmux performs the comparisons so free-form command names cannot shift fields.
 # The fourth digit also exposes residue on panes that have no main state.
-TAMA_STALE_READ_FORMAT='#{pane_id} #{?@tama_pane_state_main,1,0}#{?@tama_pane_cmd,1,0}#{==:#{@tama_pane_cmd},#{pane_current_command}}#{?#{@tama_pane_subagents}#{@tama_pane_cmd}#{@tama_pane_agent}#{@tama_pane_cwd}#{@tama_pane_label},1,0} #{pane_current_command}'
+TAMA_STALE_READ_FORMAT='#{pane_id} #{window_id} #{?@tama_pane_state_main,1,0}#{?@tama_pane_cmd,1,0}#{==:#{@tama_pane_cmd},#{pane_current_command}}#{?#{@tama_pane_subagents}#{@tama_pane_cmd}#{@tama_pane_agent}#{@tama_pane_cwd}#{@tama_pane_label},1,0} #{pane_current_command}'
 
 # Only a known shell is evidence that the agent returned to a prompt.
 TAMA_STALE_SHELLS_DEFAULT='sh bash zsh fish dash ksh mksh ash csh tcsh'
@@ -56,7 +56,7 @@ tama_stale_sweep_server() {
 # Never fails: every caller is a hook or a key binding, where a non-zero exit is
 # noise in the server log and nothing a user can act on.
 _tama_stale_sweep() { # <list-panes …>
-  local raw line pane flags current found=0
+  local raw line pane window_id flags current found=0 changed_windows=''
 
   # A window or a pane that has gone between the event and this running is nothing
   # to do, not an error.
@@ -69,6 +69,8 @@ _tama_stale_sweep() { # <list-panes …>
     [ -n "$line" ] || continue
     pane="${line%% *}"
     flags="${line#* }"
+    window_id="${flags%% *}"
+    flags="${flags#* }"
     # The live command is whatever follows the digits, taken whole: it is the one
     # field that can hold a space.
     current="${flags#* }"
@@ -87,6 +89,15 @@ _tama_stale_sweep() { # <list-panes …>
     esac
 
     tama_pane_stage_clear "$pane"
+    case "
+$changed_windows
+" in
+      *"
+$window_id
+"*) ;;
+      *) changed_windows="${changed_windows:+$changed_windows
+}$window_id" ;;
+    esac
     found=1
   done <<EOF
 $raw
@@ -94,6 +105,12 @@ EOF
 
   [ "$found" = 1 ] || return 0
   # An icon going away is a change the user sees, so this is worth the redraw.
-  tama_batch_flush 'yes' || true
+  tama_batch_flush 'no' || true
+  while IFS= read -r window_id; do
+    [ -n "$window_id" ] || continue
+    tama_summary_refresh_window "$window_id"
+  done <<EOF
+$changed_windows
+EOF
   return 0
 }
