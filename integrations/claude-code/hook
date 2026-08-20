@@ -420,7 +420,13 @@ main() {
       cc_field agent_id || exit 0
       case "$event" in
         SubagentStart) exec "$TAMA_BIN" state subagent-start "$TAMA_CC_FIELD" "$@" ;;
-        *) exec "$TAMA_BIN" state subagent-stop "$TAMA_CC_FIELD" "$@" ;;
+        *)
+          id="$TAMA_CC_FIELD"
+          if cc_field agent_type; then
+            exec "$TAMA_BIN" state subagent-stop "$id" "$@"
+          fi
+          exec "$TAMA_BIN" state subagent-stop-fallback "$id" "$@"
+          ;;
       esac
       ;;
     SessionEnd)

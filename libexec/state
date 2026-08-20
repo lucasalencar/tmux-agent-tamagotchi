@@ -3,6 +3,7 @@
 #   tama state <running|waiting|idle|error|clear> [agent_name] [--pane <pane_id>]
 #   tama state subagent-start <id> [--pane <pane_id>]
 #   tama state subagent-stop  <id> [--pane <pane_id>]
+#   tama state subagent-stop-fallback <id> [--pane <pane_id>]
 #
 # Agent names are sticky, unknown states are ignored for forward compatibility,
 # and attention states raise their flag on every event rather than only on changes.
@@ -129,6 +130,7 @@ clear_pane() {
 # than a wrong glyph on a few.
 subagent() {
   local target="$1" verb="$2" id="$3" attempt=1 wanted was refresh was_agent_pane
+  local settled_id
   while :; do
     tama_pane_read "$target" || exit 0
     # From here on the pane is addressed by its own id: a target given by index
@@ -139,9 +141,14 @@ subagent() {
     # the read-back below tells a `state clear` from a lost race.
     was_agent_pane="$TAMA_PANE_STATE_MAIN"
 
+    settled_id="$id"
     case "$verb" in
       subagent-start) tama_subagents_add "$TAMA_PANE_SUBAGENTS" "$id" ;;
       subagent-stop) tama_subagents_remove "$TAMA_PANE_SUBAGENTS" "$id" ;;
+      subagent-stop-fallback)
+        tama_subagents_remove_fallback "$TAMA_PANE_SUBAGENTS" "$id"
+        settled_id="$TAMA_SUBAGENT_REMOVED_ID"
+        ;;
     esac
     wanted="$TAMA_SUBAGENTS_NEW"
 
@@ -151,7 +158,7 @@ subagent() {
 
     tama_batch_reset
     tama_pane_stage "$target" subagents "$wanted" "$TAMA_PANE_SUBAGENTS"
-    # Nothing to write: a duplicate start, or a stop for an id that is not there.
+    # Nothing to write: a duplicate start, or a stop when the counter is empty.
     tama_batch_flush "$refresh" || return 0
 
     tama_pane_read "$target" || return 0
@@ -179,7 +186,7 @@ subagent() {
       return 0
     fi
 
-    if subagent_settled "$verb" "$TAMA_PANE_SUBAGENTS" "$id"; then
+    if subagent_settled "$verb" "$TAMA_PANE_SUBAGENTS" "$settled_id"; then
       # The read-back is also the one chance to notice that the other half of the
       # pane moved underneath this write. A state report and a subagent event each
       # judge the refresh from the half they did not write, and the pair an agent
@@ -205,7 +212,7 @@ subagent_settled() { # <verb> <list> <id>
   if tama_subagents_contains "$2" "$3"; then
     [ "$1" = 'subagent-start' ]
   else
-    [ "$1" = 'subagent-stop' ]
+    [ "$1" = 'subagent-stop' ] || [ "$1" = 'subagent-stop-fallback' ]
   fi
 }
 
@@ -283,7 +290,9 @@ main() {
       # survive the round trip through a tmux option intact.
       check_storable "an agent name" "$argument"
       ;;
-    subagent-start | subagent-stop) check_subagent_id "$state" "$argument" ;;
+    subagent-start | subagent-stop | subagent-stop-fallback)
+      check_subagent_id "$state" "$argument"
+      ;;
   esac
 
   # --pane overrides the pane the hook happens to run in, which wrappers lose and
@@ -295,7 +304,9 @@ main() {
   case "$state" in
     running | waiting | idle | error) report "$pane" "$state" "$argument" ;;
     clear) clear_pane "$pane" ;;
-    subagent-start | subagent-stop) subagent "$pane" "$state" "$argument" ;;
+    subagent-start | subagent-stop | subagent-stop-fallback)
+      subagent "$pane" "$state" "$argument"
+      ;;
     # Not a state this version knows. Quiet on purpose: agents grow event types, and
     # a hook written for a newer plugin has to stay silent on an older one rather
     # than fail the turn it is reporting on.

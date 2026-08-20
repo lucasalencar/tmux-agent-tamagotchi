@@ -332,6 +332,25 @@ payload() { # <event> [extra JSON…]
   assert_equal "$(tama_icons "$WINDOW")" ' ○'
 }
 
+@test "an unpaired delegated stop cannot strand the started run" {
+  hook SessionStart
+
+  # Observed from one real background-launched Claude Code run: the stop named a
+  # different id and omitted the type, even though only this started run remained.
+  hook SubagentStart <<'PAYLOAD'
+{"hook_event_name":"SubagentStart","agent_id":"affbdfa48f0528122","agent_type":"Explore"}
+PAYLOAD
+  hook Stop
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+
+  hook SubagentStop <<'PAYLOAD'
+{"hook_event_name":"SubagentStop","agent_id":"ab7b58905d1f4745c","agent_type":""}
+PAYLOAD
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
+}
+
 @test "two delegated runs are counted, not collapsed" {
   hook SessionStart
   hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"agt_01"')"
