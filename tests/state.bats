@@ -277,7 +277,7 @@ teardown() {
   refute_tmux_command 'refresh-client'
 }
 
-@test "a state that is different does write, and does refresh" {
+@test "a state that is different writes and discovers affected summaries" {
   # The control for the test above: without this, "wrote nothing" would also pass
   # for a command that never writes anything at all.
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
@@ -288,7 +288,10 @@ teardown() {
   assert_success
 
   assert_tmux_command 'set'
-  assert_tmux_command 'refresh-client'
+  assert_tmux_command 'list-windows'
+  assert_tmux_command 'list-clients'
+  # This session is detached, so there is no visible summary to redraw.
+  refute_tmux_command 'refresh-client'
   assert_pane_option "$PANE" state_main waiting
 }
 

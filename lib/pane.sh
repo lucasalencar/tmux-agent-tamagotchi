@@ -15,6 +15,7 @@ tama_pane_derive_record() { # <record>
 
 # Pane state and its live snapshot, read in one tmux round trip.
 TAMA_PANE_READ_FIELDS='#{pane_id}
+#{window_id}
 #{@tama_pane_state_main}
 #{@tama_pane_subagents}
 #{@tama_pane_cmd}
@@ -24,7 +25,7 @@ TAMA_PANE_READ_FIELDS='#{pane_id}
 #{pane_current_path}
 .'
 # Includes the sentinel required by tama_fields_read.
-TAMA_PANE_READ_COUNT=9
+TAMA_PANE_READ_COUNT=10
 
 # Populates TAMA_PANE_* and rejects incomplete or vanished-pane records.
 # shellcheck disable=SC2034
@@ -33,6 +34,7 @@ tama_pane_read() {
   raw="$(tama_fields_read "$1" "$TAMA_PANE_READ_FIELDS")" || raw=''
 
   TAMA_PANE_ID=''
+  TAMA_PANE_WINDOW_ID=''
   TAMA_PANE_STATE_MAIN=''
   TAMA_PANE_SUBAGENTS=''
   TAMA_PANE_CMD=''
@@ -44,13 +46,14 @@ tama_pane_read() {
     lines=$((lines + 1))
     case "$lines" in
       1) TAMA_PANE_ID="$field" ;;
-      2) TAMA_PANE_STATE_MAIN="$field" ;;
-      3) TAMA_PANE_SUBAGENTS="$field" ;;
-      4) TAMA_PANE_CMD="$field" ;;
-      5) TAMA_PANE_AGENT="$field" ;;
-      6) TAMA_PANE_CWD="$field" ;;
-      7) TAMA_PANE_CURRENT_CMD="$field" ;;
-      8) TAMA_PANE_CURRENT_PATH="$field" ;;
+      2) TAMA_PANE_WINDOW_ID="$field" ;;
+      3) TAMA_PANE_STATE_MAIN="$field" ;;
+      4) TAMA_PANE_SUBAGENTS="$field" ;;
+      5) TAMA_PANE_CMD="$field" ;;
+      6) TAMA_PANE_AGENT="$field" ;;
+      7) TAMA_PANE_CWD="$field" ;;
+      8) TAMA_PANE_CURRENT_CMD="$field" ;;
+      9) TAMA_PANE_CURRENT_PATH="$field" ;;
     esac
   done <<EOF
 $raw
@@ -228,11 +231,13 @@ EOF
 # that client's own status-interval comes round — measured at over six seconds for
 # changes a third of a second apart. Only a change the status line would show is
 # worth that, and there is nothing to force for a snapshot nobody draws.
-tama_batch_flush() { # <refresh: yes|no>
+tama_batch_flush() { # <refresh: yes|no> [changed window id]
+  local refresh="$1" window_id="${2:-}"
   [ "$TAMA_BATCH_COUNT" -gt 0 ] || return 1
-  [ "$1" = 'no' ] || tama_batch_add refresh-client -S
+  [ "$refresh" = 'no' ] || [ -n "$window_id" ] || tama_batch_add refresh-client -S
   # A write that did not land is not worth failing an agent's turn over.
   tmux_run "${TAMA_BATCH[@]}" >/dev/null 2>&1 || true
   tama_batch_reset
+  [ "$refresh" = 'no' ] || [ -z "$window_id" ] || tama_summary_refresh_window "$window_id"
   return 0
 }

@@ -48,7 +48,7 @@ report() {
   # Not error handling: a flush with nothing staged says so by its status, and this
   # is the last command of the script, so without this the hot path — a repeated
   # `state running` — would exit non-zero out of an agent's hook.
-  tama_batch_flush "$refresh" || true
+  tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID" || true
 
   # Deliberately after the flush and outside it: the flag answers to the *event*, not
   # to the write. An agent already in `waiting` that asks again — the user glanced at
@@ -89,7 +89,7 @@ clear_pane() {
   tama_batch_reset
   tama_pane_stage_clear "$TAMA_PANE_ID"
   # As in report(): nothing staged is not a failure, and this is the exit status.
-  tama_batch_flush "$refresh" || true
+  tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID" || true
 }
 
 # Adds or removes a subagent id, and recomputes the display state with it, since
@@ -152,7 +152,7 @@ subagent() {
     tama_batch_reset
     tama_pane_stage "$target" subagents "$wanted" "$TAMA_PANE_SUBAGENTS"
     # Nothing to write: a duplicate start, or a stop for an id that is not there.
-    tama_batch_flush "$refresh" || return 0
+    tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID" || return 0
 
     tama_pane_read "$target" || return 0
 
@@ -188,7 +188,7 @@ subagent() {
       # for it here, rather than leaving it wrong until the next status tick.
       [ "$refresh" = 'yes' ] ||
         ! tama_pane_display_changed "$was" "$TAMA_PANE_DISPLAY" ||
-        tmux_run refresh-client -S >/dev/null 2>&1 || true
+        tama_summary_refresh_window "$TAMA_PANE_WINDOW_ID"
       return 0
     fi
 

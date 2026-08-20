@@ -114,6 +114,11 @@ _tama_require_lib "$_tama_lib_dir/state-icons.sh"
 # shellcheck source=state-icons.sh
 . "$_tama_lib_dir/state-icons.sh"
 
+_tama_require_lib "$_tama_lib_dir/summary-refresh.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=summary-refresh.sh
+. "$_tama_lib_dir/summary-refresh.sh"
+
 _tama_require_lib "$_tama_lib_dir/pane.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=pane.sh

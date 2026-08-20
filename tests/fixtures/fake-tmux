@@ -9,6 +9,7 @@
 #   TAMA_FAKE_TMUX_FAIL_ALL      set to make every call fail, as an unreachable
 #                                server does — a tmux that went away between the
 #                                agent's hook firing and this running
+#   TAMA_FAKE_TMUX_FAIL_COMMAND  set to make calls containing that command fail
 #   TAMA_FAKE_TMUX_LOG           file the calls are appended to
 #   TAMA_FAKE_TMUX_SOCKET        socket name of the test server
 #   TAMA_FAKE_TMUX_COUNTER       file counting this caller's calls, for the two below
@@ -50,6 +51,12 @@ fi
 
 if [ -n "${TAMA_FAKE_TMUX_FAIL_ALL:-}" ]; then
   exit 1
+fi
+
+if [ -n "${TAMA_FAKE_TMUX_FAIL_COMMAND:-}" ]; then
+  for tama_arg in "$@"; do
+    [ "$tama_arg" != "$TAMA_FAKE_TMUX_FAIL_COMMAND" ] || exit 1
+  done
 fi
 
 # The plugin passes `-u` before the command, so the version request is not
