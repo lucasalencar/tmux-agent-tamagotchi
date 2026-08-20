@@ -59,12 +59,13 @@ anything onto `$PATH` or write outside its directory.
 
 ## Configure the status line
 
-The plugin exports two tmux formats:
+The plugin exports three tmux formats:
 
 | Format | Output |
 | --- | --- |
 | `#{E:@tama_icons}` | Agent state icons for the window |
 | `#{E:@tama_flag}` | Persistent attention mark |
+| `#{E:@tama_status_summary}` | Agent-state counts for the session's selected scope |
 
 Add both formats to the regular and current-window status lines:
 
@@ -74,6 +75,24 @@ set -g window-status-current-format '#I:#W#{?window_flags,#{window_flags},}#{E:@
 ```
 
 A window without an agent has no icon or additional padding.
+
+### Status summary
+
+Compose `#{E:@tama_status_summary}` into `status-left` wherever it fits your theme. The
+plugin never rewrites `status-left` and installs no key binding.
+
+Each session has its own `@tama_summary_scope`. It defaults to `current`, which counts
+unique agent panes in that session. `all` counts unique panes across the current tmux
+server, including detached sessions; linked windows and additional clients do not multiply
+the count.
+
+The following optional recipe binds `prefix` + <kbd>G</kbd> to toggle the scope of the
+session displayed by that client. The session id is passed explicitly so linked windows
+cannot make the target ambiguous:
+
+```tmux
+bind-key G run-shell '#{q:@tama_bin} summary-scope --session #{q:session_id} toggle'
+```
 
 ### Icons
 
@@ -151,8 +170,8 @@ Broken setups exit non-zero. Warnings exit zero. See
 
 ## Configuration reference
 
-Options are global tmux user options and are read on every invocation. Reloading tmux is
-enough to apply changes.
+Options are read on every invocation. Configuration options are global tmux user options,
+except `@tama_summary_scope`, which is stored per session.
 
 An empty string is a configured value, not a missing option.
 
@@ -164,6 +183,7 @@ option map.
 | Group | Options |
 | --- | --- |
 | Icons | `@tama_icon_set`, `@tama_icon_running`, `@tama_icon_waiting`, `@tama_icon_background`, `@tama_icon_idle`, `@tama_icon_error`, `@tama_show_idle`, `@tama_show_background`, `@tama_icon_prefix`, `@tama_icon_separator`, `@tama_icon_suffix` |
+| Status summary | `@tama_summary_scope` (`current` or `all`, per session) |
 | Window mark | `@tama_flag_text` |
 | Notifications | `@tama_notifications`, `@tama_backend`, `@tama_title_format`, `@tama_group_format`, `@tama_label_command` |
 | Focus suppression | `@tama_suppress_when_focused` |
@@ -171,7 +191,7 @@ option map.
 | Capability overrides | `@tama_notify_command`, `@tama_dismiss_command`, `@tama_focused_command`, `@tama_focus_command` |
 | Stale state | `@tama_gc_shells` |
 | Lifecycle | `@tama_manage_hooks` |
-| Exported values | `@tama_bin`, `@tama_bin_dir`, `@tama_icons`, `@tama_flag`, `@tama_pane_agent`, `@tama_pane_cwd`, `@tama_pane_label` |
+| Exported values | `@tama_bin`, `@tama_bin_dir`, `@tama_icons`, `@tama_status_summary`, `@tama_flag`, `@tama_pane_agent`, `@tama_pane_cwd`, `@tama_pane_label` |
 
 ### Focus detection
 
@@ -220,6 +240,8 @@ The plugin does not install mouse bindings.
 | `notify` / `dismiss` | Raise or dismiss a notification. |
 | `focus-window` | Bring a session's terminal window forward. |
 | `list` | List agent panes across the server as stable, headerless TSV. |
+| `summary` | Count unique agent panes using a session's selected scope. |
+| `summary-scope` | Select or toggle one explicitly targeted session's scope. |
 | `gc` | Clear stale pane state. |
 | `on-select` | Clear a mark, dismiss its notification and sweep its window. |
 | `hook` | Dispatch an event to a bundled adapter. |

@@ -169,6 +169,21 @@ loaded_server() {
   }
 }
 
+@test "the README's optional summary binding targets the displayed session explicitly" {
+  local recipe="bind-key G run-shell '#{q:@tama_bin} summary-scope --session #{q:session_id} toggle'"
+  local conf="$BATS_TEST_TMPDIR/summary-binding.conf"
+  grep -qF -- "$recipe" "$README" || {
+    printf 'the README no longer carries the explicit summary-scope recipe\n' >&2
+    return 1
+  }
+
+  printf '%s\n' "$recipe" >"$conf"
+  run test_tmux source-file "$conf"
+  assert_success
+  assert_contains "$(test_tmux list-keys -T prefix | grep ' G ')" \
+    'summary-scope --session #{q:session_id} toggle' 'the prefix + G binding'
+}
+
 @test "the README does not carry a third copy of the Claude Code hook block" {
   # doctor prints that block and checks a user's settings against the same list of
   # events, and tests/doctor.bats asserts it matches the integration README's copy. A

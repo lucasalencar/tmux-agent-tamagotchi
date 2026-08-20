@@ -81,7 +81,9 @@ Commands:
   dismiss [target]      Dismiss a window notification.
   focus-window <sess>   Focus the terminal showing a tmux session.
   list [--session <s>]  List agent panes as stable, headerless TSV.
-  summary <session_id>  Count agent panes by state for one session.
+  summary <session_id>  Count agent panes using that session's summary scope.
+  summary-scope --session <session_id> current|all|toggle
+                        Select the summary scope for one explicit session.
   gc [--all]            Clear stale pane state. Default: current window.
   on-select [--all]     Clear mark, dismiss notification, and run gc.
   doctor                Print installation diagnostics. Exit 1 on failure.
@@ -97,6 +99,12 @@ Status line:
 
   set -g window-status-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
   set -g window-status-current-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
+
+Status summary:
+
+  Compose '#{E:@tama_status_summary}' into status-left where you want it.
+  @tama_summary_scope is a session option: current (default) or all.
+  bind-key G run-shell '#{q:@tama_bin} summary-scope --session #{q:session_id} toggle'
 
 Configuration (defaults shown):
 

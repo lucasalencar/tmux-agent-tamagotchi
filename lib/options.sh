@@ -1,9 +1,8 @@
 # shellcheck shell=bash
 #
-# Configuration reader. Every option lives in a global tmux user option, set with
-# `set -g @tama_…` the way every tmux plugin is configured, and is read at
-# invocation time, never cached, so `tmux source-file` takes effect on the very
-# next command with no server restart.
+# Configuration readers. Most options live in global tmux user options, set with
+# `set -g @tama_…`; the summary scope is intentionally per session. Everything is
+# read at invocation time, never cached.
 
 tama_opt() {
   local value default="${2-}"
@@ -43,4 +42,13 @@ tama_opt_value_is_off() { # <value>
 # the cost of being wrong is a plugin that wires nothing and says nothing.
 tama_opt_enabled() { # <option-name-without-@> <default>
   ! tama_opt_value_is_off "$(tama_opt "$1" "${2-}")"
+}
+
+tama_summary_scope() { # <session id>
+  local scope
+  scope="$(tmux_run show-options -qv -t "$1" @tama_summary_scope 2>/dev/null)" || return 1
+  case "$scope" in
+    all) printf '%s' all ;;
+    *) printf '%s' current ;;
+  esac
 }

@@ -67,6 +67,47 @@ session_id() {
   assert_pane_option "$stale" state_main waiting
 }
 
+@test "all-sessions summary includes detached sessions and deduplicates linked windows" {
+  local local_pane remote_pane target
+  local_pane="$(tama_pane_of t:0)"
+  set_pane_state "$local_pane" running
+  target="$(session_id t)"
+
+  test_tmux new-session -d -s detached
+  remote_pane="$(tama_pane_of detached:0)"
+  set_pane_state "$remote_pane" waiting
+  test_tmux new-session -d -s linked
+  test_tmux link-window -k -s detached:0 -t linked:0
+
+  test_tmux set -t "$target" @tama_summary_scope all
+
+  run "$PLUGIN_ROOT/bin/tama" summary "$target"
+  assert_success
+  assert_equal "$output" '● 1 ◐ 1 ○ 0'
+}
+
+@test "summary scope is isolated per session and invalid values fall back to current" {
+  local first first_pane second second_pane
+  first="$(session_id t)"
+  first_pane="$(tama_pane_of t:0)"
+  set_pane_state "$first_pane" running
+  test_tmux new-session -d -s other
+  second="$(session_id other)"
+  second_pane="$(tama_pane_of other:0)"
+  set_pane_state "$second_pane" waiting
+
+  test_tmux set-option -t "$first" @tama_summary_scope all
+  test_tmux set-option -t "$second" @tama_summary_scope invalid
+
+  run "$PLUGIN_ROOT/bin/tama" summary "$first"
+  assert_success
+  assert_equal "$output" '● 1 ◐ 1 ○ 0'
+
+  run "$PLUGIN_ROOT/bin/tama" summary "$second"
+  assert_success
+  assert_equal "$output" '● 0 ◐ 1 ○ 0'
+}
+
 @test "summary reuses configured state icons" {
   local running background
   running="$(tama_pane_of t:0)"
@@ -101,6 +142,32 @@ session_id() {
   TAMA_TMUX_ARGS=''
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+}
+
+@test "all-sessions summary discards counts when a later session query fails" {
+  local first second target wrapper
+  target="$(session_id t)"
+  first="$(tama_pane_of t:0)"
+  set_pane_state "$first" running
+  test_tmux new-session -d -s later
+  second="$(tama_pane_of later:0)"
+  set_pane_state "$second" waiting
+  test_tmux set-option -t "$target" @tama_summary_scope all
+
+  wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
+  sed \
+    -e "s|@TMUX@|$(command -v tmux)|g" \
+    -e "s|@SOCKET@|$TAMA_SOCKET|g" \
+    "$PLUGIN_ROOT/tests/fixtures/tmux-fail-target" >"$wrapper"
+  chmod +x "$wrapper"
+  export TAMA_FAIL_TARGET="$(tama_window_id later:0)"
+  TAMA_TMUX="$wrapper"
+  TAMA_TMUX_ARGS=''
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" summary "$target"
   assert_success
   [ -z "$output" ]
   [ -z "$stderr" ]

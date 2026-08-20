@@ -97,6 +97,20 @@ cc_settings_into() { # <path> <event…>
   assert_output_contains 'no problems and no warnings'
 }
 
+@test "doctor warns about an invalid session summary scope and uses current fallback" {
+  healthy_server
+  local target
+  target="$(test_tmux display-message -p -t t '#{session_id}')"
+  test_tmux set-option -t "$target" @tama_summary_scope everywhere
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_summary_scope'
+  assert_output_contains 'everywhere'
+  assert_output_contains 'current'
+  assert_output_contains 'no problems and 1 warning'
+}
+
 @test "a tmux older than the minimum is broken and exits non-zero" {
   healthy_server
   tama_use_fake_tmux '3.0'

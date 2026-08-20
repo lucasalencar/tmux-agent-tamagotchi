@@ -349,6 +349,34 @@ doctor_status_line_mentions() { # <value> <option name>
   return 1
 }
 
+doctor_status_summary_scope() {
+  doctor_section 'the status summary'
+
+  if [ "$TAMA_DOCTOR_SERVER" = 'no' ]; then
+    doctor_more 'No server to read @tama_summary_scope from; its fallback is current.'
+    return 0
+  fi
+
+  local sessions record session_id session_name scope
+  sessions="$(tmux_run list-sessions -F '#{session_id}|#{session_name}' 2>/dev/null)" || return 0
+  while IFS= read -r record; do
+    [ -n "$record" ] || continue
+    session_id="${record%%|*}"
+    session_name="${record#*|}"
+    scope="$(tmux_run show-options -qv -t "$session_id" @tama_summary_scope 2>/dev/null)" ||
+      continue
+    case "$scope" in
+      '' | current | all) ;;
+      *)
+        doctor_warn "@tama_summary_scope on $session_name ($session_id) is '$scope'"
+        doctor_more "The effective fallback is current for that session."
+        ;;
+    esac
+  done <<EOF
+$sessions
+EOF
+}
+
 # ---------------------------------------------------------------------------
 # Notifications: which backend, and why that one
 # ---------------------------------------------------------------------------
@@ -1168,6 +1196,7 @@ main() {
   doctor_tmux
   doctor_plugin
   doctor_status_line
+  doctor_status_summary_scope
   doctor_notifications
   doctor_focus
   doctor_claude_code
