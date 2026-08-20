@@ -89,12 +89,14 @@ attach_unrelated_client() { # <session>
 }
 
 @test "summary-scope refreshes every client displaying only the targeted session" {
-  local target
+  local target target_clients unrelated_client client
   target="$(session_id t)"
   test_tmux new-session -d -s unrelated
   tama_attach_client "$target"
   attach_extra_client "$target"
   attach_unrelated_client unrelated
+  target_clients="$(test_tmux list-clients -t "$target" -F '#{client_name}')"
+  unrelated_client="$(test_tmux list-clients -t unrelated -F '#{client_name}')"
 
   tama_log_tmux_calls
   run "$PLUGIN_ROOT/bin/tama" summary-scope --session "$target" all
@@ -102,6 +104,12 @@ attach_unrelated_client() { # <session>
 
   assert_equal "$(grep -cx refresh-client "$TAMA_FAKE_TMUX_LOG")" 2
   assert_equal "$(grep -cx -- -S "$TAMA_FAKE_TMUX_LOG")" 2
+  while IFS= read -r client; do
+    assert_equal "$(grep -cx -- "$client" "$TAMA_FAKE_TMUX_LOG")" 1
+  done <<EOF
+$target_clients
+EOF
+  assert_equal "$(grep -cx -- "$unrelated_client" "$TAMA_FAKE_TMUX_LOG")" 0
   assert_equal "$(session_scope unrelated)" ''
 }
 
