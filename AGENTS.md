@@ -5,6 +5,12 @@
 This is a personal project: commit directly to `main`. Changes do not require a branch or
 code review before committing.
 
+### CI
+
+Before considering any task that changes tracked files complete, verify the CI run for the
+resulting commit (or its pull request) has concluded successfully. Report a blocked or failed
+run as unfinished work rather than declaring the task done.
+
 ### Issue tracker
 
 Issues tracked as GitHub Issues via `gh` CLI, against `lucasalencar/tmux-agent-tamagotchi`. See `docs/agents/issue-tracker.md`.
