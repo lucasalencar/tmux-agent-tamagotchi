@@ -32,8 +32,9 @@ entirely, which is different from `idle` — a cleared pane is not an agent pane
 ## Subagent
 
 A delegated agent run spawned by an agent, tracked only by an opaque id supplied by the
-agent's hooks. The plugin counts them; it knows nothing else about them. Subagent tracking
-is best-effort: a leaked id makes a pane look busier than it is until the pane is cleared.
+agent's hooks. The plugin counts them; it knows nothing else about them. Tracking is
+conservative: uncertainty may make a pane look busier than it is, but must not hide known
+work by declaring a subagent finished without reliable evidence.
 
 ## Flag
 
