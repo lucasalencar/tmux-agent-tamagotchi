@@ -24,7 +24,9 @@ EOF
 main() {
   [ "$#" -gt 0 ] || die_usage 'summary-scope needs --session <session_id>'
   [ "$1" = '--session' ] || die_usage 'summary-scope needs --session first'
-  [ "$#" -gt 1 ] && [ -n "$2" ] || die_usage '--session needs a session id'
+  if [ "$#" -le 1 ] || [ -z "$2" ]; then
+    die_usage '--session needs a session id'
+  fi
   [ "$#" -eq 3 ] || die_usage 'summary-scope needs exactly one scope'
 
   local target="$2" requested="$3" session_id current wanted
