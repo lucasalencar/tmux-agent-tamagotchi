@@ -430,6 +430,20 @@ PAYLOAD
   done
 }
 
+@test "literal control characters make a task snapshot non-authoritative" {
+  local broken
+  for broken in \
+    $'{"hook_event_name":"Stop","note":"line\nbreak","background_tasks":[]}' \
+    $'{"hook_event_name":"Stop","note":"tab\tbreak","background_tasks":[]}'; do
+    hook SessionStart
+    hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
+    hook Stop <<<"$broken"
+    assert_success
+    assert_pane_option "$PANE" subagents known_live
+    hook SessionEnd
+  done
+}
+
 @test "an authoritative stop snapshot does not require an incremental id" {
   hook SessionStart
   hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"leaked"')"
@@ -476,6 +490,42 @@ PAYLOAD
   assert_pane_option_unset "$PANE" subagents
   [ "$elapsed" -lt 10 ] || {
     printf 'background_tasks scan took %ss\n' "$elapsed" >&2
+    return 1
+  }
+}
+
+@test "many escaped string bytes stay bounded and preserve an ambiguous snapshot" {
+  local escapes start elapsed
+  escapes="$(printf '\\\\n%.0s' {1..2000})"
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
+
+  start=$SECONDS
+  hook Stop <<<"{\"hook_event_name\":\"Stop\",\"note\":\"$escapes\",\"background_tasks\":[]}"
+  elapsed=$((SECONDS - start))
+
+  assert_success
+  assert_pane_option "$PANE" subagents known_live
+  [ "$elapsed" -lt 3 ] || {
+    printf 'escaped JSON scan took %ss\n' "$elapsed" >&2
+    return 1
+  }
+}
+
+@test "many small JSON values stay bounded and preserve an ambiguous snapshot" {
+  local values start elapsed
+  values="$(printf '[],%.0s' {1..2000})null"
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
+
+  start=$SECONDS
+  hook Stop <<<"{\"hook_event_name\":\"Stop\",\"metadata\":[$values],\"background_tasks\":[]}"
+  elapsed=$((SECONDS - start))
+
+  assert_success
+  assert_pane_option "$PANE" subagents known_live
+  [ "$elapsed" -lt 3 ] || {
+    printf 'fragmented JSON scan took %ss\n' "$elapsed" >&2
     return 1
   }
 }

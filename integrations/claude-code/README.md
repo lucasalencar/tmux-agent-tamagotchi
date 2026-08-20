@@ -123,8 +123,8 @@ the banner from the event that has the message in it.
 
 ## The things that depend on the payload
 
-Every state above is decided from the event name alone. Four fields are read out of the JSON
-Claude Code sends the hook on stdin, and nothing else is:
+Every state above is decided from the event name alone. Five fields are read out of the JSON
+Claude Code sends the hook on stdin:
 
 - **Subagent tracking** — and with it the background icon — needs `agent_id` from
   `SubagentStart`/`SubagentStop`. The plugin counts delegated runs by the id their agent
@@ -140,6 +140,11 @@ Claude Code sends the hook on stdin, and nothing else is:
   hands the result to the plugin's CLI as a single argument that nothing expands, splits or
   reads as shell. It is cut to 500 characters, which is more than a desktop banner draws.
   An event whose message cannot be read banners anyway, saying what happened.
+- **Whether delegated work is definitely finished** uses the complete, top-level
+  `background_tasks` registry on `Stop` and `SubagentStop`. An empty registry, or one with
+  no task whose readable `type` is `subagent`, clears leaked incremental ids. Missing,
+  malformed, truncated, duplicated, nested-only, or otherwise ambiguous registries preserve
+  those ids. Provider task `id` values are not treated as `agent_id` values.
 
 So if a future Claude Code renames or reshapes those fields, that is what stops working —
 the background icon goes missing, `Notification` stops raising `waiting`, or banners fall
