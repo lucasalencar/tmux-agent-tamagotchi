@@ -44,7 +44,7 @@ main() {
     if [ -n "$session" ] && [ "$session" != "$session_name" ] && [ "$session" != "$session_id" ]; then
       continue
     fi
-    panes="$(tmux_run list-panes -t "${session_id}:${window_index}" -F "$pane_format" 2>/dev/null)" || continue
+    panes="$(tmux_run list-panes -t "$window_id" -F "$pane_format" 2>/dev/null)" || continue
     while IFS="$separator" read -r pane_index pane_id agent state subagents label; do
       [ -n "$state" ] || continue
       tama_pane_derive "$state" "$subagents"

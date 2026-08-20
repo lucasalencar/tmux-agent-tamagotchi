@@ -93,6 +93,25 @@ record_for() { # <session target> <pane> <agent> <state> <label>
     "$(record_for two:4 "$pane" '' idle '')")" "$output"
 }
 
+@test "list targets panes by stable window id for older tmux versions" {
+  local pane expected wrapper
+  pane="$(tama_pane_of t:0)"
+  set_pane_value "$pane" state_main running
+  expected="$(record_for t:0 "$pane" '' running '')"
+  wrapper="$BATS_TEST_TMPDIR/tmux-with-old-target-parser"
+  sed \
+    -e "s|@TMUX@|$(command -v tmux)|g" \
+    -e "s|@SOCKET@|$TAMA_SOCKET|g" \
+    "$PLUGIN_ROOT/tests/fixtures/tmux-with-old-target-parser" >"$wrapper"
+  chmod +x "$wrapper"
+  TAMA_TMUX="$wrapper"
+  TAMA_TMUX_ARGS=''
+
+  run "$PLUGIN_ROOT/bin/tama" list
+  assert_success
+  assert_equal "$output" "$expected"
+}
+
 @test "list excludes ordinary panes and every auxiliary-only residue" {
   local suffix pane window_number=0
   for suffix in agent label cmd cwd subagents; do

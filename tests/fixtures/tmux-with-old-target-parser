@@ -1,0 +1,16 @@
+#!/bin/sh
+
+list_panes='no'
+target='no'
+for argument in "$@"; do
+  if [ "$target" = 'yes' ]; then
+    case "$argument" in
+      '$'*:*) [ "$list_panes" = 'yes' ] && exit 1 ;;
+    esac
+    target='no'
+  fi
+  [ "$argument" = 'list-panes' ] && list_panes='yes'
+  [ "$argument" = '-t' ] && target='yes'
+done
+
+exec @TMUX@ -L @SOCKET@ "$@"
