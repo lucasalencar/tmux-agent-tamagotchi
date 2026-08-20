@@ -226,7 +226,8 @@ cc_json_string() {
 cc_json_top_level_value() { # <name>
   cc_read_payload
   TAMA_CC_JSON_REST="$TAMA_CC_PAYLOAD"
-  local depth=0 char candidate
+  local depth=0 char candidate saved='' matches=0 containers=''
+  local chunk probe delimiter
   while [ -n "$TAMA_CC_JSON_REST" ]; do
     char="${TAMA_CC_JSON_REST:0:1}"
     case "$char" in
@@ -241,24 +242,79 @@ cc_json_top_level_value() { # <name>
             :*)
               TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#:}"
               cc_json_space
-              return 0
+              saved="$TAMA_CC_JSON_REST"
+              matches=$((matches + 1))
               ;;
           esac
         fi
         ;;
-      \{ | \[)
+      \{)
         depth=$((depth + 1))
+        containers="$containers{"
         TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:1}"
         ;;
-      \} | \])
+      \[)
+        depth=$((depth + 1))
+        containers="${containers}["
+        TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:1}"
+        ;;
+      \})
+        case "$containers" in
+          *\{) containers="${containers%?}" ;;
+          *) return 1 ;;
+        esac
         depth=$((depth - 1))
-        [ "$depth" -ge 0 ] || return 1
+        TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:1}"
+        if [ "$depth" -eq 0 ]; then
+          cc_json_space
+          [ -z "$TAMA_CC_JSON_REST" ] || return 1
+        fi
+        ;;
+      \])
+        case "$containers" in
+          *\[) containers="${containers%?}" ;;
+          *) return 1 ;;
+        esac
+        depth=$((depth - 1))
         TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:1}"
         ;;
-      *) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:1}" ;;
+      *)
+        # Skip to the next structural byte in one slice. Removing one byte from
+        # the front per iteration makes a 64 KiB whitespace run quadratic in bash.
+        chunk="$TAMA_CC_JSON_REST"
+        for delimiter in '"' '{' '}' '[' ']'; do
+          case "$TAMA_CC_JSON_REST" in
+            *"$delimiter"*)
+              probe="${TAMA_CC_JSON_REST%%"$delimiter"*}"
+              [ "${#probe}" -ge "${#chunk}" ] || chunk="$probe"
+              ;;
+          esac
+        done
+        [ -n "$chunk" ] || return 1
+        TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:${#chunk}}"
+        ;;
     esac
   done
-  return 1
+  [ "$depth" -eq 0 ] && [ -z "$containers" ] && [ "$matches" -eq 1 ] || return 1
+  TAMA_CC_JSON_REST="$saved"
+}
+
+# Consumes a JSON boolean, null, or number. Objects and arrays remain unsupported
+# inside task entries: an unfamiliar nested shape is ambiguous and must preserve
+# known work.
+cc_json_scalar() {
+  local token=''
+  while [ -n "$TAMA_CC_JSON_REST" ]; do
+    case "$TAMA_CC_JSON_REST" in
+      [[:space:],\}]*) break ;;
+    esac
+    token="$token${TAMA_CC_JSON_REST:0:1}"
+    TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:1}"
+  done
+  case "$token" in
+    true | false | null) return 0 ;;
+  esac
+  [[ "$token" =~ ^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$ ]]
 }
 
 # Consumes one flat task object and leaves its type in TAMA_CC_TASK_TYPE. Claude's
@@ -273,7 +329,7 @@ cc_background_task() {
   esac
   cc_json_space
 
-  local key value saw_type='no'
+  local key value saw_type='no' value_is_string
   while :; do
     cc_json_string || return 1
     key="$TAMA_CC_JSON_STRING"
@@ -284,11 +340,20 @@ cc_background_task() {
       *) return 1 ;;
     esac
     cc_json_space
-    cc_json_string || return 1
-    value="$TAMA_CC_JSON_STRING"
-    [ "$TAMA_CC_JSON_STRING_READABLE" = 'yes' ] || return 1
+    value=''
+    value_is_string='no'
+    case "$TAMA_CC_JSON_REST" in
+      '"'*)
+        cc_json_string || return 1
+        value="$TAMA_CC_JSON_STRING"
+        value_is_string='yes'
+        ;;
+      *) cc_json_scalar || return 1 ;;
+    esac
     if [ "$key" = 'type' ]; then
       [ "$saw_type" = 'no' ] || return 1
+      [ "$value_is_string" = 'yes' ] || return 1
+      [ "$TAMA_CC_JSON_STRING_READABLE" = 'yes' ] || return 1
       saw_type='yes'
       TAMA_CC_TASK_TYPE="$value"
     fi

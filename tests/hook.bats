@@ -396,7 +396,7 @@ PAYLOAD
   hook Stop
 
   hook SubagentStop <<'PAYLOAD'
-{"hook_event_name":"SubagentStop","agent_id":"phantom","agent_type":"","background_tasks":[{"id":"shell-1","type":"shell","status":"running"}]}
+{"hook_event_name":"SubagentStop","agent_id":"phantom","agent_type":"","background_tasks":[{"id":"shell-1","type":"shell","status":"running","attempt":1,"done":false,"result":null}]}
 PAYLOAD
   assert_success
   assert_pane_option_unset "$PANE" subagents
@@ -411,7 +411,10 @@ PAYLOAD
     '{"hook_event_name":"Stop","background_tasks":[' \
     '{"hook_event_name":"Stop","background_tasks":[{"type":"shell"}' \
     '{"hook_event_name":"Stop","background_tasks":[not-json]}' \
-    '{"hook_event_name":"Stop","tool_input":{"background_tasks":[]}}'; do
+    '{"hook_event_name":"Stop","tool_input":{"background_tasks":[]}}' \
+    '{"hook_event_name":"Stop","background_tasks":[]' \
+    '{"hook_event_name":"Stop","background_tasks":[],' \
+    '{"hook_event_name":"Stop","background_tasks":[],"background_tasks":[{"type":"subagent"}]}'; do
     hook SessionStart
     hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
     hook Stop <<<"$broken"
@@ -420,6 +423,24 @@ PAYLOAD
     assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
     hook SessionEnd
   done
+}
+
+@test "long whitespace before a task snapshot stays bounded" {
+  local spaces start elapsed
+  spaces="$(printf '%060000s' '')"
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"leaked"')"
+
+  start=$SECONDS
+  hook Stop <<<"{\"hook_event_name\":\"Stop\",$spaces\"background_tasks\":[]}"
+  elapsed=$((SECONDS - start))
+
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
+  [ "$elapsed" -lt 10 ] || {
+    printf 'background_tasks scan took %ss\n' "$elapsed" >&2
+    return 1
+  }
 }
 
 @test "a task snapshot beyond the payload bound preserves known ids" {
