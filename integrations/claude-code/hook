@@ -303,18 +303,31 @@ cc_json_top_level_value() { # <name>
 # inside task entries: an unfamiliar nested shape is ambiguous and must preserve
 # known work.
 cc_json_scalar() {
-  local token=''
-  while [ -n "$TAMA_CC_JSON_REST" ]; do
-    case "$TAMA_CC_JSON_REST" in
-      [[:space:],\}]*) break ;;
-    esac
-    token="$token${TAMA_CC_JSON_REST:0:1}"
-    TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:1}"
-  done
+  local token="${TAMA_CC_JSON_REST%%[[:space:],\}]*}"
+  TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:${#token}}"
   case "$token" in
     true | false | null) return 0 ;;
   esac
   [[ "$token" =~ ^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$ ]]
+}
+
+# The complete array value must end where a top-level field may end. The outer
+# structural scan already proved the root closes and the key is unique; this
+# rejects balanced but invalid forms such as `[]garbage`, `[] "key"`, and `[],}`.
+cc_background_tasks_ended() {
+  TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#\]}"
+  cc_json_space
+  case "$TAMA_CC_JSON_REST" in
+    \}*) return 0 ;;
+    ,*)
+      TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#,}"
+      cc_json_space
+      case "$TAMA_CC_JSON_REST" in
+        '"'*) return 0 ;;
+      esac
+      ;;
+  esac
+  return 1
 }
 
 # Consumes one flat task object and leaves its type in TAMA_CC_TASK_TYPE. Claude's
@@ -384,7 +397,7 @@ cc_background_tasks_empty_of_subagents() {
   esac
   cc_json_space
   case "$TAMA_CC_JSON_REST" in
-    \]*) return 0 ;;
+    \]*) cc_background_tasks_ended ; return ;;
   esac
 
   while :; do
@@ -396,7 +409,7 @@ cc_background_tasks_empty_of_subagents() {
         TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#,}"
         cc_json_space
         ;;
-      \]*) return 0 ;;
+      \]*) cc_background_tasks_ended ; return ;;
       *) return 1 ;;
     esac
   done

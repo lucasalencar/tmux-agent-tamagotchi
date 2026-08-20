@@ -414,6 +414,9 @@ PAYLOAD
     '{"hook_event_name":"Stop","tool_input":{"background_tasks":[]}}' \
     '{"hook_event_name":"Stop","background_tasks":[]' \
     '{"hook_event_name":"Stop","background_tasks":[],' \
+    '{"hook_event_name":"Stop","background_tasks":[],}' \
+    '{"hook_event_name":"Stop","background_tasks":[] "broken":true}' \
+    '{"hook_event_name":"Stop","background_tasks":[]garbage}' \
     '{"hook_event_name":"Stop","background_tasks":[],"background_tasks":[{"type":"subagent"}]}'; do
     hook SessionStart
     hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
@@ -423,6 +426,38 @@ PAYLOAD
     assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
     hook SessionEnd
   done
+}
+
+@test "an authoritative stop snapshot does not require an incremental id" {
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"leaked"')"
+  hook Stop
+
+  hook SubagentStop <<'PAYLOAD'
+{"hook_event_name":"SubagentStop","agent_type":"","background_tasks":[]}
+PAYLOAD
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
+}
+
+@test "a large numeric task field stays bounded" {
+  local zeros number start elapsed
+  zeros="$(printf '%059000d' 0)"
+  number="1$zeros"
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"leaked"')"
+
+  start=$SECONDS
+  hook Stop <<<"{\"hook_event_name\":\"Stop\",\"background_tasks\":[{\"type\":\"shell\",\"sequence\":$number}]}"
+  elapsed=$((SECONDS - start))
+
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
+  [ "$elapsed" -lt 10 ] || {
+    printf 'numeric task scan took %ss\n' "$elapsed" >&2
+    return 1
+  }
 }
 
 @test "long whitespace before a task snapshot stays bounded" {
