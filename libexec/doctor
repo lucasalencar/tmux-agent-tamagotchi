@@ -349,16 +349,16 @@ doctor_status_line_mentions() { # <value> <option name>
   return 1
 }
 
-doctor_status_summary_policy() { # <option name> <fallback>
-  local value
-  if ! value="$(tmux_run show -gv "$1" 2>/dev/null)"; then
+doctor_status_summary_policy() { # <bucket>
+  local bucket="$1" option fallback value
+  option="@tama_summary_show_$bucket"
+  fallback="$(tama_summary_policy_default "$bucket")" || return 0
+  if ! value="$(tmux_run show -gv "$option" 2>/dev/null)"; then
     return 0
   fi
-  case "$value" in
-    always | nonzero | never) return 0 ;;
-  esac
-  doctor_warn "$1 is '$value'"
-  doctor_more "The effective fallback is $2. Supported values are always, nonzero, and never."
+  tama_summary_policy_is_valid "$value" && return 0
+  doctor_warn "$option is '$value'"
+  doctor_more "The effective fallback is $fallback. Supported values are always, nonzero, and never."
 }
 
 doctor_status_summary_scope() {
@@ -369,12 +369,12 @@ doctor_status_summary_scope() {
     return 0
   fi
 
-  doctor_status_summary_policy @tama_summary_show_running always
-  doctor_status_summary_policy @tama_summary_show_waiting always
-  doctor_status_summary_policy @tama_summary_show_idle always
-  doctor_status_summary_policy @tama_summary_show_background nonzero
-  doctor_status_summary_policy @tama_summary_show_error nonzero
-  doctor_status_summary_policy @tama_summary_show_unknown nonzero
+  local bucket
+  while IFS= read -r bucket; do
+    doctor_status_summary_policy "$bucket"
+  done <<EOF
+$TAMA_SUMMARY_BUCKETS
+EOF
 
   local sessions record session_id session_name scope
   sessions="$(tmux_run list-sessions -F '#{session_id}|#{session_name}' 2>/dev/null)" || return 0

@@ -52,3 +52,28 @@ tama_summary_scope() { # <session id>
     *) printf '%s' current ;;
   esac
 }
+
+# The summary renderer and doctor share one policy vocabulary and one set of
+# bucket defaults. Keep the catalog here so diagnostics cannot drift from what
+# the status line actually renders.
+TAMA_SUMMARY_BUCKETS='running
+waiting
+idle
+background
+error
+unknown'
+
+tama_summary_policy_is_valid() { # <value>
+  case "$1" in
+    always | nonzero | never) return 0 ;;
+  esac
+  return 1
+}
+
+tama_summary_policy_default() { # <bucket>
+  case "$1" in
+    running | waiting | idle) printf '%s' always ;;
+    background | error | unknown) printf '%s' nonzero ;;
+    *) return 1 ;;
+  esac
+}

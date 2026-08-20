@@ -93,13 +93,15 @@ tama_summary_load_icons() {
   tama_state_icons_resolve
 }
 
-tama_summary_policy() { # <option without @> <default>
-  local value
-  value="$(tama_opt "$1" "$2")"
-  case "$value" in
-    always | nonzero | never) printf '%s' "$value" ;;
-    *) printf '%s' "$2" ;;
-  esac
+tama_summary_policy() { # <bucket>
+  local bucket="$1" fallback value
+  fallback="$(tama_summary_policy_default "$bucket")" || return 1
+  value="$(tama_opt "tama_summary_show_$bucket" "$fallback")"
+  if tama_summary_policy_is_valid "$value"; then
+    printf '%s' "$value"
+  else
+    printf '%s' "$fallback"
+  fi
 }
 
 tama_summary_add_bucket() { # <icon> <count> <policy>
@@ -143,17 +145,17 @@ EOF
   suffix="$(tama_opt tama_summary_suffix '')"
   TAMA_SUMMARY_OUTPUT=''
   tama_summary_add_bucket "$TAMA_GLYPH_RUNNING" "$running" \
-    "$(tama_summary_policy tama_summary_show_running always)"
+    "$(tama_summary_policy running)"
   tama_summary_add_bucket "$TAMA_GLYPH_WAITING" "$waiting" \
-    "$(tama_summary_policy tama_summary_show_waiting always)"
+    "$(tama_summary_policy waiting)"
   tama_summary_add_bucket "$TAMA_GLYPH_IDLE" "$idle" \
-    "$(tama_summary_policy tama_summary_show_idle always)"
+    "$(tama_summary_policy idle)"
   tama_summary_add_bucket "$TAMA_GLYPH_BACKGROUND" "$background" \
-    "$(tama_summary_policy tama_summary_show_background nonzero)"
+    "$(tama_summary_policy background)"
   tama_summary_add_bucket "$TAMA_GLYPH_ERROR" "$error" \
-    "$(tama_summary_policy tama_summary_show_error nonzero)"
+    "$(tama_summary_policy error)"
   tama_summary_add_bucket "$unknown_icon" "$unknown" \
-    "$(tama_summary_policy tama_summary_show_unknown nonzero)"
+    "$(tama_summary_policy unknown)"
   TAMA_SUMMARY_OUTPUT="$prefix$TAMA_SUMMARY_OUTPUT$suffix"
   printf '%s' "${TAMA_SUMMARY_OUTPUT//\#/##}"
 }
