@@ -93,16 +93,16 @@ record_for() { # <session target> <pane> <agent> <state> <label>
     "$(record_for two:4 "$pane" '' idle '')")" "$output"
 }
 
-@test "list targets panes by stable window id for older tmux versions" {
+@test "list does not embed control separators that older tmux versions escape" {
   local pane expected wrapper
   pane="$(tama_pane_of t:0)"
   set_pane_value "$pane" state_main running
   expected="$(record_for t:0 "$pane" '' running '')"
-  wrapper="$BATS_TEST_TMPDIR/tmux-with-old-target-parser"
+  wrapper="$BATS_TEST_TMPDIR/tmux-escaping-control-formats"
   sed \
     -e "s|@TMUX@|$(command -v tmux)|g" \
     -e "s|@SOCKET@|$TAMA_SOCKET|g" \
-    "$PLUGIN_ROOT/tests/fixtures/tmux-with-old-target-parser" >"$wrapper"
+    "$PLUGIN_ROOT/tests/fixtures/tmux-escaping-control-formats" >"$wrapper"
   chmod +x "$wrapper"
   TAMA_TMUX="$wrapper"
   TAMA_TMUX_ARGS=''

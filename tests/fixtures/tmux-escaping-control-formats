@@ -1,0 +1,10 @@
+#!/bin/sh
+
+unit_separator="$(printf '\037')"
+for argument in "$@"; do
+  case "$argument" in
+    *"$unit_separator"*) exit 1 ;;
+  esac
+done
+
+exec @TMUX@ -L @SOCKET@ "$@"
