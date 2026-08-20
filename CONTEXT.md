@@ -29,6 +29,17 @@ What an agent pane is doing, from the user's point of view. Five values:
 Every other state is reported directly by an agent hook. Clearing a pane removes its state
 entirely, which is different from `idle` — a cleared pane is not an agent pane.
 
+## Status summary
+
+A count of agent panes grouped by **state**, scoped either to the session being viewed or to
+the entire tmux server. An agent pane is counted at most once, regardless of how many sessions
+or clients expose it.
+
+## Unknown bucket
+
+The status summary group for agent panes whose reported value is not a supported **state**.
+It exposes unexpected integration data without treating that data as a new state.
+
 ## Subagent
 
 A delegated agent run spawned by an agent, tracked only by an opaque id supplied by the
