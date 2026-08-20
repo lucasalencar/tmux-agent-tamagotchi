@@ -56,6 +56,7 @@ tama_summary_scope() { # <session id>
 # The summary renderer and doctor share one policy vocabulary and one set of
 # bucket defaults. Keep the catalog here so diagnostics cannot drift from what
 # the status line actually renders.
+# shellcheck disable=SC2034  # consumed by commands that source this library
 TAMA_SUMMARY_BUCKETS='running
 waiting
 idle
