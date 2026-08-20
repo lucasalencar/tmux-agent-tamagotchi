@@ -1,0 +1,5 @@
+# `list` is a stable TSV interface
+
+`tama list` emits one headerless TSV record per agent-pane session linkage, ordered by session name and then numeric window and pane indexes. Its fixed columns are `session_name`, `session_id`, `window_index`, `window_name`, `window_id`, `pane_index`, `pane_id`, `agent`, `state`, and `label`; fields are printed directly, absent optional values are empty, and no matches produce successful, byte-empty output.
+
+The command lists every pane with a nonempty main state without mutating or filtering stale state, derives `background` on read, and preserves unknown states. With no filter it covers the whole server; `--session` accepts one exact session name or id and limits the same interface to that session, with a missing session treated as an empty result. This favors a predictable interface for pickers, dashboards, and scripts while remaining readable, and deliberately represents a linked window once for each session linkage rather than choosing an arbitrary representative session.

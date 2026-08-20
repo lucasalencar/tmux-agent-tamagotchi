@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+#
+#   tama list [--session <session_name_or_id>]
+#
+# Stable, headerless TSV inventory of agent-pane session linkages.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local session='' separator window_format pane_format windows panes
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --session)
+        [ -z "$session" ] || die_usage '--session may only be given once'
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--session needs a session name or id'
+        fi
+        session="$2"
+        shift 2
+        ;;
+      -*) die_usage "unknown option: $1" ;;
+      *) die_usage "list takes no arguments, got: $1" ;;
+    esac
+  done
+
+  # Plugin-owned values reject control characters on write, and tmux identity
+  # fields cannot contain this separator. Keeping the transport distinct from
+  # TSV lets the final output print every field directly, including empty ones.
+  separator="$(printf '\037')"
+  window_format="#{session_name}${separator}#{session_id}${separator}#{window_index}${separator}#{window_name}${separator}#{window_id}"
+  pane_format="#{pane_index}${separator}#{pane_id}${separator}#{@tama_pane_agent}${separator}#{@tama_pane_state_main}${separator}#{@tama_pane_subagents}${separator}#{@tama_pane_label}"
+  windows="$(tmux_run list-windows -a -F "$window_format" 2>/dev/null)" || return 0
+  [ -n "$windows" ] || return 0
+
+  # list-panes -a repeats linked windows but resolves #{session_*} through only
+  # one of their sessions. Enumerating the server's window linkages first keeps
+  # the session identity and linkage-specific window index exact.
+  while IFS="$separator" read -r session_name session_id window_index window_name window_id; do
+    if [ -n "$session" ] && [ "$session" != "$session_name" ] && [ "$session" != "$session_id" ]; then
+      continue
+    fi
+    panes="$(tmux_run list-panes -t "${session_id}:${window_index}" -F "$pane_format" 2>/dev/null)" || continue
+    while IFS="$separator" read -r pane_index pane_id agent state subagents label; do
+      [ -n "$state" ] || continue
+      tama_pane_derive "$state" "$subagents"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$session_name" "$session_id" "$window_index" "$window_name" "$window_id" \
+        "$pane_index" "$pane_id" "$agent" "$TAMA_PANE_DERIVED" "$label"
+    done <<EOF
+$panes
+EOF
+  done <<EOF | LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k3,3n -k6,6n
+$windows
+EOF
+}
+
+main "$@"

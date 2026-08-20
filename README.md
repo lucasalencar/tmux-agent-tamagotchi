@@ -219,6 +219,7 @@ The plugin does not install mouse bindings.
 | `flag` / `unflag` | Raise or clear a window mark. |
 | `notify` / `dismiss` | Raise or dismiss a notification. |
 | `focus-window` | Bring a session's terminal window forward. |
+| `list` | List agent panes across the server as stable, headerless TSV. |
 | `gc` | Clear stale pane state. |
 | `on-select` | Clear a mark, dismiss its notification and sweep its window. |
 | `hook` | Dispatch an event to a bundled adapter. |
