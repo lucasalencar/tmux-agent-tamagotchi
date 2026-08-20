@@ -542,6 +542,44 @@ PAYLOAD
   assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
 }
 
+@test "a valid JSON prefix ending at the payload bound is not authoritative" {
+  local opening='{"filler":"' closing='","background_tasks":[]}' filler prefix
+  filler="$(printf '%0*d' $((65536 - ${#opening} - ${#closing})) 0)"
+  prefix="$opening$filler$closing"
+  [ "${#prefix}" -eq 65536 ]
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
+
+  hook Stop <<<"${prefix}truncated-tail"
+
+  assert_success
+  assert_pane_option "$PANE" subagents known_live
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+}
+
+@test "the exact payload boundary is conservative without rejecting the byte below it" {
+  local opening='{"filler":"' closing='","background_tasks":[]}' filler complete
+
+  filler="$(printf '%0*d' $((65536 - ${#opening} - ${#closing})) 0)"
+  complete="$opening$filler$closing"
+  [ "${#complete}" -eq 65536 ]
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
+  hook Stop < <(printf '%s' "$complete")
+  assert_success
+  assert_pane_option "$PANE" subagents known_live
+  hook SessionEnd
+
+  filler="${filler:1}"
+  complete="$opening$filler$closing"
+  [ "${#complete}" -eq 65535 ]
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"leaked"')"
+  hook Stop < <(printf '%s' "$complete")
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
+}
+
 @test "two delegated runs are counted, not collapsed" {
   hook SessionStart
   hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"agt_01"')"

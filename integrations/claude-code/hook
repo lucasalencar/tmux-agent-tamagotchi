@@ -39,11 +39,10 @@ TAMA_CC_AGENT='claude-code'
 #
 # This is the residue ADR-0001 predicted and put in `integrations/`: the *core*
 # CLI takes arguments and never reads stdin, and `jq` is not a dependency of the
-# plugin. So the extraction below is deliberately not a JSON parser. It comes in
-# two halves, because the fields come in two kinds: `cc_field` for the opaque
-# tokens, which needs no idea of escaping at all, and `cc_text_field` for the two
-# free-text fields, which does. A field either cannot find is a field the adapter
-# does without, quietly, which is the whole of its error handling.
+# plugin. Opaque tokens and banner text use small purpose-built scanners; the
+# authoritative task registry has the stricter burden and is accepted only after
+# a bounded JSON validation pass. A field either path cannot prove is a field the
+# adapter does without, quietly, which is the whole of its error handling.
 #
 # Four rules hold this to something that cannot damage a turn, because a hook that
 # misbehaves here degrades the agent rather than the plugin: one bounded read that
@@ -53,6 +52,7 @@ TAMA_CC_AGENT='claude-code'
 
 TAMA_CC_PAYLOAD=''
 TAMA_CC_PAYLOAD_READ='no'
+TAMA_CC_PAYLOAD_COMPLETE='yes'
 TAMA_CC_FIELD=''
 TAMA_CC_TEXT=''
 TAMA_CC_REST=''
@@ -87,6 +87,10 @@ cc_read_payload() {
   # variable — so it says nothing this adapter would act on.
   IFS= read -r -d '' -n "$TAMA_CC_PAYLOAD_MAX" -t "$TAMA_CC_PAYLOAD_TIMEOUT" \
     TAMA_CC_PAYLOAD || true
+  # Reaching the cap cannot distinguish exact EOF from a longer value. Neither
+  # is complete enough to authorize destructive reconciliation.
+  [ "${#TAMA_CC_PAYLOAD}" -lt "$TAMA_CC_PAYLOAD_MAX" ] ||
+    TAMA_CC_PAYLOAD_COMPLETE='no'
   return 0
 }
 
@@ -231,6 +235,7 @@ cc_json_string() {
 # in tool input: only the provider's top-level registry is authoritative.
 cc_json_top_level_value() { # <name>
   cc_read_payload
+  [ "$TAMA_CC_PAYLOAD_COMPLETE" = 'yes' ] || return 1
   cc_json_payload_is_valid || return 1
   TAMA_CC_JSON_REST="$TAMA_CC_PAYLOAD"
   local depth=0 char candidate saved='' matches=0 containers=''
@@ -410,10 +415,10 @@ cc_background_tasks_ended() {
   return 1
 }
 
-# Consumes one flat task object and leaves its type in TAMA_CC_TASK_TYPE. Claude's
-# documented registry entries use scalar fields. Rejecting nested or otherwise
-# unfamiliar entries is intentional: an ambiguous snapshot must preserve known
-# work, never clear it on a parser guess.
+# Consumes one task object and leaves its type in TAMA_CC_TASK_TYPE. Arbitrary
+# valid JSON metadata is allowed, but the decision-bearing `type` must occur once
+# as a directly readable string. An ambiguous snapshot must preserve known work,
+# never clear it on a parser guess.
 cc_background_task() {
   TAMA_CC_TASK_TYPE=''
   case "$TAMA_CC_JSON_REST" in
