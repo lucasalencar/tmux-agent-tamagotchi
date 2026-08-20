@@ -10,8 +10,34 @@ set -o nounset
 # shellcheck source=../lib/common.sh
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
+tama_summary_read_pane() { # <pane id>; 0 state, 2 no state, 1 invalid read
+  local raw field lines=0
+  raw="$(tama_inventory_fields "$1" '#{pane_id}
+#{@tama_pane_state_main}
+#{@tama_pane_subagents}
+.')" || return 1
+
+  TAMA_SUMMARY_PANE_ID=''
+  TAMA_SUMMARY_STATE=''
+  TAMA_SUMMARY_SUBAGENTS=''
+  while IFS= read -r field; do
+    lines=$((lines + 1))
+    case "$lines" in
+      1) TAMA_SUMMARY_PANE_ID="$field" ;;
+      2) TAMA_SUMMARY_STATE="$field" ;;
+      3) TAMA_SUMMARY_SUBAGENTS="$field" ;;
+    esac
+  done <<EOF
+$raw
+EOF
+  [ "$lines" -eq 4 ] && [ -n "$TAMA_SUMMARY_PANE_ID" ] || return 1
+  [ -n "$TAMA_SUMMARY_STATE" ] || return 2
+  tama_pane_derive "$TAMA_SUMMARY_STATE" "$TAMA_SUMMARY_SUBAGENTS"
+  return 0
+}
+
 tama_summary_records() { # <session id>
-  local session_id scope sessions session windows window_id panes pane_id raw field lines
+  local session_id scope sessions session windows window_id panes pane_id read_status
   local seen=''
   session_id="$(tama_inventory_session_id "$1")" || return 1
   [ -n "$session_id" ] || return 1
@@ -35,27 +61,12 @@ tama_summary_records() { # <session id>
         esac
         seen="$seen|$pane_id|"
 
-        raw="$(tama_inventory_fields "$pane_id" '#{pane_id}
-#{@tama_pane_state_main}
-#{@tama_pane_subagents}
-.')" || return 1
-        lines=0
-        TAMA_SUMMARY_PANE_ID=''
-        TAMA_SUMMARY_STATE=''
-        TAMA_SUMMARY_SUBAGENTS=''
-        while IFS= read -r field; do
-          lines=$((lines + 1))
-          case "$lines" in
-            1) TAMA_SUMMARY_PANE_ID="$field" ;;
-            2) TAMA_SUMMARY_STATE="$field" ;;
-            3) TAMA_SUMMARY_SUBAGENTS="$field" ;;
-          esac
-        done <<EOF
-$raw
-EOF
-        [ "$lines" -eq 4 ] && [ -n "$TAMA_SUMMARY_PANE_ID" ] || return 1
-        [ -n "$TAMA_SUMMARY_STATE" ] || continue
-        tama_pane_derive "$TAMA_SUMMARY_STATE" "$TAMA_SUMMARY_SUBAGENTS"
+        tama_summary_read_pane "$pane_id"
+        read_status=$?
+        if [ "$read_status" -ne 0 ]; then
+          [ "$read_status" -eq 2 ] && continue
+          return 1
+        fi
         printf '%s\n' "$TAMA_PANE_DERIVED"
       done <<EOF
 $panes
