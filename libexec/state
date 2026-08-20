@@ -240,6 +240,7 @@ check_subagent_id() { # <verb> <id>
 
 main() {
   local pane='' state='' argument='' reconcile='' positional=0
+  local -a reconcile_ids=()
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -263,7 +264,7 @@ main() {
               [ "$state" = 'subagents-reconcile' ] ||
                 die_usage "state takes at most two arguments, got: $1"
               check_subagent_id 'subagents-reconcile' "$1"
-              reconcile="${reconcile:+$reconcile }$1"
+              reconcile_ids+=("$1")
               ;;
           esac
           shift
@@ -279,7 +280,7 @@ main() {
             [ "$state" = 'subagents-reconcile' ] ||
               die_usage "state takes at most two arguments, got: $1"
             check_subagent_id 'subagents-reconcile' "$1"
-            reconcile="${reconcile:+$reconcile }$1"
+            reconcile_ids+=("$1")
             ;;
         esac
         shift
@@ -303,7 +304,9 @@ main() {
     subagent-start | subagent-stop) check_subagent_id "$state" "$argument" ;;
     subagents-reconcile)
       [ "$positional" -lt 2 ] || check_subagent_id "$state" "$argument"
-      reconcile="${argument}${reconcile:+ $reconcile}"
+      reconcile_ids=("${argument}" "${reconcile_ids[@]}")
+      local IFS=' '
+      reconcile="${reconcile_ids[*]}"
       ;;
   esac
 

@@ -733,7 +733,11 @@ main() {
       # SubagentStop — but the check costs nothing on a payload already read, and it
       # is the one that would have to be right if that ever changed.
       if cc_is_delegated; then
-        cc_state idle "$@"
+        "$TAMA_BIN" state idle "$TAMA_CC_AGENT" "$@" || true
+        if cc_background_tasks_empty_of_subagents; then
+          exec "$TAMA_BIN" state subagents-reconcile "$@"
+        fi
+        exit 0
       fi
       if cc_background_tasks_empty_of_subagents; then
         "$TAMA_BIN" state subagents-reconcile "$@" || true

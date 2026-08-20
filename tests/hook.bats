@@ -364,6 +364,19 @@ PAYLOAD
   assert_equal "$(tama_icons "$WINDOW")" ' ○'
 }
 
+@test "a delegated stop also reconciles an authoritative empty task snapshot" {
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"leaked"')"
+
+  hook Stop <<'PAYLOAD'
+{"hook_event_name":"Stop","agent_id":"delegated","background_tasks":[]}
+PAYLOAD
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
+  assert_pane_option "$PANE" state_main idle
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
+}
+
 @test "an unknown stop without an authoritative snapshot preserves known work" {
   hook SessionStart
   hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
