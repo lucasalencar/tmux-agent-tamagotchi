@@ -162,12 +162,8 @@ cc_field() { # <name>
 
 # Removes leading JSON whitespace from TAMA_CC_JSON_REST.
 cc_json_space() {
-  while :; do
-    case "$TAMA_CC_JSON_REST" in
-      [[:space:]]*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#?}" ;;
-      *) return 0 ;;
-    esac
-  done
+  local whitespace="${TAMA_CC_JSON_REST%%[![:space:]]*}"
+  TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:${#whitespace}}"
 }
 
 # Consumes one JSON string from TAMA_CC_JSON_REST. The decoded value is only used
@@ -225,6 +221,7 @@ cc_json_string() {
 # in tool input: only the provider's top-level registry is authoritative.
 cc_json_top_level_value() { # <name>
   cc_read_payload
+  cc_json_payload_is_valid || return 1
   TAMA_CC_JSON_REST="$TAMA_CC_PAYLOAD"
   local depth=0 char candidate saved='' matches=0 containers=''
   local chunk probe delimiter
@@ -303,12 +300,78 @@ cc_json_top_level_value() { # <name>
 # inside task entries: an unfamiliar nested shape is ambiguous and must preserve
 # known work.
 cc_json_scalar() {
-  local token="${TAMA_CC_JSON_REST%%[[:space:],\}]*}"
+  local token="$TAMA_CC_JSON_REST" probe delimiter
+  for delimiter in ',' '}' ']' ' ' $'\t' $'\n' $'\r'; do
+    case "$TAMA_CC_JSON_REST" in
+      *"$delimiter"*)
+        probe="${TAMA_CC_JSON_REST%%"$delimiter"*}"
+        [ "${#probe}" -ge "${#token}" ] || token="$probe"
+        ;;
+    esac
+  done
   TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:${#token}}"
   case "$token" in
     true | false | null) return 0 ;;
   esac
   [[ "$token" =~ ^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$ ]]
+}
+
+# Consumes one complete JSON value. This validates the provider payload before a
+# field can become authoritative; balance alone is not enough, because balanced
+# text can still contain a missing colon, a trailing comma, or an invalid token.
+cc_json_value() { # <depth>
+  local depth="$1"
+  [ "$depth" -lt 32 ] || return 1
+  cc_json_space
+  case "$TAMA_CC_JSON_REST" in
+    '"'*) cc_json_string ;;
+    \{*)
+      TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#\{}"
+      cc_json_space
+      case "$TAMA_CC_JSON_REST" in
+        \}*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#\}}"; return 0 ;;
+      esac
+      while :; do
+        cc_json_string || return 1
+        cc_json_space
+        case "$TAMA_CC_JSON_REST" in
+          :*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#:}" ;;
+          *) return 1 ;;
+        esac
+        cc_json_value $((depth + 1)) || return 1
+        cc_json_space
+        case "$TAMA_CC_JSON_REST" in
+          ,*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#,}"; cc_json_space ;;
+          \}*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#\}}"; return 0 ;;
+          *) return 1 ;;
+        esac
+      done
+      ;;
+    \[*)
+      TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#\[}"
+      cc_json_space
+      case "$TAMA_CC_JSON_REST" in
+        \]*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#\]}"; return 0 ;;
+      esac
+      while :; do
+        cc_json_value $((depth + 1)) || return 1
+        cc_json_space
+        case "$TAMA_CC_JSON_REST" in
+          ,*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#,}"; cc_json_space ;;
+          \]*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#\]}"; return 0 ;;
+          *) return 1 ;;
+        esac
+      done
+      ;;
+    *) cc_json_scalar ;;
+  esac
+}
+
+cc_json_payload_is_valid() {
+  TAMA_CC_JSON_REST="$TAMA_CC_PAYLOAD"
+  cc_json_value 0 || return 1
+  cc_json_space
+  [ -z "$TAMA_CC_JSON_REST" ]
 }
 
 # The complete array value must end where a top-level field may end. The outer
@@ -342,7 +405,7 @@ cc_background_task() {
   esac
   cc_json_space
 
-  local key value saw_type='no' value_is_string
+  local key value saw_type='no'
   while :; do
     cc_json_string || return 1
     key="$TAMA_CC_JSON_STRING"
@@ -353,22 +416,19 @@ cc_background_task() {
       *) return 1 ;;
     esac
     cc_json_space
-    value=''
-    value_is_string='no'
-    case "$TAMA_CC_JSON_REST" in
-      '"'*)
-        cc_json_string || return 1
-        value="$TAMA_CC_JSON_STRING"
-        value_is_string='yes'
-        ;;
-      *) cc_json_scalar || return 1 ;;
-    esac
     if [ "$key" = 'type' ]; then
       [ "$saw_type" = 'no' ] || return 1
-      [ "$value_is_string" = 'yes' ] || return 1
+      case "$TAMA_CC_JSON_REST" in
+        '"'*) ;;
+        *) return 1 ;;
+      esac
+      cc_json_string || return 1
       [ "$TAMA_CC_JSON_STRING_READABLE" = 'yes' ] || return 1
+      value="$TAMA_CC_JSON_STRING"
       saw_type='yes'
       TAMA_CC_TASK_TYPE="$value"
+    else
+      cc_json_value 1 || return 1
     fi
     cc_json_space
     case "$TAMA_CC_JSON_REST" in

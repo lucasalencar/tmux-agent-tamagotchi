@@ -396,7 +396,7 @@ PAYLOAD
   hook Stop
 
   hook SubagentStop <<'PAYLOAD'
-{"hook_event_name":"SubagentStop","agent_id":"phantom","agent_type":"","background_tasks":[{"id":"shell-1","type":"shell","status":"running","attempt":1,"done":false,"result":null}]}
+{"hook_event_name":"SubagentStop","agent_id":"phantom","agent_type":"","background_tasks":[{"id":"shell-1","type":"shell","status":"running","attempt":1,"done":false,"result":null,"metadata":{"nested":[1,true,null]}}]}
 PAYLOAD
   assert_success
   assert_pane_option_unset "$PANE" subagents
@@ -417,6 +417,8 @@ PAYLOAD
     '{"hook_event_name":"Stop","background_tasks":[],}' \
     '{"hook_event_name":"Stop","background_tasks":[] "broken":true}' \
     '{"hook_event_name":"Stop","background_tasks":[]garbage}' \
+    '{"hook_event_name":"Stop","invalid":not-json,"background_tasks":[]}' \
+    '{"hook_event_name":"Stop","background_tasks":[],"broken" garbage}' \
     '{"hook_event_name":"Stop","background_tasks":[],"background_tasks":[{"type":"subagent"}]}'; do
     hook SessionStart
     hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
@@ -462,12 +464,12 @@ PAYLOAD
 
 @test "long whitespace before a task snapshot stays bounded" {
   local spaces start elapsed
-  spaces="$(printf '%060000s' '')"
+  spaces="$(printf '%*s' 15000 '')"
   hook SessionStart
   hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"leaked"')"
 
   start=$SECONDS
-  hook Stop <<<"{\"hook_event_name\":\"Stop\",$spaces\"background_tasks\":[]}"
+  hook Stop <<<"{\"hook_event_name\":\"Stop\",${spaces}\"background_tasks\":${spaces}[]}"
   elapsed=$((SECONDS - start))
 
   assert_success
