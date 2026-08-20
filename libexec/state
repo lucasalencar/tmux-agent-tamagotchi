@@ -3,7 +3,7 @@
 #   tama state <running|waiting|idle|error|clear> [agent_name] [--pane <pane_id>]
 #   tama state subagent-start <id> [--pane <pane_id>]
 #   tama state subagent-stop  <id> [--pane <pane_id>]
-#   tama state subagent-stop-fallback <id> [--pane <pane_id>]
+#   tama state subagents-reconcile [<id>...] [--pane <pane_id>]
 #
 # Agent names are sticky, unknown states are ignored for forward compatibility,
 # and attention states raise their flag on every event rather than only on changes.
@@ -130,7 +130,6 @@ clear_pane() {
 # than a wrong glyph on a few.
 subagent() {
   local target="$1" verb="$2" id="$3" attempt=1 wanted was refresh was_agent_pane
-  local settled_id
   while :; do
     tama_pane_read "$target" || exit 0
     # From here on the pane is addressed by its own id: a target given by index
@@ -141,14 +140,9 @@ subagent() {
     # the read-back below tells a `state clear` from a lost race.
     was_agent_pane="$TAMA_PANE_STATE_MAIN"
 
-    settled_id="$id"
     case "$verb" in
       subagent-start) tama_subagents_add "$TAMA_PANE_SUBAGENTS" "$id" ;;
       subagent-stop) tama_subagents_remove "$TAMA_PANE_SUBAGENTS" "$id" ;;
-      subagent-stop-fallback)
-        tama_subagents_remove_fallback "$TAMA_PANE_SUBAGENTS" "$id"
-        settled_id="$TAMA_SUBAGENT_REMOVED_ID"
-        ;;
     esac
     wanted="$TAMA_SUBAGENTS_NEW"
 
@@ -186,7 +180,7 @@ subagent() {
       return 0
     fi
 
-    if subagent_settled "$verb" "$TAMA_PANE_SUBAGENTS" "$settled_id"; then
+    if subagent_settled "$verb" "$TAMA_PANE_SUBAGENTS" "$id"; then
       # The read-back is also the one chance to notice that the other half of the
       # pane moved underneath this write. A state report and a subagent event each
       # judge the refresh from the half they did not write, and the pair an agent
@@ -212,8 +206,51 @@ subagent_settled() { # <verb> <list> <id>
   if tama_subagents_contains "$2" "$3"; then
     [ "$1" = 'subagent-start' ]
   else
-    [ "$1" = 'subagent-stop' ] || [ "$1" = 'subagent-stop-fallback' ]
+    [ "$1" = 'subagent-stop' ]
   fi
+}
+
+# Replaces the complete subagent list supplied by an authoritative provider
+# snapshot. Unlike an incremental stop, the empty list is meaningful evidence:
+# it proves that no delegated run remains. The same optimistic loop and clear-wins
+# guard as incremental writes keep a concurrent clear from leaving residue behind.
+reconcile_subagents() { # <pane_id> <complete-list>
+  local target="$1" wanted="$2" attempt=1 was refresh was_agent_pane
+  while :; do
+    tama_pane_read "$target" || exit 0
+    target="$TAMA_PANE_ID"
+    was="$TAMA_PANE_DISPLAY"
+    was_agent_pane="$TAMA_PANE_STATE_MAIN"
+
+    tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$wanted"
+    refresh='no'
+    tama_pane_display_changed "$was" "$TAMA_PANE_DERIVED" && refresh='yes'
+
+    tama_batch_reset
+    tama_pane_stage "$target" subagents "$wanted" "$TAMA_PANE_SUBAGENTS"
+    tama_batch_flush "$refresh" || return 0
+
+    tama_pane_read "$target" || return 0
+    if [ -n "$was_agent_pane" ] && [ -z "$TAMA_PANE_STATE_MAIN" ]; then
+      if [ -n "$TAMA_PANE_SUBAGENTS" ]; then
+        tama_batch_reset
+        tama_pane_stage "$target" subagents '' "$TAMA_PANE_SUBAGENTS"
+        tama_batch_flush 'no' || true
+      fi
+      return 0
+    fi
+
+    if [ "$TAMA_PANE_SUBAGENTS" = "$wanted" ]; then
+      [ "$refresh" = 'yes' ] ||
+        ! tama_pane_display_changed "$was" "$TAMA_PANE_DISPLAY" ||
+        tmux_run refresh-client -S >/dev/null 2>&1 || true
+      return 0
+    fi
+
+    attempt=$((attempt + 1))
+    [ "$attempt" -le "$TAMA_SUBAGENT_ATTEMPTS" ] || return 0
+    sleep "$TAMA_SUBAGENT_RETRY_DELAY" 2>/dev/null || true
+  done
 }
 
 # A hook that passes a value the pane record cannot hold has to hear about it: the
@@ -239,7 +276,7 @@ check_subagent_id() { # <verb> <id>
 }
 
 main() {
-  local pane='' state='' argument='' positional=0
+  local pane='' state='' argument='' reconcile='' positional=0
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -259,7 +296,12 @@ main() {
           case "$positional" in
             1) state="$1" ;;
             2) argument="$1" ;;
-            *) die_usage "state takes at most two arguments, got: $1" ;;
+            *)
+              [ "$state" = 'subagents-reconcile' ] ||
+                die_usage "state takes at most two arguments, got: $1"
+              check_subagent_id 'subagents-reconcile' "$1"
+              reconcile="${reconcile:+$reconcile }$1"
+              ;;
           esac
           shift
         done
@@ -270,7 +312,12 @@ main() {
         case "$positional" in
           1) state="$1" ;;
           2) argument="$1" ;;
-          *) die_usage "state takes at most two arguments, got: $1" ;;
+          *)
+            [ "$state" = 'subagents-reconcile' ] ||
+              die_usage "state takes at most two arguments, got: $1"
+            check_subagent_id 'subagents-reconcile' "$1"
+            reconcile="${reconcile:+$reconcile }$1"
+            ;;
         esac
         shift
         ;;
@@ -290,8 +337,10 @@ main() {
       # survive the round trip through a tmux option intact.
       check_storable "an agent name" "$argument"
       ;;
-    subagent-start | subagent-stop | subagent-stop-fallback)
-      check_subagent_id "$state" "$argument"
+    subagent-start | subagent-stop) check_subagent_id "$state" "$argument" ;;
+    subagents-reconcile)
+      [ "$positional" -lt 2 ] || check_subagent_id "$state" "$argument"
+      reconcile="${argument}${reconcile:+ $reconcile}"
       ;;
   esac
 
@@ -304,9 +353,8 @@ main() {
   case "$state" in
     running | waiting | idle | error) report "$pane" "$state" "$argument" ;;
     clear) clear_pane "$pane" ;;
-    subagent-start | subagent-stop | subagent-stop-fallback)
-      subagent "$pane" "$state" "$argument"
-      ;;
+    subagent-start | subagent-stop) subagent "$pane" "$state" "$argument" ;;
+    subagents-reconcile) reconcile_subagents "$pane" "$reconcile" ;;
     # Not a state this version knows. Quiet on purpose: agents grow event types, and
     # a hook written for a newer plugin has to stay silent on an older one rather
     # than fail the turn it is reporting on.

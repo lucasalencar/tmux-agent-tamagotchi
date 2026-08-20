@@ -216,6 +216,23 @@ teardown() {
   assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
 }
 
+@test "an authoritative snapshot replaces the complete subagent set" {
+  run "$PLUGIN_ROOT/bin/tama" state idle --pane "$PANE"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start old-1 --pane "$PANE"
+  assert_success
+
+  run "$PLUGIN_ROOT/bin/tama" state subagents-reconcile live-1 live-2 --pane "$PANE"
+  assert_success
+  assert_pane_option "$PANE" subagents 'live-1 live-2'
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+
+  run "$PLUGIN_ROOT/bin/tama" state subagents-reconcile --pane "$PANE"
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
+}
+
 @test "clear unsets every pane option rather than emptying it" {
   run "$PLUGIN_ROOT/bin/tama" state subagent-start sub-1 --pane "$PANE"
   assert_success
@@ -425,6 +442,54 @@ teardown() {
   assert_equal "$(tama_icons "$WINDOW")" ' ○'
 }
 
+@test "an authoritative reconciliation whose write loses to a clear leaves no residue" {
+  tama_log_tmux_calls
+  run "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start old --pane "$PANE"
+  assert_success
+
+  local reconciled="$BATS_TEST_TMPDIR/reconciled" cleared="$BATS_TEST_TMPDIR/cleared"
+
+  TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-reconcile" \
+    TAMA_FAKE_TMUX_TOUCH_AFTER=2 TAMA_FAKE_TMUX_TOUCH="$reconciled" \
+    TAMA_FAKE_TMUX_WAIT_BEFORE=3 TAMA_FAKE_TMUX_WAIT_FOR="$cleared" \
+    "$PLUGIN_ROOT/bin/tama" state subagents-reconcile live --pane "$PANE" &
+  TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-clear-reconcile" \
+    TAMA_FAKE_TMUX_WAIT_BEFORE=1 TAMA_FAKE_TMUX_WAIT_FOR="$reconciled" \
+    TAMA_FAKE_TMUX_TOUCH_AFTER=2 TAMA_FAKE_TMUX_TOUCH="$cleared" \
+    "$PLUGIN_ROOT/bin/tama" state clear --pane "$PANE" &
+  wait
+
+  [ -e "$reconciled" ]
+  [ -e "$cleared" ]
+  local remaining
+  remaining="$(test_tmux show -p -t "$PANE" | grep -c '^@tama_' || true)"
+  assert_equal "$remaining" 0
+}
+
+@test "an authoritative reconciliation that lands after clear removes its residue" {
+  tama_log_tmux_calls
+  run "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start old --pane "$PANE"
+  assert_success
+
+  local cleared="$BATS_TEST_TMPDIR/reconcile-cleared"
+  TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-reconcile-after" \
+    TAMA_FAKE_TMUX_WAIT_BEFORE=2 TAMA_FAKE_TMUX_WAIT_FOR="$cleared" \
+    "$PLUGIN_ROOT/bin/tama" state subagents-reconcile live --pane "$PANE" &
+  TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-clear-before-reconcile" \
+    TAMA_FAKE_TMUX_TOUCH_AFTER=2 TAMA_FAKE_TMUX_TOUCH="$cleared" \
+    "$PLUGIN_ROOT/bin/tama" state clear --pane "$PANE" &
+  wait
+
+  [ -e "$cleared" ]
+  local remaining
+  remaining="$(test_tmux show -p -t "$PANE" | grep -c '^@tama_' || true)"
+  assert_equal "$remaining" 0
+}
+
 @test "a subagent start that lands after a clear takes its own residue back off" {
   # The same hole without the retry loop: the write arrives after `clear` read the
   # pane, so clear does not know to unset it and the start's own read-back is the
@@ -527,9 +592,14 @@ teardown() {
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" state subagent-stop
   assert_usage_error 'subagent-stop'
 
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" state subagents-reconcile ''
+  assert_usage_error 'subagents-reconcile'
+
   # An id travels in a space-separated list; one with whitespace in it would
   # silently become several.
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" state subagent-start 'two ids'
+  assert_usage_error 'whitespace'
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" state subagents-reconcile okay 'two ids'
   assert_usage_error 'whitespace'
 
   # A newline would end the record the whole pane is read as, so everything after

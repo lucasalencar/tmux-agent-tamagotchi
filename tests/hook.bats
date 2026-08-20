@@ -332,7 +332,7 @@ payload() { # <event> [extra JSON…]
   assert_equal "$(tama_icons "$WINDOW")" ' ○'
 }
 
-@test "an unpaired delegated stop cannot strand the started run" {
+@test "an authoritative empty task snapshot heals an unpaired delegated stop" {
   hook SessionStart
 
   # Observed from one real background-launched Claude Code run: the stop named a
@@ -344,11 +344,94 @@ PAYLOAD
   assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
 
   hook SubagentStop <<'PAYLOAD'
-{"hook_event_name":"SubagentStop","agent_id":"ab7b58905d1f4745c","agent_type":""}
+{"hook_event_name":"SubagentStop","agent_id":"ab7b58905d1f4745c","agent_type":"","background_tasks":[]}
 PAYLOAD
   assert_success
   assert_pane_option_unset "$PANE" subagents
   assert_equal "$(tama_icons "$WINDOW")" ' ○'
+}
+
+@test "a main stop also reconciles an authoritative empty task snapshot" {
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"leaked"')"
+
+  hook Stop <<'PAYLOAD'
+{"hook_event_name":"Stop","last_assistant_message":"done","background_tasks":[]}
+PAYLOAD
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
+  assert_pane_option "$PANE" state_main idle
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
+}
+
+@test "an unknown stop without an authoritative snapshot preserves known work" {
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
+  hook Stop
+
+  hook SubagentStop <<'PAYLOAD'
+{"hook_event_name":"SubagentStop","agent_id":"phantom","agent_type":""}
+PAYLOAD
+  assert_success
+  assert_pane_option "$PANE" subagents known_live
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+}
+
+@test "a snapshot containing a subagent preserves known ids" {
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
+  hook Stop
+
+  hook SubagentStop <<'PAYLOAD'
+{"hook_event_name":"SubagentStop","agent_id":"phantom","agent_type":"","background_tasks":[{"id":"task-1","type":"subagent","status":"running"}]}
+PAYLOAD
+  assert_success
+  assert_pane_option "$PANE" subagents known_live
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+}
+
+@test "a complete snapshot with only other background work clears subagent ids" {
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
+  hook Stop
+
+  hook SubagentStop <<'PAYLOAD'
+{"hook_event_name":"SubagentStop","agent_id":"phantom","agent_type":"","background_tasks":[{"id":"shell-1","type":"shell","status":"running"}]}
+PAYLOAD
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
+}
+
+@test "unreadable task snapshots preserve known ids" {
+  local broken
+  for broken in \
+    '{"hook_event_name":"Stop"}' \
+    '{"hook_event_name":"Stop","background_tasks":{}}' \
+    '{"hook_event_name":"Stop","background_tasks":[' \
+    '{"hook_event_name":"Stop","background_tasks":[{"type":"shell"}' \
+    '{"hook_event_name":"Stop","background_tasks":[not-json]}' \
+    '{"hook_event_name":"Stop","tool_input":{"background_tasks":[]}}'; do
+    hook SessionStart
+    hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
+    hook Stop <<<"$broken"
+    assert_success
+    assert_pane_option "$PANE" subagents known_live
+    assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+    hook SessionEnd
+  done
+}
+
+@test "a task snapshot beyond the payload bound preserves known ids" {
+  local filler
+  filler="$(printf '%080000d' 0)"
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known_live"')"
+
+  hook Stop <<<"{\"hook_event_name\":\"Stop\",\"filler\":\"$filler\",\"background_tasks\":[]}"
+  assert_success
+  assert_pane_option "$PANE" subagents known_live
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
 }
 
 @test "two delegated runs are counted, not collapsed" {

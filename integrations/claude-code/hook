@@ -160,6 +160,183 @@ cc_field() { # <name>
   esac
 }
 
+# Removes leading JSON whitespace from TAMA_CC_JSON_REST.
+cc_json_space() {
+  while :; do
+    case "$TAMA_CC_JSON_REST" in
+      [[:space:]]*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#?}" ;;
+      *) return 0 ;;
+    esac
+  done
+}
+
+# Consumes one JSON string from TAMA_CC_JSON_REST. The decoded value is only used
+# for provider-owned task keys and enum-like values; any escape makes it opaque,
+# which is conservative for deciding that a snapshot proves absence.
+cc_json_string() {
+  TAMA_CC_JSON_STRING=''
+  TAMA_CC_JSON_STRING_READABLE='yes'
+  case "$TAMA_CC_JSON_REST" in
+    '"'*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#\"}" ;;
+    *) return 1 ;;
+  esac
+
+  local before_quote before_escape skip char
+  while :; do
+    case "$TAMA_CC_JSON_REST" in
+      *'"'*) before_quote="${TAMA_CC_JSON_REST%%\"*}" ;;
+      *) return 1 ;;
+    esac
+    case "$TAMA_CC_JSON_REST" in
+      *\\*) before_escape="${TAMA_CC_JSON_REST%%\\*}" ;;
+      *) before_escape="$before_quote" ;;
+    esac
+
+    if [ "${#before_escape}" -ge "${#before_quote}" ]; then
+      TAMA_CC_JSON_STRING="$TAMA_CC_JSON_STRING$before_quote"
+      skip=$((${#before_quote} + 1))
+      TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:$skip}"
+      return 0
+    fi
+
+    TAMA_CC_JSON_STRING_READABLE='no'
+    skip=$((${#before_escape} + 1))
+    TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:$skip}"
+    [ -n "$TAMA_CC_JSON_REST" ] || return 1
+    char="${TAMA_CC_JSON_REST:0:1}"
+    TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:1}"
+    case "$char" in
+      '"' | \\ | / | b | f | n | r | t) ;;
+      u)
+        case "$TAMA_CC_JSON_REST" in
+          [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]*)
+            TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:4}"
+            ;;
+          *) return 1 ;;
+        esac
+        ;;
+      *) return 1 ;;
+    esac
+  done
+}
+
+# Positions TAMA_CC_JSON_REST at one top-level object's field value. Unlike the
+# older string-field scanner, this must not accept a background_tasks name nested
+# in tool input: only the provider's top-level registry is authoritative.
+cc_json_top_level_value() { # <name>
+  cc_read_payload
+  TAMA_CC_JSON_REST="$TAMA_CC_PAYLOAD"
+  local depth=0 char candidate
+  while [ -n "$TAMA_CC_JSON_REST" ]; do
+    char="${TAMA_CC_JSON_REST:0:1}"
+    case "$char" in
+      '"')
+        cc_json_string || return 1
+        candidate="$TAMA_CC_JSON_STRING"
+        if [ "$depth" -eq 1 ] &&
+          [ "$TAMA_CC_JSON_STRING_READABLE" = 'yes' ] &&
+          [ "$candidate" = "$1" ]; then
+          cc_json_space
+          case "$TAMA_CC_JSON_REST" in
+            :*)
+              TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#:}"
+              cc_json_space
+              return 0
+              ;;
+          esac
+        fi
+        ;;
+      \{ | \[)
+        depth=$((depth + 1))
+        TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:1}"
+        ;;
+      \} | \])
+        depth=$((depth - 1))
+        [ "$depth" -ge 0 ] || return 1
+        TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:1}"
+        ;;
+      *) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST:1}" ;;
+    esac
+  done
+  return 1
+}
+
+# Consumes one flat task object and leaves its type in TAMA_CC_TASK_TYPE. Claude's
+# documented registry entries use scalar fields. Rejecting nested or otherwise
+# unfamiliar entries is intentional: an ambiguous snapshot must preserve known
+# work, never clear it on a parser guess.
+cc_background_task() {
+  TAMA_CC_TASK_TYPE=''
+  case "$TAMA_CC_JSON_REST" in
+    \{*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#\{}" ;;
+    *) return 1 ;;
+  esac
+  cc_json_space
+
+  local key value saw_type='no'
+  while :; do
+    cc_json_string || return 1
+    key="$TAMA_CC_JSON_STRING"
+    [ "$TAMA_CC_JSON_STRING_READABLE" = 'yes' ] || return 1
+    cc_json_space
+    case "$TAMA_CC_JSON_REST" in
+      :*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#:}" ;;
+      *) return 1 ;;
+    esac
+    cc_json_space
+    cc_json_string || return 1
+    value="$TAMA_CC_JSON_STRING"
+    [ "$TAMA_CC_JSON_STRING_READABLE" = 'yes' ] || return 1
+    if [ "$key" = 'type' ]; then
+      [ "$saw_type" = 'no' ] || return 1
+      saw_type='yes'
+      TAMA_CC_TASK_TYPE="$value"
+    fi
+    cc_json_space
+    case "$TAMA_CC_JSON_REST" in
+      ,*)
+        TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#,}"
+        cc_json_space
+        ;;
+      \}*)
+        TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#\}}"
+        [ "$saw_type" = 'yes' ]
+        return
+        ;;
+      *) return 1 ;;
+    esac
+  done
+}
+
+# Whether a complete, readable background_tasks registry proves that no subagent
+# task remains. Missing, malformed, truncated, nested, or unfamiliar shapes all
+# return non-zero and leave incremental ids untouched.
+cc_background_tasks_empty_of_subagents() {
+  cc_json_top_level_value background_tasks || return 1
+  case "$TAMA_CC_JSON_REST" in
+    \[*) TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#\[}" ;;
+    *) return 1 ;;
+  esac
+  cc_json_space
+  case "$TAMA_CC_JSON_REST" in
+    \]*) return 0 ;;
+  esac
+
+  while :; do
+    cc_background_task || return 1
+    [ "$TAMA_CC_TASK_TYPE" = 'subagent' ] && return 1
+    cc_json_space
+    case "$TAMA_CC_JSON_REST" in
+      ,*)
+        TAMA_CC_JSON_REST="${TAMA_CC_JSON_REST#,}"
+        cc_json_space
+        ;;
+      \]*) return 0 ;;
+      *) return 1 ;;
+    esac
+  done
+}
+
 # What a banner is worth carrying at most, in characters of decoded text, and how
 # many escapes are worth decoding on the way there. Both bound the work as much as
 # the output: the scan below costs one pass over what is left of the value for every
@@ -398,6 +575,9 @@ main() {
       if cc_is_delegated; then
         cc_state idle "$@"
       fi
+      if cc_background_tasks_empty_of_subagents; then
+        "$TAMA_BIN" state subagents-reconcile "$@" || true
+      fi
       cc_message last_assistant_message 'finished its turn'
       cc_state_and_notify idle "$TAMA_CC_TEXT" "$@"
       ;;
@@ -417,15 +597,19 @@ main() {
       # Neither of these ever raises a banner, which is the whole of "a delegated
       # run stays quiet": a subagent finishing moves the icon from `background` back
       # to whatever the session's own turn is doing, and nothing else.
-      cc_field agent_id || exit 0
       case "$event" in
-        SubagentStart) exec "$TAMA_BIN" state subagent-start "$TAMA_CC_FIELD" "$@" ;;
+        SubagentStart)
+          cc_field agent_id || exit 0
+          exec "$TAMA_BIN" state subagent-start "$TAMA_CC_FIELD" "$@"
+          ;;
         *)
-          id="$TAMA_CC_FIELD"
-          if cc_field agent_type; then
-            exec "$TAMA_BIN" state subagent-stop "$id" "$@"
+          if cc_field agent_id; then
+            "$TAMA_BIN" state subagent-stop "$TAMA_CC_FIELD" "$@" || true
           fi
-          exec "$TAMA_BIN" state subagent-stop-fallback "$id" "$@"
+          if cc_background_tasks_empty_of_subagents; then
+            exec "$TAMA_BIN" state subagents-reconcile "$@"
+          fi
+          exit 0
           ;;
       esac
       ;;

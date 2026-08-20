@@ -120,8 +120,7 @@ tama_subagents_add() { # <list> <id>
 }
 
 # Sets TAMA_SUBAGENTS_NEW to the list without <id>. An id that is not there
-# leaves the list alone, so duplicate and out-of-order stops cannot consume a
-# different integration's known-live run.
+# leaves the list alone, so stopping an unknown subagent is a no-op.
 # shellcheck disable=SC2034  # TAMA_SUBAGENTS_NEW is read by the caller
 tama_subagents_remove() { # <list> <id>
   local list="$1" id="$2" kept='' existing
@@ -136,29 +135,12 @@ tama_subagents_remove() { # <list> <id>
   TAMA_SUBAGENTS_NEW="$kept"
 }
 
-# Sets TAMA_SUBAGENTS_NEW after one stop whose id may not pair with its start.
-# A matching <id> remains exact; otherwise the oldest entry is consumed. This is
-# deliberately separate from tama_subagents_remove: Codex emits duplicate stops,
-# which must remain harmless, while Claude Code 2.1.228 was observed starting
-# affbdfa48f0528122 and stopping ab7b58905d1f4745c with an empty agent_type for
-# the same background run. For that source-specific signal, the stop is reliable
-# evidence that one run ended even though its identity is not.
-# shellcheck disable=SC2034  # TAMA_SUBAGENTS_NEW is read by the caller
-tama_subagents_remove_fallback() { # <list> <id>
-  local list="$1"
-  if tama_subagents_contains "$list" "$2"; then
-    TAMA_SUBAGENT_REMOVED_ID="$2"
-    tama_subagents_remove "$list" "$2"
-    return
-  fi
-
-  set -f
-  # shellcheck disable=SC2086  # deliberate: the list is space separated
-  set -- $list
-  set +f
-  TAMA_SUBAGENT_REMOVED_ID="${1:-}"
-  tama_subagents_remove "$list" "$TAMA_SUBAGENT_REMOVED_ID"
-}
+# Incremental ids remain conservative because Claude Code 2.1.228 was observed
+# starting affbdfa48f0528122 and stopping ab7b58905d1f4745c, while also emitting
+# an unrelated empty-agent_type stop after every turn. No unknown stop can say
+# which known id ended. A provider's complete live-task snapshot may instead
+# replace this whole list atomically through `state subagents-reconcile`; that is
+# the only policy allowed to heal an id whose matching stop never arrived.
 
 # Whether a write would change what a status line shows, which is the only thing
 # worth refreshing every client for. Both arguments are derived states, so the
