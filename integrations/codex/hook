@@ -231,6 +231,16 @@ codex_state_and_notify() { # <state> <message>
   "$TAMA_BIN" notify -- "$TAMA_CODEX_AGENT" "$2" >/dev/null 2>&1 || true
 }
 
+# A Codex process can outlive an individual conversation.  SessionEnd is scoped
+# to that conversation, while a tama record is scoped to the pane, so clearing
+# the record would hide a still-open Codex TUI.  Clear stale subagent bookkeeping
+# first, then leave the pane idle; if Codex itself exits, the normal stale sweep
+# removes this fresh record when the pane returns to its shell.
+codex_session_end() {
+  codex_state clear
+  codex_state idle
+}
+
 codex_auto_review_is_configured() {
   local codex_dir="${CODEX_HOME:-$HOME/.codex}"
   local path="$codex_dir/config.toml" config
@@ -265,7 +275,7 @@ codex_auto_review_is_configured() {
 TAMA_CODEX_EVENT="${1:-}"
 codex_read_payload
 if [ "$TAMA_CODEX_PAYLOAD_TRUNCATED" = 'yes' ]; then
-  [ "$TAMA_CODEX_EVENT" = 'SessionEnd' ] && codex_state clear
+  [ "$TAMA_CODEX_EVENT" = 'SessionEnd' ] && codex_session_end
   exit 0
 fi
 case "$TAMA_CODEX_EVENT" in
@@ -326,7 +336,7 @@ case "$TAMA_CODEX_EVENT" in
     codex_state_and_notify idle "$TAMA_CODEX_TEXT"
     ;;
   SessionEnd)
-    codex_state clear
+    codex_session_end
     ;;
   PreCompact | PostCompact | *)
     :

@@ -48,8 +48,8 @@ payload() { # <event> [extra JSON]
 
   hook SessionEnd "$(payload SessionEnd ',"reason":"other"')"
   assert_success
-  assert_pane_option_unset "$PANE" state_main
-  assert_pane_option_unset "$PANE" agent
+  assert_pane_option "$PANE" state_main idle
+  assert_pane_option "$PANE" agent codex
 }
 
 @test "session sources, compaction, post-tool use, and future events map safely" {
@@ -408,7 +408,7 @@ PY
   refute_backend_called notify
 }
 
-@test "only main-thread cleanup survives the input bound" {
+@test "SessionEnd preserves an idle pane even when its payload is truncated" {
   local oversized
   oversized="$(python3 - <<'PY'
 print('{"last_assistant_message":"Untrusted complete text","tool_input":{"description":"Also untrusted"},"padding":"' + ('x' * 70000) + '"}')
@@ -431,8 +431,8 @@ PY
 
   hook SessionEnd "$oversized"
   assert_success
-  assert_pane_option_unset "$PANE" state_main
-  assert_pane_option_unset "$PANE" agent
+  assert_pane_option "$PANE" state_main idle
+  assert_pane_option "$PANE" agent codex
 }
 
 @test "truncated payloads cannot change source-dependent or subagent state" {
@@ -515,5 +515,6 @@ PY
 
   hook SessionEnd "$(payload SessionEnd ',"reason":"other"')"
   assert_pane_option_unset "$PANE" subagents
-  assert_equal "$(tama_icons "$WINDOW")" ''
+  assert_pane_option "$PANE" state_main idle
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
 }

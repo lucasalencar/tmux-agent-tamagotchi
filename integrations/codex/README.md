@@ -138,8 +138,10 @@ order; the shorter `SessionEnd` timeout is Codex's documented maximum.
 the existing state. `UserPromptSubmit` and `PostToolUse` report running. A
 `request_user_input` call or a human `PermissionRequest` reports waiting and requests a
 notification through the core; `Stop` reports idle before requesting its completion
-notification. `SessionEnd` clears the pane. `PreCompact`, `PostCompact` and unknown events
-are harmless no-ops.
+notification. `SessionEnd` clears any tracked subagents and leaves the pane idle: a Codex
+process can remain open after one conversation ends, while the regular stale sweep clears the
+record after Codex itself returns the pane to a shell. `PreCompact`, `PostCompact` and unknown
+events are harmless no-ops.
 
 Opening the Codex TUI does not itself create a Codex session or emit `SessionStart`. For a
 fresh TUI, Codex emits `SessionStart` with source `startup` only when the first prompt is
@@ -160,7 +162,7 @@ to human attention.
 Question text, approval descriptions and final assistant messages are decoded from the hook
 payload when usable. Reads and messages are bounded. A truncated payload is ignored because
 the unread suffix could attribute the event to delegated work; only main-thread
-`SessionEnd` cleanup still runs. Malformed or missing text in a complete payload uses a short
+`SessionEnd` normalization still runs. Malformed or missing text in a complete payload uses a short
 fallback. The adapter never calls the
 standalone flag command: waiting states and notifications compose with the core's existing
 focus suppression, persistent flag, grouping, dismissal and click behavior.
@@ -178,7 +180,8 @@ From a tmux pane with the plugin loaded, start Codex and submit a harmless promp
 expected before that first prompt. Confirm an icon then appears as running and returns to
 idle when the turn stops. Start a delegated agent, let the main turn become idle and confirm
 the background icon remains until that agent stops. Archive or end the Codex session and
-confirm the icon and any subagent state disappear. If nothing moves after a prompt, check
+confirm it returns to idle without retaining subagent state; when Codex itself exits, confirm
+the icon disappears after the pane returns to its shell. If nothing moves after a prompt, check
 that `tmux show -gqv @tama_bin` prints the plugin's executable path and use `/hooks` to
 confirm the definitions are trusted.
 
