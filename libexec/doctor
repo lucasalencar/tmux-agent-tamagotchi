@@ -349,13 +349,32 @@ doctor_status_line_mentions() { # <value> <option name>
   return 1
 }
 
+doctor_status_summary_policy() { # <option name> <fallback>
+  local value
+  if ! value="$(tmux_run show -gv "$1" 2>/dev/null)"; then
+    return 0
+  fi
+  case "$value" in
+    always | nonzero | never) return 0 ;;
+  esac
+  doctor_warn "$1 is '$value'"
+  doctor_more "The effective fallback is $2. Supported values are always, nonzero, and never."
+}
+
 doctor_status_summary_scope() {
   doctor_section 'the status summary'
 
   if [ "$TAMA_DOCTOR_SERVER" = 'no' ]; then
-    doctor_more 'No server to read @tama_summary_scope from; its fallback is current.'
+    doctor_more 'No server to read summary configuration from; defaults are in effect.'
     return 0
   fi
+
+  doctor_status_summary_policy @tama_summary_show_running always
+  doctor_status_summary_policy @tama_summary_show_waiting always
+  doctor_status_summary_policy @tama_summary_show_idle always
+  doctor_status_summary_policy @tama_summary_show_background nonzero
+  doctor_status_summary_policy @tama_summary_show_error nonzero
+  doctor_status_summary_policy @tama_summary_show_unknown nonzero
 
   local sessions record session_id session_name scope
   sessions="$(tmux_run list-sessions -F '#{session_id}|#{session_name}' 2>/dev/null)" || return 0

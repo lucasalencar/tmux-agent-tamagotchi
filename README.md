@@ -86,6 +86,26 @@ unique agent panes in that session. `all` counts unique panes across the current
 server, including detached sessions; linked windows and additional clients do not multiply
 the count.
 
+The summary renders buckets in running, waiting, idle, background, error, then unknown
+order. Running, waiting, and idle remain visible at zero; background, error, and unknown
+are hidden at zero. An unsupported nonempty reported state appears under unknown with `?`
+as its default icon. Empty reported states are not agent panes and remain excluded.
+
+Each bucket's `@tama_summary_show_<state>` option accepts `always`, `nonzero`, or `never`.
+The defaults are `always` for running, waiting, and idle, and `nonzero` for background,
+error, and unknown. An invalid value falls back to that bucket's default and `doctor`
+reports a successful warning. The unknown icon and complete composition are configurable:
+
+```tmux
+set -g @tama_icon_unknown '?'
+set -g @tama_summary_prefix ''
+set -g @tama_summary_separator ' '
+set -g @tama_summary_suffix ''
+```
+
+The five supported buckets reuse `@tama_icon_<state>` literally, including tmux styles.
+Each bucket is its icon, one space, and its count; counts have no separate style option.
+
 The following optional recipe binds `prefix` + <kbd>G</kbd> to toggle the scope of the
 session displayed by that client. The session id is passed explicitly so linked windows
 cannot make the target ambiguous:
@@ -161,6 +181,7 @@ It checks:
 
 - tmux version and plugin loading;
 - status-line configuration;
+- status-summary scope and bucket policies;
 - selected backend and notifier binary;
 - terminal-title configuration;
 - Claude Code hook configuration.
@@ -183,7 +204,7 @@ option map.
 | Group | Options |
 | --- | --- |
 | Icons | `@tama_icon_set`, `@tama_icon_running`, `@tama_icon_waiting`, `@tama_icon_background`, `@tama_icon_idle`, `@tama_icon_error`, `@tama_show_idle`, `@tama_show_background`, `@tama_icon_prefix`, `@tama_icon_separator`, `@tama_icon_suffix` |
-| Status summary | `@tama_summary_scope` (`current` or `all`, per session) |
+| Status summary | `@tama_summary_scope` (`current` or `all`, per session), `@tama_summary_show_running`, `@tama_summary_show_waiting`, `@tama_summary_show_idle`, `@tama_summary_show_background`, `@tama_summary_show_error`, `@tama_summary_show_unknown`, `@tama_icon_unknown`, `@tama_summary_prefix`, `@tama_summary_separator`, `@tama_summary_suffix` |
 | Window mark | `@tama_flag_text` |
 | Notifications | `@tama_notifications`, `@tama_backend`, `@tama_title_format`, `@tama_group_format`, `@tama_label_command` |
 | Focus suppression | `@tama_suppress_when_focused` |

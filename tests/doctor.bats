@@ -111,6 +111,29 @@ cc_settings_into() { # <path> <event…>
   assert_output_contains 'no problems and 1 warning'
 }
 
+@test "doctor warns successfully about every invalid summary bucket policy and its fallback" {
+  healthy_server
+  test_tmux set -g @tama_summary_show_running sometimes
+  test_tmux set -g @tama_summary_show_waiting sometimes
+  test_tmux set -g @tama_summary_show_idle sometimes
+  test_tmux set -g @tama_summary_show_background sometimes
+  test_tmux set -g @tama_summary_show_error sometimes
+  test_tmux set -g @tama_summary_show_unknown sometimes
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_summary_show_running'
+  assert_output_contains '@tama_summary_show_waiting'
+  assert_output_contains '@tama_summary_show_idle'
+  assert_output_contains '@tama_summary_show_background'
+  assert_output_contains '@tama_summary_show_error'
+  assert_output_contains '@tama_summary_show_unknown'
+  assert_output_contains "'sometimes'"
+  assert_output_contains 'always'
+  assert_output_contains 'nonzero'
+  assert_output_contains 'no problems and 6 warnings'
+}
+
 @test "a tmux older than the minimum is broken and exits non-zero" {
   healthy_server
   tama_use_fake_tmux '3.0'

@@ -114,11 +114,21 @@ Configuration (defaults shown):
   set -g @tama_icon_background '⚙'
   set -g @tama_icon_idle '○'
   set -g @tama_icon_error '✕'
+  set -g @tama_icon_unknown '?'
   set -g @tama_show_idle on
   set -g @tama_show_background on
   set -g @tama_icon_prefix ' '
   set -g @tama_icon_separator ''
   set -g @tama_icon_suffix ''
+  set -g @tama_summary_show_running always
+  set -g @tama_summary_show_waiting always
+  set -g @tama_summary_show_idle always
+  set -g @tama_summary_show_background nonzero
+  set -g @tama_summary_show_error nonzero
+  set -g @tama_summary_show_unknown nonzero
+  set -g @tama_summary_prefix ''
+  set -g @tama_summary_separator ' '
+  set -g @tama_summary_suffix ''
   set -g @tama_notifications on
   set -g @tama_backend auto        # auto, macos, libnotify, none, or absolute path
   set -g @tama_title_format '$TAMA_NOTIFY_TITLE_DEFAULT'

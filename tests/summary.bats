@@ -46,6 +46,78 @@ session_id() {
   assert_equal "$output" '● 0 ◐ 0 ○ 0'
 }
 
+@test "summary renders unsupported nonempty reported states in the unknown bucket" {
+  local unknown ordinary
+  unknown="$(tama_pane_of t:0)"
+  ordinary="$(test_tmux split-window -d -P -F '#{pane_id}' -t t:0)"
+  set_pane_state "$unknown" surprised
+  test_tmux set -p -t "$ordinary" @tama_pane_state_main ''
+
+  run "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
+  assert_success
+  assert_equal "$output" '● 0 ◐ 0 ○ 0 ? 1'
+}
+
+@test "summary uses the configured unknown icon literally" {
+  local unknown
+  unknown="$(tama_pane_of t:0)"
+  set_pane_state "$unknown" surprised
+  test_tmux set -g @tama_icon_unknown '#[fg=magenta]U'
+
+  run "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
+  assert_success
+  assert_equal "$output" '● 0 ◐ 0 ○ 0 ##[fg=magenta]U 1'
+}
+
+@test "summary applies always nonzero and never independently to every bucket" {
+  local waiting
+  waiting="$(tama_pane_of t:0)"
+  set_pane_state "$waiting" waiting
+  test_tmux set -g @tama_summary_show_running never
+  test_tmux set -g @tama_summary_show_waiting nonzero
+  test_tmux set -g @tama_summary_show_idle never
+  test_tmux set -g @tama_summary_show_background always
+  test_tmux set -g @tama_summary_show_error always
+  test_tmux set -g @tama_summary_show_unknown always
+
+  run "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
+  assert_success
+  assert_equal "$output" '◐ 1 ⚙ 0 ✕ 0 ? 0'
+}
+
+@test "summary composes configured prefix separator and suffix around literal styled icons" {
+  local running
+  running="$(tama_pane_of t:0)"
+  set_pane_state "$running" running
+  test_tmux set -g @tama_icon_running '#[fg=green]R'
+  test_tmux set -g @tama_icon_waiting '#[fg=yellow]W'
+  test_tmux set -g @tama_icon_idle '#[fg=white]I'
+  test_tmux set -g @tama_icon_background '#[fg=cyan]B'
+  test_tmux set -g @tama_icon_error '#[fg=red]E'
+  test_tmux set -g @tama_summary_show_background always
+  test_tmux set -g @tama_summary_show_error always
+  test_tmux set -g @tama_summary_prefix '#[bold]<'
+  test_tmux set -g @tama_summary_separator '#[default]|'
+  test_tmux set -g @tama_summary_suffix '>#[nobold]'
+
+  run "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
+  assert_success
+  assert_equal "$output" '##[bold]<##[fg=green]R 1##[default]|##[fg=yellow]W 0##[default]|##[fg=white]I 0##[default]|##[fg=cyan]B 0##[default]|##[fg=red]E 0>##[nobold]'
+}
+
+@test "summary falls back independently from invalid bucket policies" {
+  test_tmux set -g @tama_summary_show_running sometimes
+  test_tmux set -g @tama_summary_show_waiting sometimes
+  test_tmux set -g @tama_summary_show_idle sometimes
+  test_tmux set -g @tama_summary_show_background sometimes
+  test_tmux set -g @tama_summary_show_error sometimes
+  test_tmux set -g @tama_summary_show_unknown sometimes
+
+  run "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
+  assert_success
+  assert_equal "$output" '● 0 ◐ 0 ○ 0'
+}
+
 @test "summary counts only agent panes in the requested session" {
   local stale cleared ordinary elsewhere
   stale="$(tama_pane_of t:0)"
