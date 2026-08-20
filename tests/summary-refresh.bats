@@ -89,9 +89,43 @@ session_id() {
   refute_tmux_command refresh-client
 
   tama_log_tmux_calls
+  run "$PLUGIN_ROOT/bin/tama" state subagent-stop child --pane "$pane"
+  assert_success
+  assert_equal "$(grep -cx refresh-client "$TAMA_FAKE_TMUX_LOG")" 1
+  assert_equal "$("$PLUGIN_ROOT/bin/tama" summary "$(session_id t)")" '● 0 ◐ 0 ○ 1'
+
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start child --pane "$pane"
+  assert_success
+  tama_log_tmux_calls
   run "$PLUGIN_ROOT/bin/tama" state clear --pane "$pane"
   assert_success
   assert_equal "$(grep -cx refresh-client "$TAMA_FAKE_TMUX_LOG")" 1
+  assert_equal "$("$PLUGIN_ROOT/bin/tama" summary "$(session_id t)")" '● 0 ◐ 0 ○ 0'
+}
+
+@test "gc refreshes each affected window once when clearing multiple panes" {
+  local first second third first_client other_client
+  first="$(tama_pane_of t:0)"
+  test_tmux split-window -d -t t:0
+  second="$(test_tmux list-panes -t t:0 -F '#{pane_id}' | tail -n 1)"
+  test_tmux new-session -d -s other
+  third="$(tama_pane_of other:0)"
+  attach_client t first_client
+  attach_client other other_client
+  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$first"
+  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$second"
+  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$third"
+  test_tmux set-option -p -t "$first" @tama_pane_cmd definitely-stale
+  test_tmux set-option -p -t "$second" @tama_pane_cmd definitely-stale
+  test_tmux set-option -p -t "$third" @tama_pane_cmd definitely-stale
+
+  tama_log_tmux_calls
+  run "$PLUGIN_ROOT/bin/tama" gc --all
+  assert_success
+
+  assert_equal "$(grep -cx refresh-client "$TAMA_FAKE_TMUX_LOG")" 2
+  assert_equal "$(grep -cx -- "$first_client" "$TAMA_FAKE_TMUX_LOG")" 1
+  assert_equal "$(grep -cx -- "$other_client" "$TAMA_FAKE_TMUX_LOG")" 1
   assert_equal "$("$PLUGIN_ROOT/bin/tama" summary "$(session_id t)")" '● 0 ◐ 0 ○ 0'
 }
 
