@@ -44,9 +44,11 @@ inside its own directory so its toolchain does not become a core requirement (AD
 
 Nothing about the CLI is private, so any hook system that can run a command can drive it:
 `tama state running|waiting|idle|error|clear`, plus `tama state subagent-start|stop <id>`,
-and `tama notify <agent> <message>` for the events that should also raise a banner. Every
-recipe follows the same shape, which keeps working when the plugin moves and stays quiet on
-a machine where it is not installed (ADR-0003):
+and `tama notify <agent> <message>` for the events that should also raise a banner. An
+integration whose provider exposes a complete live-subagent snapshot may replace the tracked
+set with `tama state subagent-reconcile [<id>…]`; incremental or ambiguous data must keep using
+start and stop events. Every recipe follows the same shape, which keeps working when the plugin
+moves and stays quiet on a machine where it is not installed (ADR-0003):
 
 ```sh
 [ -n "$TMUX" ] || exit 0

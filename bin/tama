@@ -74,6 +74,8 @@ Commands:
   state <state> [name]  Set pane state: running, waiting, idle, error, or clear.
   state subagent-start <id> / subagent-stop <id>
                         Track a delegated run by opaque id.
+  state subagent-reconcile [<id>…]
+                        Replace delegated runs from an authoritative snapshot.
   icons <window_id>     Print pane-state icons in pane order.
   flag [target]         Mark a window. No-op for the current window.
   unflag [target]       Clear a window mark.
