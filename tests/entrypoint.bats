@@ -188,6 +188,19 @@ unwire_hooks() {
   assert_equal "$(tama_render_icons "$(test_tmux display-message -p -t "$pane" '#{window_id}')")" ' ●'
 }
 
+@test "loading exports a session summary without rewriting status-left" {
+  test_tmux set -g status-left 'mine #{session_name}'
+  local pane
+  pane="$(tama_pane_of t:0)"
+  test_tmux set -p -t "$pane" @tama_pane_state_main running
+
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+
+  assert_equal "$(test_tmux show -gv status-left)" 'mine #{session_name}'
+  assert_equal "$(tama_render_summary t)" '● 1 ◐ 0 ○ 0'
+}
+
 @test "the exported options are reachable from a tmux format" {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success

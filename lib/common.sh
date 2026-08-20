@@ -104,6 +104,16 @@ _tama_require_lib "$_tama_lib_dir/options.sh"
 # shellcheck source=options.sh
 . "$_tama_lib_dir/options.sh"
 
+_tama_require_lib "$_tama_lib_dir/inventory.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=inventory.sh
+. "$_tama_lib_dir/inventory.sh"
+
+_tama_require_lib "$_tama_lib_dir/state-icons.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=state-icons.sh
+. "$_tama_lib_dir/state-icons.sh"
+
 _tama_require_lib "$_tama_lib_dir/pane.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=pane.sh

@@ -97,8 +97,12 @@ main() {
       # clone would otherwise keep running that clone, once per window per status
       # interval, while this message says the icons are off.
       tmux_run set -guq @tama_icons
+      tmux_run set -guq @tama_status_summary
       ;;
-    *) tmux_run set -g @tama_icons '#(#{q:@tama_bin} icons #{window_id})' ;;
+    *)
+      tmux_run set -g @tama_icons '#(#{q:@tama_bin} icons #{window_id})'
+      tmux_run set -g @tama_status_summary '#(#{q:@tama_bin} summary #{q:session_id})'
+      ;;
   esac
 
   # The flag, as a second format the user interpolates wherever they want it. Unlike

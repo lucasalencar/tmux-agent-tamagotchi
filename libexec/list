@@ -57,20 +57,20 @@ tama_list_records() { # [session_name_or_id]
 #{@tama_pane_subagents}
 #{@tama_pane_label}
 .'
-  sessions="$(tmux_run list-sessions -F '#{session_id}' 2>/dev/null)" || return 1
+  sessions="$(tama_inventory_sessions)" || return 1
   [ -n "$sessions" ] || return 0
 
   # tmux 3.4 escapes control characters embedded in -F formats. Enumerate only
   # stable IDs there, then use the project's newline-field reader for values.
   # Reading through the session/window pair preserves each linked-window record.
   while IFS= read -r session_id; do
-    windows="$(tmux_run list-windows -t "$session_id" -F '#{window_id}' 2>/dev/null)" || return 1
+    windows="$(tama_inventory_windows "$session_id")" || return 1
     while IFS= read -r window_id; do
       tama_list_read_window "${session_id}:${window_id}" "$window_fields" || return 1
       if [ -n "$session" ] && [ "$session" != "$TAMA_LIST_SESSION_NAME" ] && [ "$session" != "$TAMA_LIST_SESSION_ID" ]; then
         continue
       fi
-      panes="$(tmux_run list-panes -t "$window_id" -F '#{pane_id}' 2>/dev/null)" || return 1
+      panes="$(tama_inventory_panes "$window_id")" || return 1
       while IFS= read -r pane_id; do
         tama_list_read_pane "$pane_id" "$pane_fields" || return 1
         [ -n "$TAMA_LIST_STATE" ] || continue
@@ -92,7 +92,7 @@ EOF
 
 tama_list_read_window() { # <session:window> <fields>
   local raw field lines=0
-  raw="$(tama_fields_read "$1" "$2")" || return 1
+  raw="$(tama_inventory_fields "$1" "$2")" || return 1
   while IFS= read -r field; do
     lines=$((lines + 1))
     case "$lines" in
@@ -110,7 +110,7 @@ EOF
 
 tama_list_read_pane() { # <pane_id> <fields>
   local raw field lines=0
-  raw="$(tama_fields_read "$1" "$2")" || return 1
+  raw="$(tama_inventory_fields "$1" "$2")" || return 1
   while IFS= read -r field; do
     lines=$((lines + 1))
     case "$lines" in

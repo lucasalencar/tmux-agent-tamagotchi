@@ -314,6 +314,23 @@ tama_render_icons() {
   sh -c "$command"
 }
 
+# The session summary as exported for composition into status-left.
+tama_render_summary() { # <session target>
+  local job command
+  job="$(test_tmux show -gqv @tama_status_summary)"
+  case "$job" in
+    '#('*')') ;;
+    *)
+      printf 'expected @tama_status_summary to be a #() job, got: %s\n' "$job" >&2
+      return 1
+      ;;
+  esac
+  job="${job#'#('}"
+  job="${job%%')'*}"
+  command="$(test_tmux display-message -p -t "$1" "$job")"
+  sh -c "$command"
+}
+
 # Attaches a real client to <session>, without a terminal.
 #
 # The flag's whole condition is whether the user is looking, and half of that is

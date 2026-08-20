@@ -81,6 +81,7 @@ Commands:
   dismiss [target]      Dismiss a window notification.
   focus-window <sess>   Focus the terminal showing a tmux session.
   list [--session <s>]  List agent panes as stable, headerless TSV.
+  summary <session_id>  Count agent panes by state for one session.
   gc [--all]            Clear stale pane state. Default: current window.
   on-select [--all]     Clear mark, dismiss notification, and run gc.
   doctor                Print installation diagnostics. Exit 1 on failure.

@@ -85,6 +85,7 @@ tama_icons_defaults() {
 # Where each option's value lands, by the position it was read in. Deliberately
 # next to the list above: a name added to one and not the other would leave every
 # window drawing the defaults with nothing to say why.
+# shellcheck disable=SC2034  # inputs are consumed by lib/state-icons.sh
 tama_icons_take() { # <index> <found: 0|1> <value>
   case "$1" in
     0) TAMA_ICON_SET="$3" ;;
@@ -115,27 +116,7 @@ tama_icons_take() { # <index> <found: 0|1> <value>
 # A preset name nobody recognises draws the default set rather than nothing: a
 # typo in an option should not empty the status line it was meant to decorate.
 tama_icons_resolve() {
-  case "$TAMA_ICON_SET" in
-    pets)
-      TAMA_GLYPH_RUNNING='🐥' TAMA_GLYPH_WAITING='🍼' TAMA_GLYPH_BACKGROUND='🥚'
-      TAMA_GLYPH_IDLE='😴' TAMA_GLYPH_ERROR='💀'
-      ;;
-    ascii)
-      TAMA_GLYPH_RUNNING='*' TAMA_GLYPH_WAITING='?' TAMA_GLYPH_BACKGROUND='+'
-      TAMA_GLYPH_IDLE='.' TAMA_GLYPH_ERROR='!'
-      ;;
-    *)
-      TAMA_GLYPH_RUNNING='●' TAMA_GLYPH_WAITING='◐' TAMA_GLYPH_BACKGROUND='⚙'
-      TAMA_GLYPH_IDLE='○' TAMA_GLYPH_ERROR='✕'
-      ;;
-  esac
-
-  [ "$TAMA_ICON_HAS_RUNNING" = 0 ] || TAMA_GLYPH_RUNNING="$TAMA_ICON_RUNNING"
-  [ "$TAMA_ICON_HAS_WAITING" = 0 ] || TAMA_GLYPH_WAITING="$TAMA_ICON_WAITING"
-  [ "$TAMA_ICON_HAS_BACKGROUND" = 0 ] || TAMA_GLYPH_BACKGROUND="$TAMA_ICON_BACKGROUND"
-  [ "$TAMA_ICON_HAS_IDLE" = 0 ] || TAMA_GLYPH_IDLE="$TAMA_ICON_IDLE"
-  [ "$TAMA_ICON_HAS_ERROR" = 0 ] || TAMA_GLYPH_ERROR="$TAMA_ICON_ERROR"
-
+  tama_state_icons_resolve
   # The prefix separates the icons from the window name; the space is only a
   # default, and an empty one is a user who put the icons somewhere else.
   [ "$TAMA_ICON_HAS_PREFIX" = 1 ] || TAMA_ICON_PREFIX=' '
