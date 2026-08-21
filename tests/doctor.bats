@@ -565,8 +565,22 @@ cc_settings_into() { # <path> <event…>
   assert_success
   assert_output_contains 'no terminal window title matches the session'
   assert_output_contains 'switch-client'
+  assert_output_contains 'if one exists'
   assert_output_contains 'an arbitrary client attached to another session'
   assert_output_contains 'cannot predict which client a future click would choose'
+}
+
+@test "auto-selected macOS focus gets the fallback diagnosis" {
+  require_darwin
+  healthy_server
+  test_tmux set -gu @tama_backend
+  notifier_on_path terminal-notifier
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'backend: macos'
+  assert_output_contains 'the focus action'
+  assert_output_contains 'no terminal window title matches the session'
 }
 
 @test "a focus override does not inherit the macOS backend fallback diagnosis" {

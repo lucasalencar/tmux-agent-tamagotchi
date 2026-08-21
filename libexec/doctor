@@ -771,11 +771,18 @@ doctor_program() { # <command line>
 # ---------------------------------------------------------------------------
 
 doctor_focus() {
-  doctor_section 'the focus check'
+  doctor_focus_action
+  doctor_focus_check
+}
 
-  if doctor_uses_macos_focus; then
-    doctor_focus_fallback
-  fi
+doctor_focus_action() {
+  doctor_uses_macos_focus || return 0
+  doctor_section 'the focus action'
+  doctor_focus_fallback
+}
+
+doctor_focus_check() {
+  doctor_section 'the focus check'
 
   if ! tama_opt_enabled tama_suppress_when_focused on; then
     doctor_ok '@tama_suppress_when_focused is off: every banner is delivered'
@@ -838,7 +845,7 @@ doctor_uses_macos_focus() {
 # unrelated terminal changing sessions diagnosable.
 doctor_focus_fallback() {
   doctor_more 'When no terminal window title matches the session, a click falls back to'
-  doctor_more '`tmux switch-client`: it repurposes an arbitrary client attached to another session.'
+  doctor_more '`tmux switch-client`: if one exists, it repurposes an arbitrary client attached to another session.'
   doctor_more 'Doctor cannot predict which client a future click would choose; the choice is made'
   doctor_more 'at click time from the clients then attached to other sessions.'
 }
