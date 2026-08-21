@@ -12,6 +12,30 @@ hold a release of the plugin, and the fix reaches you by pulling the plugin rath
 editing the settings below. An event a version of this adapter does not recognise is ignored
 in silence.
 
+## Requirement: jq
+
+This integration requires `jq` to validate the complete background-task snapshots Claude
+Code sends. The core plugin and the other integrations do not require it. Install it through
+the platform package manager before wiring the hooks:
+
+```sh
+# macOS
+brew install jq
+
+# Debian or Ubuntu
+sudo apt-get install jq
+
+# Fedora
+sudo dnf install jq
+
+# Arch Linux
+sudo pacman -S jq
+```
+
+TPM installs tmux plugins, not system packages, so it deliberately does not run these commands.
+After wiring the integration, `tama doctor` verifies that `jq` can run and repeats the relevant
+installation commands when it cannot.
+
 Paste the block below into your Claude Code settings — `~/.claude/settings.json` for every
 project, `.claude/settings.json` for one — and the icons move on their own. If you already
 have a `hooks` key, merge these entries into it; Claude Code merges hooks across settings

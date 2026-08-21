@@ -36,9 +36,10 @@ track agents that change on their own schedule, so:
 - an event an adapter does not recognise is ignored in silence, so a configuration written
   against a newer plugin stays harmless on an older one.
 
-Shell adapters add no dependency the plugin does not already have — in particular, none of them
-uses `jq` (ADR-0001). A native integration keeps its runtime, dependencies, lockfile, and tests
-inside its own directory so its toolchain does not become a core requirement (ADR-0010).
+An adapter may own a provider-specific dependency without making it a core requirement. The
+Claude Code adapter requires `jq` for its provider snapshots; Codex does not. A native
+integration keeps its runtime, dependencies, lockfile, and tests inside its own directory so
+its toolchain does not become a core requirement (ADR-0010, ADR-0013).
 
 ## Wiring an agent that has no adapter here
 

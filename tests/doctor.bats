@@ -46,6 +46,14 @@ notifier_on_path() { # <name>
   export PATH
 }
 
+broken_jq_on_path() {
+  local bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$bin"
+  ln -sf /usr/bin/false "$bin/jq"
+  PATH="$bin:$PATH"
+  export PATH
+}
+
 # Everything the README's block wires, so a settings file can be written with one event
 # left out on purpose.
 CC_EVENTS='SessionStart UserPromptSubmit PostToolUse PostToolUseFailure PermissionRequest
@@ -627,6 +635,20 @@ cc_settings_into() { # <path> <event…>
   assert_output_contains 'no problems and no warnings'
 }
 
+@test "wired Claude Code hooks require a working jq" {
+  healthy_server
+  cc_settings_without
+  broken_jq_on_path
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+
+  assert_status 1
+  assert_output_contains 'jq is not available'
+  assert_output_contains 'brew install jq'
+  assert_output_contains 'apt-get install jq'
+  assert_output_contains 'something here is broken'
+}
+
 @test "an event is wired only by the canonical command" {
   healthy_server
   mkdir -p "$CLAUDE_CONFIG_DIR"
@@ -678,10 +700,12 @@ cc_settings_into() { # <path> <event…>
 
 @test "a machine with no Claude Code settings at all is not a broken machine" {
   healthy_server
+  broken_jq_on_path
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains 'no Claude Code settings file found'
+  refute_output_contains 'jq is not available'
 }
 
 @test "a project's settings are found from a subdirectory of it, not only from its root" {

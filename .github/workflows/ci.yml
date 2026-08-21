@@ -63,7 +63,7 @@ jobs:
         os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@v4
-      - name: Install tmux and bats (Linux)
+      - name: Install tmux, bats and jq (Linux)
         # No libnotify-bin, for the reason there is no terminal-notifier below: a real
         # `notify-send` would give any test that reaches the notify path a live D-Bus call
         # to make. Nothing depends on whether the image happens to carry one — every test
@@ -72,17 +72,18 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y tmux bats
-      - name: Install tmux and bats (macOS)
+          sudo apt-get install -y tmux bats jq
+      - name: Install tmux, bats and jq (macOS)
         # No terminal-notifier: `auto` must resolve to the no-op backend on a machine
         # with no notifier, and that is a claim the suite makes. The macOS backend's own
         # tests point `@tama_terminal_notifier` at a fixture instead.
         if: runner.os == 'macOS'
-        run: brew install tmux bats-core
+        run: brew install tmux bats-core jq
       - name: Report versions
         run: |
           tmux -V
           bats --version
+          jq --version
           bash --version | head -1
           /bin/bash --version | head -1
       - run: make test

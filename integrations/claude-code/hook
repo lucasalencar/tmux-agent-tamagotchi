@@ -37,8 +37,8 @@ TAMA_CC_AGENT='claude-code'
 # `background_tasks`, the provider's complete live-task registry when available.
 #
 # This is the residue ADR-0001 predicted and put in `integrations/`: the *core*
-# CLI takes arguments and never reads stdin, and `jq` is not a dependency of the
-# plugin. So the extraction below is deliberately not a JSON parser. It comes in
+# CLI takes arguments and never reads stdin. The bounded token and text extraction
+# below stays deliberately narrower than a JSON parser. It comes in
 # two halves, because the fields come in two kinds: `cc_field` for the opaque
 # tokens, which needs no idea of escaping at all, and `cc_text_field` for the two
 # free-text fields, which does. A field either cannot find is a field the adapter
@@ -300,8 +300,8 @@ cc_is_delegated() {
 # evidence that can heal a started id whose matching stop never arrived. Missing,
 # truncated, malformed, or ambiguous input must preserve the conservative set.
 #
-# The core remains payload-agnostic (ADR-0001). The recognizer lives beside this
-# adapter and uses only POSIX awk; jq remains unnecessary.
+# The core remains payload-agnostic (ADR-0001). jq owns the JSON grammar here;
+# this adapter only states what makes the provider snapshot authoritative.
 cc_background_tasks_prove_no_subagents() {
   cc_read_payload
   # Older Claude Code payloads normally stop here without paying for the parser.
@@ -313,9 +313,15 @@ cc_background_tasks_prove_no_subagents() {
   # to close cleanly, so it cannot be authoritative.
   [ "${#TAMA_CC_PAYLOAD}" -lt "$TAMA_CC_PAYLOAD_MAX" ] || return 1
 
-  printf '%s\n' "$TAMA_CC_PAYLOAD" |
-    LC_ALL=C awk -f "$TAMA_PLUGIN_DIR/integrations/claude-code/background-tasks.awk" \
-      2>/dev/null
+  printf '%s\n' "$TAMA_CC_PAYLOAD" | jq -e '
+    (.background_tasks | type) == "array" and
+    all(.background_tasks[];
+      type == "object" and
+      (.type |
+        type == "string" and
+        test("^[A-Za-z0-9_-]+$") and
+        . != "subagent"))
+  ' >/dev/null 2>&1
 }
 
 cc_reconcile_subagents_if_authoritative() { # [args…]
