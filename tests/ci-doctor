@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -o errexit
+set -o nounset
+
+# shellcheck source=tests/helper.bash
+. "${BASH_SOURCE[0]%/*}/helper.bash"
+
+cleanup() {
+  local result=$?
+  trap - EXIT HUP INT TERM
+  tama_kill_server || exit 1
+  exit "$result"
+}
+
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+tama_start_server
+"$PLUGIN_ROOT/tamagotchi.tmux"
+"$PLUGIN_ROOT/bin/tama" doctor

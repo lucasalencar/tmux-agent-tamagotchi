@@ -88,6 +88,19 @@ jobs:
           /bin/bash --version | head -1
       - run: make test
 
+  doctor:
+    name: doctor (Ubuntu)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux
+      - name: Report version
+        run: tmux -V
+      - run: make doctor
+
   opencode:
     name: OpenCode integration (Bun 1.3.14)
     runs-on: ubuntu-24.04

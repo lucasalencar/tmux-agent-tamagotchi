@@ -4,12 +4,12 @@
 # pastes a path to, and an example shellcheck never saw is one that breaks on them.
 # examples/demo.tmux.conf is tmux configuration rather than shell and is not
 # executable, so the find below leaves it alone.
-SHELL_DIRS := $(wildcard bin lib libexec backends integrations examples tests/fixtures)
+SHELL_DIRS := $(wildcard bin lib libexec backends integrations examples tests)
 SHELL_FILES := tamagotchi.tmux tests/helper.bash \
 	$(shell find $(SHELL_DIRS) -path '*/node_modules' -prune -o \
-		-type f \( -perm -u+x -o -name '*.sh' \) -print | sort)
+		-type f ! -name '*.bats' \( -perm -u+x -o -name '*.sh' \) -print | sort)
 
-.PHONY: all lint test
+.PHONY: all lint test doctor
 
 all: lint test
 
@@ -20,3 +20,6 @@ lint:
 
 test:
 	bats -r tests
+
+doctor:
+	@tests/ci-doctor

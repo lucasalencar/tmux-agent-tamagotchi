@@ -320,10 +320,12 @@ clicks do not inherit the hook environment.
 ```sh
 make lint
 make test
+make doctor
 make
 ```
 
-CI runs shellcheck and the bats suite on Ubuntu and macOS.
+CI runs ShellCheck and the Bats suite on Ubuntu and macOS, then loads the plugin into an
+isolated tmux server and runs `tama doctor` on Ubuntu.
 
 ## License
 
