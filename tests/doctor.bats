@@ -514,6 +514,19 @@ cc_settings_into() { # <path> <event…>
 
 # --- the focus check ---------------------------------------------------------------
 
+@test "the focus diagnosis does not claim a bundle id controls the click" {
+  healthy_server
+  test_tmux set -g @tama_backend macos
+  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  test_tmux set -g @tama_terminal_app Ghostty
+  test_tmux set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'terminal: Ghostty (@tama_terminal_app)'
+  refute_output_contains 'bundle id'
+}
+
 @test "a title configuration the focus check cannot match warns, and says it fails toward noise" {
   healthy_server
   test_tmux set -g @tama_backend macos
