@@ -1,4 +1,4 @@
-# tmux-agent-tamagotchi
+# 🐥 tmux-agent-tamagotchi
 
 A tmux plugin for monitoring AI coding agents running in different panes.
 
