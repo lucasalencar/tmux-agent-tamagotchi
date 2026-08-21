@@ -780,17 +780,17 @@ doctor_focus() {
     return 0
   fi
 
-  tama_backend_export_terminal
-  doctor_ok "terminal: $TAMA_TERMINAL_APP (@tama_terminal_app)"
-  doctor_more 'The macOS backend identifies the application displaying a session by'
-  doctor_more 'that process name. Wrong, and the focus check never matches and a click'
-  doctor_more 'never raises your window.'
-
   # The title check is about the backend that matches on titles: the one shipped here.
   # A third-party backend's `focused` may identify a window any way it likes.
   if [ "${TAMA_BACKEND_DIR:-}" != "$TAMA_PLUGIN_DIR/backends/$TAMA_BACKEND_MACOS" ]; then
     return 0
   fi
+
+  tama_backend_export_terminal
+  doctor_ok "terminal: $TAMA_TERMINAL_APP (@tama_terminal_app)"
+  doctor_more 'The macOS backend identifies the application displaying a session by'
+  doctor_more 'that process name. Wrong, and the focus check never matches and a click'
+  doctor_more 'never raises your window.'
 
   if [ "$TAMA_DOCTOR_SERVER" = 'no' ]; then
     doctor_more 'No server to read set-titles from; see the setup section.'

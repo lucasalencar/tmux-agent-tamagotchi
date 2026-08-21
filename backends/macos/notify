@@ -41,11 +41,11 @@ main() {
   # ungrouped banner, not for an error.
   [ -z "${TAMA_GROUP:-}" ] || set -- "$@" -group "$TAMA_GROUP"
 
+  # Do not add terminal-notifier's -activate here. Activation sends the terminal a
+  # reopen event, which some terminals answer by creating a window or tab. The click
+  # action already ends in `tama focus-window`, which raises the existing terminal
+  # window without reopening the application.
   if [ -n "${TAMA_CLICK:-}" ]; then
-    # Do not add terminal-notifier's -activate here. Activation sends the terminal a
-    # reopen event, which some terminals answer by creating a window or tab. The click
-    # action already ends in `tama focus-window`, which raises the existing terminal
-    # window without reopening the application.
     # The one thing added to the click, and not a change to it: a `PATH`. terminal-
     # notifier is relaunched by launchd when the banner is clicked, minutes later, with
     # launchd's own minimal environment rather than the login shell's. The click line

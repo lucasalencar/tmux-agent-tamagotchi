@@ -89,6 +89,7 @@ run_click() { # <click command line>
   local pane window
   pane="$(tama_pane_of t:0)"
   window="$(tama_window_id t:0)"
+  test_tmux set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
@@ -100,6 +101,8 @@ run_click() { # <click command line>
   assert_backend_value notify env.TAMA_SESSION t
   assert_backend_value notify env.TAMA_AGENT claude-code
   assert_backend_value notify env.TAMA_GROUP "tmux-window-$window"
+  # Custom backends may use the bundle id even though the shipped backend does not.
+  assert_backend_value notify env.TAMA_TERMINAL_BUNDLE_ID net.kovidgoyal.kitty
   # So a backend can call back into the plugin without knowing where it lives.
   assert_backend_value notify env.TAMA_BIN "$PLUGIN_ROOT/bin/tama"
 }

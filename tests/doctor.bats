@@ -621,6 +621,7 @@ cc_settings_into() { # <path> <event…>
   assert_success
   assert_output_contains 'DBUS_SESSION_BUS_ADDRESS is not set'
   assert_output_contains 'every banner fails silently'
+  refute_output_contains 'The macOS backend identifies the application'
 }
 
 # --- Claude Code -------------------------------------------------------------------
