@@ -18,7 +18,7 @@ boot_demo() {
   local boot_status
   TAMA_DEMO_PLUGIN_DIR="$1"
   export TAMA_DEMO_PLUGIN_DIR
-  tama_start_tmux_server "${2:-$PLUGIN_ROOT/examples/demo.tmux.conf}" demo
+  tama_start_tmux_session "${2:-$PLUGIN_ROOT/examples/demo.tmux.conf}" demo
   boot_status=$?
   unset TAMA_DEMO_PLUGIN_DIR
   # The demo config deliberately leaves `@tama_backend auto`, which on the developer's

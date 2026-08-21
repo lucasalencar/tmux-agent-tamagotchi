@@ -45,7 +45,7 @@ tama_reserve_socket() {
 # Starts one named tmux session with its streams on files rather than the suite's
 # capture pipe, then records the server pid before returning. Only the short-lived
 # tmux client writes the pid file; the server never inherits a suite output stream.
-tama_start_tmux_server() { # <config> <session>
+tama_start_tmux_session() { # <config> <session>
   local config="$1" session="$2"
   local stdout_file stderr_file server_pid='' start_status=0
   stdout_file="${BATS_TEST_TMPDIR:-/tmp}/$TAMA_SOCKET-startup.out"
@@ -67,7 +67,7 @@ tama_start_tmux_server() { # <config> <session>
 }
 
 tama_start_server() {
-  tama_reserve_socket tamatest
+  tama_reserve_socket tamatest || return 1
   # The indirection goes into the environment *before* the server boots as well as
   # after, so that jobs the server spawns for itself — a status line `#()` format, a
   # hook — inherit it and cannot reach the user's tmux. $TMUX cannot be exported
@@ -77,7 +77,7 @@ tama_start_server() {
   # Loudly, because everything a test then arranges is built on this session being
   # this test's own. A `duplicate session` here would mean the socket is somebody
   # else's server, and every assertion after it would be about their windows.
-  tama_start_tmux_server /dev/null t || {
+  tama_start_tmux_session /dev/null t || {
     printf 'could not boot a tmux server on %s\n' "$TAMA_SOCKET" >&2
     return 1
   }
@@ -145,11 +145,9 @@ tama_kill_server() {
       fi
     fi
     test_tmux kill-server 2>/dev/null || true
-    if [ -n "$server_pid" ]; then
-      if ! tama_wait_for_server_exit "$server_pid"; then
-        tama_report_surviving_server
-        return 1
-      fi
+    if ! tama_wait_for_server_exit "$server_pid"; then
+      tama_report_surviving_server
+      return 1
     fi
     rm -f "$(tama_socket_dir)/$TAMA_SOCKET" || return 1
     unset TAMA_SOCKET TAMA_SERVER_PID
