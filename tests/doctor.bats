@@ -524,6 +524,7 @@ cc_settings_into() { # <path> <event…>
   assert_success
   assert_output_contains 'set-titles is'
   assert_output_contains 'extra banners, never missing ones'
+  assert_output_contains 'also prevents the first focus level from finding the session'
   assert_output_contains "set -g set-titles-string '#S'"
 }
 
@@ -552,13 +553,44 @@ cc_settings_into() { # <path> <event…>
   assert_output_contains "set-titles is on and set-titles-string is '#S'"
 }
 
+@test "the macOS focus diagnosis explains the fallback it cannot predict" {
+  healthy_server
+  test_tmux set -g @tama_backend macos
+  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  test_tmux set -g set-titles on
+  test_tmux set -g set-titles-string '#S'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'no terminal window title matches the session'
+  assert_output_contains 'switch-client'
+  assert_output_contains 'an arbitrary client attached to another session'
+  assert_output_contains 'cannot predict which client a future click would choose'
+}
+
+@test "a focus override does not inherit the macOS backend fallback diagnosis" {
+  healthy_server
+  test_tmux set -g @tama_backend macos
+  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  test_tmux set -g @tama_focus_command '/bin/true'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_focus_command replaces the focus capability'
+  refute_output_contains 'no terminal window title matches the session'
+  refute_output_contains 'switch-client'
+}
+
 @test "suppression turned off is reported as the deliberate thing it is" {
   healthy_server
+  test_tmux set -g @tama_backend macos
+  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
   test_tmux set -g @tama_suppress_when_focused off
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains 'every banner is delivered'
+  assert_output_contains 'no terminal window title matches the session'
 }
 
 @test "doctor reads a flag option the way the rest of the plugin reads it" {
