@@ -32,6 +32,11 @@ TAMA_ON_SPELLINGS='on yes 1 true offf'
 # somewhere else entirely, on a window index or a session name the leftover already
 # has. Kept short because a socket path has a length limit.
 tama_reserve_socket() {
+  if [ -n "${TAMA_SOCKET:-}" ]; then
+    printf 'cannot reserve another tmux socket before tearing down %s\n' \
+      "$TAMA_SOCKET" >&2
+    return 1
+  fi
   TAMA_SOCKET="$1-$$-${BATS_TEST_NUMBER:-0}-${RANDOM}"
   export TAMA_SOCKET
   unset TAMA_SERVER_PID
@@ -99,10 +104,15 @@ tama_point_at_server() {
 # it still addresses a live server: unlinking then would make the survivor impossible
 # for any later teardown to reach.
 tama_wait_for_server_exit() { # <pid>
-  local waited=0
+  local probed=0 waited=0
   # Five seconds is generous for normal tmux shutdown, while still turning a true
   # survivor into a prompt failure instead of another silent suite timeout.
   local attempts="${TAMA_SERVER_EXIT_WAIT_ATTEMPTS:-500}"
+  # Normal shutdown finishes within a few built-in probes. Give it CPU time without
+  # spawning one `sleep` process per test; back off only for a genuinely slow exit.
+  while kill -0 "$1" 2>/dev/null && [ "$probed" -lt 1000 ]; do
+    probed=$((probed + 1))
+  done
   while kill -0 "$1" 2>/dev/null && [ "$waited" -lt "$attempts" ]; do
     sleep 0.01
     waited=$((waited + 1))
@@ -115,11 +125,24 @@ tama_report_surviving_server() {
   return 1
 }
 
+tama_report_unknown_server() {
+  printf 'could not identify test tmux server on %s; socket preserved\n' \
+    "$TAMA_SOCKET" >&2
+  return 1
+}
+
 tama_kill_server() {
   if [ -n "${TAMA_SOCKET:-}" ]; then
     local server_pid="${TAMA_SERVER_PID:-}"
     if [ -z "$server_pid" ]; then
-      server_pid="$(test_tmux display-message -p '#{pid}' 2>/dev/null)" || server_pid=''
+      server_pid="$(test_tmux display-message -p '#{pid}' 2>/dev/null)" || {
+        tama_report_unknown_server
+        return 1
+      }
+      if [ -z "$server_pid" ]; then
+        tama_report_unknown_server
+        return 1
+      fi
     fi
     test_tmux kill-server 2>/dev/null || true
     if [ -n "$server_pid" ]; then
@@ -127,11 +150,8 @@ tama_kill_server() {
         tama_report_surviving_server
         return 1
       fi
-    elif test_tmux has-session 2>/dev/null; then
-      tama_report_surviving_server
-      return 1
     fi
-    rm -f "$(tama_socket_dir)/$TAMA_SOCKET"
+    rm -f "$(tama_socket_dir)/$TAMA_SOCKET" || return 1
     unset TAMA_SOCKET TAMA_SERVER_PID
   fi
 }
