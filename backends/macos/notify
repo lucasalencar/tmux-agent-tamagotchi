@@ -41,13 +41,11 @@ main() {
   # ungrouped banner, not for an error.
   [ -z "${TAMA_GROUP:-}" ] || set -- "$@" -group "$TAMA_GROUP"
 
-  # -activate brings the terminal forward on click by bundle id. It is not what makes
-  # the click land on the right pane — that is -execute — but it is what makes the
-  # terminal come forward even if the command line somehow does not run.
-  [ -z "${TAMA_TERMINAL_BUNDLE_ID:-}" ] ||
-    set -- "$@" -activate "$TAMA_TERMINAL_BUNDLE_ID"
-
   if [ -n "${TAMA_CLICK:-}" ]; then
+    # Do not add terminal-notifier's -activate here. Activation sends the terminal a
+    # reopen event, which some terminals answer by creating a window or tab. The click
+    # action already ends in `tama focus-window`, which raises the existing terminal
+    # window without reopening the application.
     # The one thing added to the click, and not a change to it: a `PATH`. terminal-
     # notifier is relaunched by launchd when the banner is clicked, minutes later, with
     # launchd's own minimal environment rather than the login shell's. The click line
