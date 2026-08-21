@@ -103,6 +103,7 @@ cc_settings_into() { # <path> <event…>
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains 'no problems and no warnings'
+  refute_output_contains 'switch-client'
 }
 
 @test "doctor reports that no label provider is configured" {
@@ -809,7 +810,7 @@ PROVIDER
   assert_output_contains 'used as given or not at all'
 }
 
-# --- the focus check ---------------------------------------------------------------
+# --- focus -------------------------------------------------------------------------
 
 @test "the focus diagnosis does not claim a bundle id controls the click" {
   healthy_server
@@ -834,6 +835,7 @@ PROVIDER
   assert_success
   assert_output_contains 'set-titles is'
   assert_output_contains 'extra banners, never missing ones'
+  assert_output_contains 'terminal window cannot be raised for the session'
   assert_output_contains "set -g set-titles-string '#S'"
 }
 
@@ -862,13 +864,82 @@ PROVIDER
   assert_output_contains "set-titles is on and set-titles-string is '#S'"
 }
 
+@test "the macOS focus diagnosis explains the fallback it cannot predict" {
+  healthy_server
+  test_tmux set -g @tama_backend macos
+  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  test_tmux set -g set-titles on
+  test_tmux set -g set-titles-string '#S'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'terminal window cannot be raised for the session'
+  assert_output_contains 'no title'
+  assert_output_contains 'macOS automation fails'
+  assert_output_contains 'switch-client'
+  assert_output_contains 'if one exists'
+  assert_output_contains 'an arbitrary client attached to another session'
+  assert_output_contains 'cannot predict which client a future click would choose'
+}
+
+@test "auto-selected macOS focus gets the fallback diagnosis" {
+  require_darwin
+  healthy_server
+  test_tmux set -gu @tama_backend
+  notifier_on_path terminal-notifier
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'backend: macos'
+  assert_output_contains 'the focus action'
+  assert_output_contains 'terminal window cannot be raised for the session'
+}
+
+@test "a focus override does not inherit the macOS backend fallback diagnosis" {
+  healthy_server
+  test_tmux set -g @tama_backend macos
+  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  test_tmux set -g @tama_focus_command '/bin/true'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_focus_command replaces the focus capability'
+  refute_output_contains 'terminal window cannot be raised for the session'
+  refute_output_contains 'switch-client'
+}
+
+@test "a non-executable macOS focus capability has no fallback to diagnose" {
+  healthy_server
+  local plugin="$BATS_TEST_TMPDIR/plugin"
+  tama_copy_plugin "$plugin"
+  chmod -x "$plugin/backends/macos/focus"
+  run "$plugin/tamagotchi.tmux"
+  assert_success
+  test_tmux set -g @tama_backend macos
+  test_tmux set -g @tama_terminal_notifier "$plugin/tests/fixtures/fake-notifier"
+
+  run "$plugin/bin/tama" doctor
+  assert_success
+  assert_output_contains 'no focus: a click selects the window and the pane but does not'
+  refute_output_contains 'terminal window cannot be raised for the session'
+  refute_output_contains 'switch-client'
+}
+
 @test "suppression turned off is reported as the deliberate thing it is" {
   healthy_server
+  test_tmux set -g @tama_backend macos
+  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
   test_tmux set -g @tama_suppress_when_focused off
+  test_tmux set -g set-titles off
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains 'every banner is delivered'
+  assert_output_contains 'terminal window cannot be raised for the session'
+  assert_output_contains 'terminal: ghostty (@tama_terminal_app)'
+  assert_output_contains "set-titles is 'off', so focus cannot reliably find the session's window"
+  assert_output_contains 'may therefore reach the switch-client fallback described above'
+  assert_output_contains "set -g set-titles-string '#S'"
 }
 
 @test "doctor reads a flag option the way the rest of the plugin reads it" {
