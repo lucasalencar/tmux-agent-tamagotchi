@@ -530,10 +530,8 @@ wait_until_no_icons() { # <window>
   # This test is about the focus path alone, so the attach hook is taken back off:
   # otherwise attaching below would clear the mark and this would pass without focus
   # ever arriving. The next test is the one that covers attaching.
-  test_tmux set-hook -gu client-attached
-
   # Attaching is not a selection: the mark is still there, which is the wart itself.
-  tama_attach_client other
+  tama_attach_client_without_attach_hook other
   assert_flagged "$target"
 
   # The user's terminal comes to the front. `-R` runs the hook the way tmux does when

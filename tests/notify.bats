@@ -139,7 +139,9 @@ run_click() { # <click command line>
   # The failure this plugin cannot afford: tmux says the user is on that window, and it
   # is wrong, because the terminal is minimized. The backend is the only thing that
   # knows, and its no is enough on its own.
-  tama_attach_client t
+  # This test is about focus suppression, so leave client-attached to its coverage in
+  # gc.bats; its asynchronous on-select would race the mark asserted below.
+  tama_attach_client_without_attach_hook t
   export TAMA_FAKE_FOCUSED=1
 
   local pane window
@@ -450,7 +452,7 @@ PROVIDER
   # down; a banner with no mark behind it stays on the desktop with nothing left to
   # dismiss it.
   arrange_two_windows
-  tama_attach_client t
+  tama_attach_client_without_attach_hook t
   test_tmux select-window -t t:0
 
   local pane window
@@ -858,7 +860,7 @@ NOTIFIER
   # purpose: one that exited 0 would mean "the user is looking", and every notification
   # on the machine would be dropped.
   test_tmux set -g @tama_backend none
-  tama_attach_client t
+  tama_attach_client_without_attach_hook t
   export TAMA_FAKE_FOCUSED=0
 
   local pane window

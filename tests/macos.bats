@@ -342,7 +342,9 @@ FOCUS
   require_darwin
   use_macos_backend
   # tmux's half of the AND says the user is looking: they are attached, at this window.
-  tama_attach_client t
+  # This test is about focus suppression, so leave client-attached to its coverage in
+  # gc.bats; its asynchronous on-select would race the mark asserted below.
+  tama_attach_client_without_attach_hook t
   local window
   window="$(tama_window_id t:0)"
 
