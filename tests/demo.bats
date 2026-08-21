@@ -15,13 +15,12 @@ teardown() {
 }
 
 boot_demo() {
-  run tama_start_detached_server env "TAMA_DEMO_PLUGIN_DIR=$1" \
+  output=''
+  stderr=''
+  tama_start_server_and_record_pid env "TAMA_DEMO_PLUGIN_DIR=$1" \
     tmux -L "$TAMA_SOCKET" -f "${2:-$PLUGIN_ROOT/examples/demo.tmux.conf}" \
-    new-session -d -P -F '#{pid}' -s demo
-  if [ "$status" -eq 0 ]; then
-    TAMA_SERVER_PID="$output"
-    export TAMA_SERVER_PID
-  fi
+    new-session -d -s demo
+  status=$?
   # The demo config deliberately leaves `@tama_backend auto`, which on the developer's
   # own Mac resolves to their real notifier — and this suite reaches the dismissal path.
   # See tama_no_backend. Ignored when the boot was meant to fail.

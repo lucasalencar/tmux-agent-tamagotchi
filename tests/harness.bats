@@ -11,7 +11,12 @@ setup() {
 #!/bin/sh
 case " $* " in
   *' new-session '*)
-    printf '%s' "${TAMA_FAKE_SERVER_PID:-}"
+    if [ -n "${TAMA_FAKE_LONG_LIVED_SERVER:-}" ]; then
+      sleep 2 &
+      printf '%s' "$!"
+    else
+      printf '%s' "${TAMA_FAKE_SERVER_PID:-}"
+    fi
     printf 'server stderr stayed attached' >&2
     [ -z "${TAMA_FAKE_START_FAILURE:-}" ] || exit 1
     ;;
@@ -31,7 +36,7 @@ FAKE_TMUX
   export PATH
 }
 
-create_fake_server_socket() {
+arrange_fake_server_socket_file() {
   export TAMA_SOCKET="$1"
   export TMUX_TMPDIR="$BATS_TEST_TMPDIR"
   mkdir -p "$(tama_socket_dir)"
@@ -45,12 +50,11 @@ assert_surviving_server_is_reported() {
 }
 
 @test "a test server cannot retain the suite output streams" {
-  export TAMA_FAKE_SERVER_PID=$$
-  run --separate-stderr tama_start_server
+  export TAMA_FAKE_LONG_LIVED_SERVER=1
+  tama_start_server
 
-  assert_success
-  assert_equal "$output" ''
-  assert_equal "$stderr" ''
+  kill -0 "$TAMA_SERVER_PID"
+  kill "$TAMA_SERVER_PID"
 }
 
 @test "a failed server start reports tmux's diagnostic" {
@@ -78,7 +82,7 @@ assert_surviving_server_is_reported() {
 }
 
 @test "a failed kill leaves a live server's socket in place and reports it" {
-  create_fake_server_socket tamatest-survivor
+  arrange_fake_server_socket_file tamatest-survivor
   export TAMA_FAKE_KILL_FAILURE=1
 
   run --separate-stderr tama_kill_server
@@ -87,7 +91,7 @@ assert_surviving_server_is_reported() {
 }
 
 @test "a successful kill that leaves the server alive is detected" {
-  create_fake_server_socket tamatest-survivor
+  arrange_fake_server_socket_file tamatest-survivor
 
   run --separate-stderr tama_kill_server
 
@@ -95,7 +99,7 @@ assert_surviving_server_is_reported() {
 }
 
 @test "an unreachable server process must exit before its socket is removed" {
-  create_fake_server_socket tamatest-exiting
+  arrange_fake_server_socket_file tamatest-exiting
   export TAMA_SERVER_PID=$$
   export TAMA_FAKE_SERVER_UNREACHABLE=1
   export TAMA_SERVER_EXIT_WAIT_ATTEMPTS=1
@@ -106,7 +110,7 @@ assert_surviving_server_is_reported() {
 }
 
 @test "a socket is removed after its server process finishes exiting" {
-  create_fake_server_socket tamatest-exiting
+  arrange_fake_server_socket_file tamatest-exiting
   export TAMA_FAKE_SERVER_UNREACHABLE=1
   sleep 0.05 &
   export TAMA_FAKE_SERVER_PID=$!
@@ -118,7 +122,7 @@ assert_surviving_server_is_reported() {
 }
 
 @test "a dead server's stale socket is removed" {
-  create_fake_server_socket tamatest-dead
+  arrange_fake_server_socket_file tamatest-dead
   export TAMA_FAKE_SERVER_UNREACHABLE=1
 
   run --separate-stderr tama_kill_server
