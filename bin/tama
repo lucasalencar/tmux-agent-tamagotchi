@@ -74,6 +74,8 @@ Commands:
   state <state> [name]  Set pane state: running, waiting, idle, error, or clear.
   state subagent-start <id> / subagent-stop <id>
                         Track a delegated run by opaque id.
+  state subagent-reconcile [<id>…]
+                        Replace delegated runs from an authoritative snapshot.
   icons <window_id>     Print pane-state icons in pane order.
   flag [target]         Mark a window. No-op for the current window.
   unflag [target]       Clear a window mark.
@@ -161,7 +163,7 @@ Runtime contract:
   - doctor: exit 1 when checks fail; works outside tmux.
   - setup: reports configuration failures; works outside tmux.
   - focus-window: works outside tmux.
-  - No command reads stdin. jq is not required.
+  - No core command reads stdin. The Claude Code integration requires jq.
   - Focus suppression requires confirmation from tmux and the backend.
   - gc clears state only after the pane returns to @tama_gc_shells.
   - Global focus sweeping requires: set -g focus-events on

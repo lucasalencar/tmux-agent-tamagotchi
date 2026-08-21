@@ -1,5 +1,9 @@
 # The CLI takes arguments, not hook payloads
 
+The core-interface decision remains current. ADR-0013 supersedes only the consequence that
+`jq` leaves the dependency list entirely: the Claude Code integration now owns it as a
+provider-specific dependency.
+
 The system this plugin generalizes was built around Claude Code's hook format: commands read
 JSON on stdin and pull `.message`, `.notification_type` and `.agent_id` out of it with `jq`.
 Every other agent had to fake that shape to fit — Gemini's hooks echo a hand-written JSON

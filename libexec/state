@@ -3,6 +3,7 @@
 #   tama state <running|waiting|idle|error|clear> [agent_name] [--pane <pane_id>]
 #   tama state subagent-start <id> [--pane <pane_id>]
 #   tama state subagent-stop  <id> [--pane <pane_id>]
+#   tama state subagent-reconcile [<id>…] [--pane <pane_id>]
 #
 # Agent names are sticky, unknown states are ignored for forward compatibility,
 # and attention states raise their flag on every event rather than only on changes.
@@ -156,28 +157,7 @@ subagent() {
 
     tama_pane_read "$target" || return 0
 
-    # A `state clear` that landed under this write wins, and has to: the whole
-    # promise of clearing is that the pane becomes indistinguishable from one that
-    # never ran an agent, and only `clear` ever takes the main state away. Without
-    # this the loop reads the clear as a lost race — from here the two look the same,
-    # the id it needed is not in the list — and puts the id back, on a pane nothing
-    # draws, where nothing heals it: `clear` was named as the cure. The next agent in
-    # that pane then reports `idle` and renders `background` forever.
-    #
-    # The mirror interleaving lands here too, with the id present rather than gone:
-    # a write that arrived after `clear` read the pane and before its batch, whose
-    # residue is this call's own list. Either way the pane is not an agent pane, so
-    # there is nothing for a subagent list to qualify — it goes.
-    if [ -n "$was_agent_pane" ] && [ -z "$TAMA_PANE_STATE_MAIN" ]; then
-      if [ -n "$TAMA_PANE_SUBAGENTS" ]; then
-        tama_batch_reset
-        tama_pane_stage "$target" subagents '' "$TAMA_PANE_SUBAGENTS"
-        # No refresh: a pane with no main state draws nothing either way, and the
-        # clear that got here first already asked for the redraw its icon needed.
-        tama_batch_flush 'no' || true
-      fi
-      return 0
-    fi
+    subagent_clear_won "$target" "$was_agent_pane" && return 0
 
     if subagent_settled "$verb" "$TAMA_PANE_SUBAGENTS" "$id"; then
       # The read-back is also the one chance to notice that the other half of the
@@ -198,6 +178,52 @@ subagent() {
     # cannot do fractions; the delay is a courtesy, not a requirement.
     sleep "$TAMA_SUBAGENT_RETRY_DELAY" 2>/dev/null || true
   done
+}
+
+# A `state clear` that lands under either kind of subagent write wins. Only clear
+# removes the main state, so seeing one disappear proves that any list left behind
+# is this write's residue, not live state belonging to a pane that still has an
+# agent. This is also why reconciliation does not need a lock or revision number.
+subagent_clear_won() { # <pane_id> <had_main_state>
+  [ -n "$2" ] && [ -z "$TAMA_PANE_STATE_MAIN" ] || return 1
+
+  if [ -n "$TAMA_PANE_SUBAGENTS" ]; then
+    tama_batch_reset
+    tama_pane_stage "$1" subagents '' "$TAMA_PANE_SUBAGENTS"
+    # A pane with no main state draws nothing; clear already requested its redraw.
+    tama_batch_flush 'no' || true
+  fi
+  return 0
+}
+
+# Replaces the incremental set only when a caller has an authoritative snapshot.
+# Claude Code 2.1.228 was observed stopping an internal agent under a different id
+# than the one it started, so guessing which id to remove would sometimes hide real
+# work. A complete provider snapshot can instead replace the set without weakening
+# unknown `subagent-stop` into an arbitrary decrement.
+reconcile_subagents() { # <pane> <space-separated-live-ids>
+  local target="$1" wanted="$2" was refresh='no' was_agent_pane
+  tama_pane_read "$target" || exit 0
+  target="$TAMA_PANE_ID"
+  was="$TAMA_PANE_DISPLAY"
+  was_agent_pane="$TAMA_PANE_STATE_MAIN"
+
+  tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$wanted"
+  tama_pane_display_changed "$was" "$TAMA_PANE_DERIVED" && refresh='yes'
+
+  tama_batch_reset
+  tama_pane_stage "$target" subagents "$wanted" "$TAMA_PANE_SUBAGENTS"
+  tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID" || return 0
+
+  tama_pane_read "$target" || return 0
+  subagent_clear_won "$target" "$was_agent_pane" && return 0
+
+  # As with incremental writes, a concurrent main-state report may be the half
+  # that changed what the screen shows. The writer that observes it pays the
+  # refresh instead of leaving the display stale until the next status interval.
+  [ "$refresh" = 'yes' ] ||
+    ! tama_pane_display_changed "$was" "$TAMA_PANE_DISPLAY" ||
+    tama_summary_refresh_window "$TAMA_PANE_WINDOW_ID"
 }
 
 # Whether the list now says what this call needed it to say.
@@ -232,7 +258,7 @@ check_subagent_id() { # <verb> <id>
 }
 
 main() {
-  local pane='' state='' argument='' positional=0
+  local pane='' state='' argument='' reconcile='' positional=0
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -251,8 +277,24 @@ main() {
           positional=$((positional + 1))
           case "$positional" in
             1) state="$1" ;;
-            2) argument="$1" ;;
-            *) die_usage "state takes at most two arguments, got: $1" ;;
+            2)
+              if [ "$state" = 'subagent-reconcile' ]; then
+                check_subagent_id "$state" "$1"
+                tama_subagents_add "$reconcile" "$1"
+                reconcile="$TAMA_SUBAGENTS_NEW"
+              else
+                argument="$1"
+              fi
+              ;;
+            *)
+              if [ "$state" = 'subagent-reconcile' ]; then
+                check_subagent_id "$state" "$1"
+                tama_subagents_add "$reconcile" "$1"
+                reconcile="$TAMA_SUBAGENTS_NEW"
+              else
+                die_usage "state takes at most two arguments, got: $1"
+              fi
+              ;;
           esac
           shift
         done
@@ -262,8 +304,24 @@ main() {
         positional=$((positional + 1))
         case "$positional" in
           1) state="$1" ;;
-          2) argument="$1" ;;
-          *) die_usage "state takes at most two arguments, got: $1" ;;
+          2)
+            if [ "$state" = 'subagent-reconcile' ]; then
+              check_subagent_id "$state" "$1"
+              tama_subagents_add "$reconcile" "$1"
+              reconcile="$TAMA_SUBAGENTS_NEW"
+            else
+              argument="$1"
+            fi
+            ;;
+          *)
+            if [ "$state" = 'subagent-reconcile' ]; then
+              check_subagent_id "$state" "$1"
+              tama_subagents_add "$reconcile" "$1"
+              reconcile="$TAMA_SUBAGENTS_NEW"
+            else
+              die_usage "state takes at most two arguments, got: $1"
+            fi
+            ;;
         esac
         shift
         ;;
@@ -296,6 +354,7 @@ main() {
     running | waiting | idle | error) report "$pane" "$state" "$argument" ;;
     clear) clear_pane "$pane" ;;
     subagent-start | subagent-stop) subagent "$pane" "$state" "$argument" ;;
+    subagent-reconcile) reconcile_subagents "$pane" "$reconcile" ;;
     # Not a state this version knows. Quiet on purpose: agents grow event types, and
     # a hook written for a newer plugin has to stay silent on an older one rather
     # than fail the turn it is reporting on.

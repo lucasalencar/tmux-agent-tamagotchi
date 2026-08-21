@@ -966,8 +966,8 @@ doctor_cc_command() { # <event>
 }
 
 # Whether any settings file wires this plugin for that event with the canonical command.
-# This remains a fixed-string search rather than a JSON parse because `jq` is not a
-# dependency (ADR-0001); JSON may be formatted freely around the command string.
+# This stays a fixed-string search so dependency diagnosis works before jq does, and
+# because the exact command — not merely valid JSON — is the configuration contract.
 doctor_cc_wired() { # <event>
   local file command_value
   command_value="\"$(doctor_cc_command "$1")\""
@@ -1021,6 +1021,8 @@ EOF
     return 0
   fi
 
+  doctor_cc_jq
+
   # The one worth checking by name. Everything else can be missing and produce a partial
   # symptom; this one produces a healthy-looking installation with no banners in it.
   if doctor_cc_wired Notification; then
@@ -1045,6 +1047,22 @@ EOF
 $TAMA_DOCTOR_CC_EVENTS
 EOF
   return 0
+}
+
+doctor_cc_jq() {
+  local version
+  version="$(jq --version 2>/dev/null)" || version=''
+  if [ -n "$version" ]; then
+    doctor_ok "$version is available for Claude Code payloads"
+    return 0
+  fi
+
+  doctor_fail 'jq is not available: Claude Code snapshots cannot be reconciled'
+  doctor_more 'Only the Claude Code integration requires it. Install it with:'
+  doctor_more '  macOS:           brew install jq'
+  doctor_more '  Debian/Ubuntu:   sudo apt-get install jq'
+  doctor_more '  Fedora:          sudo dnf install jq'
+  doctor_more '  Arch Linux:      sudo pacman -S jq'
 }
 
 # Whether anything at all in those files reaches this plugin.
@@ -1142,6 +1160,12 @@ doctor_setup_claude_code() {
   doctor_section 'setup — the Claude Code hooks'
   local dir
   dir="$(doctor_cc_dir)"
+  doctor_more 'This integration requires jq to validate provider snapshots:'
+  doctor_more '  macOS:           brew install jq'
+  doctor_more '  Debian/Ubuntu:   sudo apt-get install jq'
+  doctor_more '  Fedora:          sudo dnf install jq'
+  doctor_more '  Arch Linux:      sudo pacman -S jq'
+  doctor_more ''
   doctor_more 'For every project, merge this into'
   if [ -n "$dir" ]; then
     doctor_more "  $dir/settings.json"

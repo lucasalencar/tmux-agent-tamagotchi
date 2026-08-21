@@ -30,14 +30,15 @@ TAMA_CC_AGENT='claude-code'
 # Claude Code delivers its hook input as JSON on stdin, and there is no other way
 # to get at it: as of 2.1.228 a command hook substitutes only ${CLAUDE_PROJECT_DIR}
 # and its two siblings into `command`/`args`, so no field of the payload can be
-# handed over as an argument. Four fields are read here, and nothing else is:
+# handed over as an argument. Five fields are read here, and nothing else is:
 # `agent_id`, the id the plugin counts subagents by and the mark of a delegated
 # run; `notification_type`, which separates a question for the user from routine
-# noise; and `message` / `last_assistant_message`, the sentence a banner carries.
+# noise; `message` / `last_assistant_message`, the sentence a banner carries; and
+# `background_tasks`, the provider's complete live-task registry when available.
 #
 # This is the residue ADR-0001 predicted and put in `integrations/`: the *core*
-# CLI takes arguments and never reads stdin, and `jq` is not a dependency of the
-# plugin. So the extraction below is deliberately not a JSON parser. It comes in
+# CLI takes arguments and never reads stdin. The bounded token and text extraction
+# below stays deliberately narrower than a JSON parser. It comes in
 # two halves, because the fields come in two kinds: `cc_field` for the opaque
 # tokens, which needs no idea of escaping at all, and `cc_text_field` for the two
 # free-text fields, which does. A field either cannot find is a field the adapter
@@ -294,6 +295,40 @@ cc_is_delegated() {
   esac
 }
 
+# Whether a complete payload carries a readable background-task registry with no
+# subagent in it. Since Claude Code 2.1.145 this registry is the only authoritative
+# evidence that can heal a started id whose matching stop never arrived. Missing,
+# truncated, malformed, or ambiguous input must preserve the conservative set.
+#
+# The core remains payload-agnostic (ADR-0001). jq owns the JSON grammar here;
+# this adapter only states what makes the provider snapshot authoritative.
+cc_background_tasks_prove_no_subagents() {
+  cc_read_payload
+  # Older Claude Code payloads normally stop here without paying for the parser.
+  case "$TAMA_CC_PAYLOAD" in
+    *'"background_tasks"'*) ;;
+    *) return 1 ;;
+  esac
+  # Exactly at the read cap may have an unseen suffix even if this prefix happens
+  # to close cleanly, so it cannot be authoritative.
+  [ "${#TAMA_CC_PAYLOAD}" -lt "$TAMA_CC_PAYLOAD_MAX" ] || return 1
+
+  printf '%s\n' "$TAMA_CC_PAYLOAD" | jq -e '
+    (.background_tasks | type) == "array" and
+    all(.background_tasks[];
+      type == "object" and
+      (.type |
+        type == "string" and
+        test("^[A-Za-z0-9_-]+$") and
+        . != "subagent"))
+  ' >/dev/null 2>&1
+}
+
+cc_reconcile_subagents_if_authoritative() { # [args…]
+  cc_background_tasks_prove_no_subagents || return 0
+  "$TAMA_BIN" state subagent-reconcile "$@" || true
+}
+
 # ---------------------------------------------------------------------------
 # The events
 # ---------------------------------------------------------------------------
@@ -395,6 +430,7 @@ main() {
       # delegated run cannot reach here — Claude Code converts its end into
       # SubagentStop — but the check costs nothing on a payload already read, and it
       # is the one that would have to be right if that ever changed.
+      cc_reconcile_subagents_if_authoritative "$@"
       if cc_is_delegated; then
         cc_state idle "$@"
       fi
@@ -417,10 +453,17 @@ main() {
       # Neither of these ever raises a banner, which is the whole of "a delegated
       # run stays quiet": a subagent finishing moves the icon from `background` back
       # to whatever the session's own turn is doing, and nothing else.
-      cc_field agent_id || exit 0
       case "$event" in
-        SubagentStart) exec "$TAMA_BIN" state subagent-start "$TAMA_CC_FIELD" "$@" ;;
-        *) exec "$TAMA_BIN" state subagent-stop "$TAMA_CC_FIELD" "$@" ;;
+        SubagentStart)
+          cc_field agent_id || exit 0
+          exec "$TAMA_BIN" state subagent-start "$TAMA_CC_FIELD" "$@"
+          ;;
+        *)
+          if cc_field agent_id; then
+            "$TAMA_BIN" state subagent-stop "$TAMA_CC_FIELD" "$@" || true
+          fi
+          cc_reconcile_subagents_if_authoritative "$@"
+          ;;
       esac
       ;;
     SessionEnd)

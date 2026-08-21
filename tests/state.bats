@@ -216,6 +216,36 @@ teardown() {
   assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
 }
 
+@test "an authoritative subagent snapshot replaces the tracked set exactly" {
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start stale-1 --pane "$PANE"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start stale-2 --pane "$PANE"
+  assert_success
+
+  run "$PLUGIN_ROOT/bin/tama" state subagent-reconcile live-1 live-2 live-1 --pane "$PANE"
+  assert_success
+
+  assert_pane_option "$PANE" subagents 'live-1 live-2'
+}
+
+@test "an authoritative empty snapshot returns an idle pane from background to idle" {
+  run "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start leaked --pane "$PANE"
+  assert_success
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+
+  tama_log_tmux_calls
+  run "$PLUGIN_ROOT/bin/tama" state subagent-reconcile --pane "$PANE"
+  assert_success
+
+  assert_tmux_command 'set'
+  assert_tmux_command 'list-windows'
+  assert_tmux_command 'list-clients'
+  assert_pane_option_unset "$PANE" subagents
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
+}
+
 @test "clear unsets every pane option rather than emptying it" {
   run "$PLUGIN_ROOT/bin/tama" state subagent-start sub-1 --pane "$PANE"
   assert_success
@@ -458,6 +488,30 @@ teardown() {
   assert_equal "$remaining" 0
 }
 
+@test "a subagent reconciliation that lands after clear takes its residue back off" {
+  run "$PLUGIN_ROOT/bin/tama" state idle Claude --pane "$PANE"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start old --pane "$PANE"
+  assert_success
+  tama_log_tmux_calls
+
+  local cleared="$BATS_TEST_TMPDIR/cleared"
+
+  TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-reconcile" \
+    TAMA_FAKE_TMUX_WAIT_BEFORE=2 TAMA_FAKE_TMUX_WAIT_FOR="$cleared" \
+    "$PLUGIN_ROOT/bin/tama" state subagent-reconcile live --pane "$PANE" &
+  TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-clear" \
+    TAMA_FAKE_TMUX_TOUCH_AFTER=2 TAMA_FAKE_TMUX_TOUCH="$cleared" \
+    "$PLUGIN_ROOT/bin/tama" state clear --pane "$PANE" &
+  wait
+
+  [ -e "$cleared" ]
+  [ "$(grep -cx set "$TAMA_FAKE_TMUX_LOG")" -ge 3 ]
+  local remaining
+  remaining="$(test_tmux show -p -t "$PANE" | grep -c '^@tama_' || true)"
+  assert_equal "$remaining" 0
+}
+
 @test "an id that begins with a dash can be given after --" {
   # Ids are opaque and the agent chooses them, so some of them will look like
   # options; without a way to say "this is a value" they would be unusable.
@@ -529,6 +583,9 @@ teardown() {
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" state subagent-stop
   assert_usage_error 'subagent-stop'
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" state subagent-reconcile 'two ids'
+  assert_usage_error 'whitespace'
 
   # An id travels in a space-separated list; one with whitespace in it would
   # silently become several.

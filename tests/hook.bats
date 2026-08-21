@@ -347,6 +347,78 @@ payload() { # <event> [extra JSON…]
   assert_equal "$(tama_icons "$WINDOW")" ' ○'
 }
 
+@test "an authoritative empty task registry heals an unpaired Claude Code stop" {
+  hook SessionStart
+  hook SubagentStart \
+    <<<"$(payload SubagentStart ',"agent_id":"affbdfa48f0528122","agent_type":"Explore"')"
+  hook Stop <<<"$(payload Stop ',"last_assistant_message":"done"')"
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+
+  hook SubagentStop \
+    <<<"$(payload SubagentStop ',"agent_id":"ab7b58905d1f4745c","agent_type":"","background_tasks":[]')"
+  assert_success
+
+  assert_pane_option_unset "$PANE" subagents
+  assert_equal "$(tama_icons "$WINDOW")" ' ○'
+}
+
+@test "non-subagent background tasks still prove the subagent snapshot empty" {
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"leaked"')"
+
+  hook Stop \
+    <<<"$(payload Stop ',"background_tasks":[{"id":"shell-1","type":"shell"}],"last_assistant_message":"done"')"
+  assert_success
+
+  assert_pane_option_unset "$PANE" subagents
+}
+
+@test "a snapshot with a subagent task preserves known agent ids" {
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known-agent-id"')"
+
+  hook Stop \
+    <<<"$(payload Stop ',"background_tasks":[{"id":"task-id-is-not-agent-id","type":"subagent"}],"last_assistant_message":"done"')"
+  assert_success
+
+  assert_pane_option "$PANE" subagents known-agent-id
+}
+
+@test "unavailable or ambiguous task registries preserve known agent ids" {
+  local registry extra
+  for registry in \
+    '' \
+    ',"background_tasks":null' \
+    ',"background_tasks":{}' \
+    ',"background_tasks":[{"id":"unknown"}]' \
+    ',"background_tasks":[{"type":123}]' \
+    ',"background_tasks":[{"type":"shell"}' \
+    ',"background_tasks":[{"type":"shell"}],"broken":'; do
+    hook SessionStart
+    hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known"')"
+
+    extra="$registry,\"last_assistant_message\":\"done\""
+    hook Stop <<<"$(payload Stop "$extra")"
+    assert_success
+    assert_pane_option "$PANE" subagents known
+
+    hook SessionEnd
+  done
+}
+
+@test "a task registry truncated by the bounded read preserves known agent ids" {
+  hook SessionStart
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"known"')"
+  local filler
+  filler="$(printf '%070000d' 0)"
+
+  hook Stop \
+    <<<"{\"background_tasks\":[],\"filler\":\"$filler\",\"last_assistant_message\":\"done\"}"
+  assert_success
+
+  assert_pane_option "$PANE" subagents known
+}
+
 @test "the id is found however the payload is spaced" {
   hook SessionStart
   # Pretty-printed, which is what a JSON writer with an indent produces.
