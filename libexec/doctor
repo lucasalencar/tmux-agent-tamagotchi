@@ -420,6 +420,8 @@ doctor_notifications() {
     doctor_more 'and cost nothing. Everything below still describes what would happen.'
   fi
 
+  doctor_label_command
+
   local configured
   configured="$(tama_opt tama_backend auto)"
 
@@ -446,6 +448,173 @@ doctor_notifications() {
 
   doctor_backend_capabilities
   doctor_backend_overrides
+}
+
+doctor_label_command() {
+  local configured program
+  if ! configured="$(tmux_run show -gv @tama_label_command 2>/dev/null)"; then
+    doctor_ok '@tama_label_command is unset: window labels are not provided'
+    return 0
+  fi
+
+  if [ -z "$configured" ]; then
+    doctor_ok '@tama_label_command is empty: window labels are deliberately disabled'
+    return 0
+  fi
+
+  if doctor_label_command_has_shell_syntax "$configured"; then
+    doctor_label_command_unchecked \
+      '@tama_label_command is set, but its executable cannot be checked without evaluating shell syntax'
+    return 0
+  fi
+
+  program="$(doctor_program "$configured")"
+
+  case "$program" in
+    '' | *[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./~+-]*)
+      doctor_label_command_unchecked \
+        '@tama_label_command is set, but its executable cannot be checked without evaluating shell syntax'
+      return 0
+      ;;
+  esac
+
+  doctor_label_program "$program"
+}
+
+# The runtime accepts a shell line, and inspecting one accurately means asking a shell
+# to evaluate it — exactly the side effect doctor must avoid. Operators and expansion
+# anywhere in the line make the executable unknowable without running user syntax.
+doctor_label_command_has_shell_syntax() { # <command line>
+  case "$1" in
+    *[[:cntrl:]]* | *"'"* | *'"'* | *'|'* | *'&'* | *';'* | *'<'* | *'>'* | *'$'* | *'`'* | *'('* | *')'*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+doctor_label_program() { # <plain program word>
+  local program="$1" resolved path
+  if ! sh -n -c "$program \"\$1\"" 2>/dev/null; then
+    doctor_fail "@tama_label_command starts with $program, which is not a complete shell command"
+    doctor_label_command_cost
+    return 0
+  fi
+
+  case "$program" in
+    \~/*)
+      if [ -z "${HOME:-}" ]; then
+        doctor_label_command_unchecked \
+          "@tama_label_command runs $program, but this shell has no HOME to resolve it"
+        return 0
+      fi
+      path="$HOME/${program#\~/}"
+      resolved="$path"
+      ;;
+    /*) resolved="$program" ;;
+    */*)
+      doctor_label_command_unchecked \
+        "@tama_label_command runs $program, whose relative path depends on the hook working directory"
+      return 0
+      ;;
+    # Ask the same shell the runtime starts, using a fixed script and the program as
+    # data. This checks builtins without evaluating any part of the configured line.
+    *) resolved="$(sh -c 'command -v "$1"' _ "$program" 2>/dev/null)" || resolved='' ;;
+  esac
+
+  if [ -z "$resolved" ]; then
+    doctor_fail "@tama_label_command runs $program, which does not resolve to an executable"
+    doctor_label_command_cost
+    return 0
+  fi
+
+  case "$resolved" in
+    /*)
+      if [ "$program" = "${program##*/}" ] &&
+        doctor_program_uses_relative_path "$program"; then
+        doctor_label_command_unchecked \
+          "@tama_label_command runs $program, but PATH resolved it relative to this working directory"
+        return 0
+      fi
+      if [ ! -e "$resolved" ]; then
+        doctor_fail "@tama_label_command runs $program, which does not resolve to an executable"
+        doctor_label_command_cost
+        return 0
+      fi
+      if [ ! -f "$resolved" ] || [ ! -x "$resolved" ]; then
+        doctor_fail "@tama_label_command runs $program, which is not an executable file"
+        doctor_label_command_cost
+        return 0
+      fi
+      doctor_ok "@tama_label_command runs $program"
+      doctor_label_command_cost
+      doctor_more "executable file: $resolved"
+      ;;
+    */*)
+      doctor_label_command_unchecked \
+        "@tama_label_command runs $program, but PATH resolved it relative to this working directory"
+      ;;
+    *)
+      if doctor_program_uses_relative_path "$program" &&
+        ! doctor_program_is_shell_builtin "$program"; then
+        doctor_label_command_unchecked \
+          "@tama_label_command runs $program, but PATH resolved it relative to this working directory"
+        return 0
+      fi
+      doctor_ok "@tama_label_command runs $program"
+      doctor_label_command_cost
+      doctor_more "shell command: $resolved"
+      ;;
+  esac
+}
+
+doctor_program_uses_relative_path() { # <bare program>
+  local rest="${PATH:-}" entry last='no'
+  while :; do
+    case "$rest" in
+      *:*) entry="${rest%%:*}"; rest="${rest#*:}" ;;
+      *) entry="$rest"; last='yes' ;;
+    esac
+    if [ -f "${entry:-.}/$1" ] && [ -x "${entry:-.}/$1" ]; then
+      case "$entry" in
+        /*) return 1 ;;
+        *) return 0 ;;
+      esac
+    fi
+    [ "$last" = 'no' ] || break
+  done
+  return 1
+}
+
+doctor_program_is_shell_builtin() { # <bare program>
+  local rest="${PATH:-}" entry last='no'
+  local absolute_path='/dev/null/tama-no-such-directory' resolved
+  while :; do
+    case "$rest" in
+      *:*) entry="${rest%%:*}"; rest="${rest#*:}" ;;
+      *) entry="$rest"; last='yes' ;;
+    esac
+    case "$entry" in
+      /*) absolute_path="$absolute_path:$entry" ;;
+    esac
+    [ "$last" = 'no' ] || break
+  done
+  resolved="$(PATH="$absolute_path" sh -c 'command -v "$1"' _ "$1" 2>/dev/null)" ||
+    resolved=''
+  case "$resolved" in
+    '' | */*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+doctor_label_command_unchecked() { # <verdict>
+  doctor_ok "$1"
+  doctor_label_command_cost
+}
+
+doctor_label_command_cost() {
+  doctor_more 'It runs synchronously inside the agent hook that asks for a label and'
+  doctor_more 'has no timeout. A slow provider makes the agent turn wait just as long.'
 }
 
 # `@tama_backend auto`, and the whole of why it landed where it did.
