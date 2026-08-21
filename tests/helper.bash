@@ -344,8 +344,8 @@ tama_render_summary() { # <session target>
 # reaches EOF detaches again immediately.
 #
 # Attaching also fires the plugin's asynchronous `client-attached` hook. This helper
-# waits for the client, not for that hook: a test that later inspects state the hook
-# can change must remove it before calling this helper, unless it covers the hook itself.
+# waits for the client, not for that hook. Tests that inspect state the hook can change
+# use tama_attach_client_without_attach_hook unless they cover the hook itself.
 tama_attach_client() {
   local session="$1"
   local fifo="$BATS_TEST_TMPDIR/attach-$session.fifo"
@@ -368,6 +368,11 @@ tama_attach_client() {
     fi
     sleep 0.05
   done
+}
+
+tama_attach_client_without_attach_hook() {
+  test_tmux set-hook -gu client-attached
+  tama_attach_client "$1"
 }
 
 tama_detach_client() {
