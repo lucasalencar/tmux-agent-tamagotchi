@@ -11,6 +11,16 @@ set -o nounset
 # not.
 TAMA_TMUX="${TAMA_TMUX:-tmux}"
 
+# True when a caller has named a server itself or was launched by a tmux server whose
+# socket still exists. tmux_run deliberately keeps a bare-tmux fallback for callers
+# that allow the default server; the plugin entrypoint does not, and checks this first.
+tama_tmux_server_is_known() {
+  [ -n "${TAMA_TMUX_ARGS:-}" ] && return 0
+  local socket="${TMUX:-}"
+  socket="${socket%%,*}"
+  [ -n "$socket" ] && [ -S "$socket" ]
+}
+
 # `-u` says this client speaks UTF-8. Without it tmux decides from the ambient
 # locale, and a server whose locale is C — a CI runner, a systemd unit, a cron job —
 # hands back `_` for every byte of every multibyte character it prints. That would
@@ -23,6 +33,12 @@ tmux_run() {
     # shellcheck disable=SC2086  # deliberate: "-L socket" is two arguments
     set -- $TAMA_TMUX_ARGS "$@"
     set +f
+  else
+    local socket="${TMUX:-}"
+    socket="${socket%%,*}"
+    if [ -n "$socket" ] && [ -S "$socket" ]; then
+      set -- -S "$socket" "$@"
+    fi
   fi
   "$TAMA_TMUX" -u "$@"
 }

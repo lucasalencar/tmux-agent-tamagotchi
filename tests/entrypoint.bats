@@ -21,6 +21,31 @@ teardown() {
   assert_plugin_wired "$PLUGIN_ROOT"
 }
 
+@test "loading without explicit args uses the invoking tmux server socket" {
+  local socket
+  socket="$(test_tmux display-message -p '#{socket_path}')"
+  test_tmux set-environment -g TAMA_TMUX \
+    "$PLUGIN_ROOT/tests/fixtures/tmux-require-socket"
+  test_tmux set-environment -g TAMA_REAL_TMUX "$(command -v tmux)"
+  test_tmux set-environment -g TAMA_EXPECTED_SOCKET "$socket"
+  test_tmux set-environment -gu TAMA_TMUX_ARGS
+
+  run --separate-stderr test_tmux run-shell "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+  assert_equal "$stderr" ''
+  assert_plugin_wired "$PLUGIN_ROOT"
+}
+
+@test "loading outside tmux without explicit args refuses the default server" {
+  run --separate-stderr env -u TMUX -u TAMA_TMUX_ARGS TAMA_TMUX=/nonexistent/tmux \
+    "$PLUGIN_ROOT/tamagotchi.tmux"
+
+  [ "$status" -ne 0 ]
+  assert_equal "$output" ''
+  assert_equal "$stderr" 'tamagotchi: not running inside tmux; nothing was loaded'
+  assert_plugin_not_wired
+}
+
 @test "loading the plugin changes nothing else about the server" {
   local before
   before="$(tama_server_state)"

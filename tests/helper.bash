@@ -75,6 +75,10 @@ tama_point_at_server() {
 # for any later teardown to reach.
 tama_kill_server() {
   if [ -n "${TAMA_SOCKET:-}" ]; then
+    if [ "$TAMA_SOCKET" = default ]; then
+      printf 'refusing to use the default tmux socket in tests\n' >&2
+      return 1
+    fi
     local server_pid='' waited=0
     server_pid="$(
       tmux -L "$TAMA_SOCKET" display-message -p '#{pid}' 2>/dev/null
@@ -99,6 +103,10 @@ tama_socket_dir() {
 }
 
 test_tmux() {
+  if [ "$TAMA_SOCKET" = default ]; then
+    printf 'refusing to use the default tmux socket in tests\n' >&2
+    return 1
+  fi
   tmux -L "$TAMA_SOCKET" "$@"
 }
 
@@ -508,7 +516,7 @@ tama_use_fake_tmux() {
   export TAMA_FAKE_TMUX_LOG="$BATS_TEST_TMPDIR/tmux-calls.log"
   : >"$TAMA_FAKE_TMUX_LOG"
   export TAMA_TMUX="$PLUGIN_ROOT/tests/fixtures/fake-tmux"
-  export TAMA_TMUX_ARGS=''
+  export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
 }
 
 # Points the tmux indirection at the logging fake — reporting the real version,

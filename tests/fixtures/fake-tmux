@@ -62,9 +62,15 @@ fi
 # The plugin passes `-u` before the command, so the version request is not
 # necessarily the first argument.
 tama_wants_version=''
+tama_option_argument=''
 for tama_arg in "$@"; do
+  if [ -n "$tama_option_argument" ]; then
+    tama_option_argument=''
+    continue
+  fi
   case "$tama_arg" in
     -V) tama_wants_version=1 ;;
+    -L | -S | -f) tama_option_argument=1 ;;
     -*) ;;
     *) break ;;
   esac
