@@ -5,7 +5,7 @@ bats_require_minimum_version 1.7.0
 load helper
 
 @test "the CI doctor check fails when its isolated server cannot start" {
-  run env TMUX_TMPDIR=/dev/null make -C "$PLUGIN_ROOT" doctor
+  run env -u TMUX TMUX_TMPDIR=/dev/null make -C "$PLUGIN_ROOT" doctor
 
   [ "$status" -ne 0 ]
 }
@@ -13,14 +13,18 @@ load helper
 @test "the CI doctor check fails and tears down when diagnosis fails" {
   local plugin="$BATS_TEST_TMPDIR/plugin"
   tama_copy_plugin "$plugin"
-  printf '#!/usr/bin/env bash\nexit 1\n' >"$plugin/libexec/doctor"
+  printf '%s\n' '#!/usr/bin/env bash' ': >"$TAMA_CI_DOCTOR_MARKER"' 'exit 1' \
+    >"$plugin/libexec/doctor"
   chmod +x "$plugin/libexec/doctor"
 
-  export TMUX_TMPDIR="$BATS_TEST_TMPDIR/tmux"
-  mkdir -p "$TMUX_TMPDIR"
+  export TAMA_CI_DOCTOR_MARKER="$BATS_TEST_TMPDIR/doctor-ran"
+  export TMUX_TMPDIR
+  TMUX_TMPDIR="$(mktemp -d /tmp/tama-ci-doctor.XXXXXX)"
 
-  run make -C "$plugin" doctor
+  run env -u TMUX make -C "$plugin" doctor
 
   [ "$status" -ne 0 ]
-  [ -z "$(find "$TMUX_TMPDIR" -name 'tamatest-*' -print)" ]
+  [ -e "$TAMA_CI_DOCTOR_MARKER" ]
+  [ -z "$(find "$TMUX_TMPDIR" ! -type d -print)" ]
+  rmdir "$(tama_socket_dir)" "$TMUX_TMPDIR"
 }
