@@ -31,6 +31,11 @@ if [ "${1:-}" != -u ] ||
   printf 'fake tmux refused an invocation without an explicit server\n' >&2
   exit 90
 fi
+if { [ "$2" = -L ] && [ "$3" = default ]; } ||
+  { [ "$2" = -S ] && [ "${3##*/}" = default ]; }; then
+  printf 'fake tmux refused the default server\n' >&2
+  exit 90
+fi
 
 # One argument per line, so a test can assert on which tmux commands ran —
 # `grep -x set` finds a set-option and nothing that merely mentions one, and a

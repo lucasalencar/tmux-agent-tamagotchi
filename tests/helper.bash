@@ -515,6 +515,7 @@ tama_use_bash_32_or_skip() {
 # Points the tmux indirection at a fake that reports the given version string
 # and logs every call, so the version guard can be driven from a test.
 tama_use_fake_tmux() {
+  tama_require_isolated_test_socket || return 1
   export TAMA_FAKE_TMUX_VERSION="$1"
   export TAMA_FAKE_TMUX_LOG="$BATS_TEST_TMPDIR/tmux-calls.log"
   : >"$TAMA_FAKE_TMUX_LOG"
