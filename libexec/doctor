@@ -773,8 +773,7 @@ doctor_program() { # <command line>
 doctor_focus() {
   doctor_section 'the focus check'
 
-  if [ "${TAMA_BACKEND_DIR:-}" = "$TAMA_PLUGIN_DIR/backends/$TAMA_BACKEND_MACOS" ] &&
-    [ -z "$(tama_opt tama_focus_command '')" ]; then
+  if doctor_uses_macos_focus; then
     doctor_focus_fallback
   fi
 
@@ -818,12 +817,19 @@ doctor_focus() {
       ;;
     *)
       doctor_warn "set-titles-string is '$string', which is not the session name alone"
-      doctor_more 'The backend compares the front window title against the session name'
+      doctor_more "The backend's focus check compares the front window title against the session name"
       doctor_more "for equality, not containment — a title that merely has #S in it"
       doctor_more "will not match. Set it to '#S' exactly."
       doctor_focus_title_cost
       ;;
   esac
+}
+
+doctor_uses_macos_focus() {
+  [ "${TAMA_BACKEND_DIR:-}" = "$TAMA_PLUGIN_DIR/backends/$TAMA_BACKEND_MACOS" ] &&
+    [ -f "$TAMA_BACKEND_DIR/focus" ] &&
+    [ -x "$TAMA_BACKEND_DIR/focus" ] &&
+    [ -z "$(tama_opt tama_focus_command '')" ]
 }
 
 # The focus capability decides this only when a click happens: window titles and tmux
@@ -844,10 +850,6 @@ doctor_focus_title_cost() {
   doctor_more 'never recognise the window you are looking at, so it answers "not'
   doctor_more 'focused" and the banner is delivered. That is the direction ADR-0004'
   doctor_more 'fails in on purpose.'
-  if [ -z "$(tama_opt tama_focus_command '')" ]; then
-    doctor_more 'It also prevents the first focus level from finding the session, so a click can'
-    doctor_more 'reach the switch-client fallback described above.'
-  fi
   doctor_more 'Fix it with:'
   doctor_more '  set -g set-titles on'
   doctor_more "  set -g set-titles-string '#S'"

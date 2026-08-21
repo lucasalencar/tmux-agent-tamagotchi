@@ -103,6 +103,7 @@ cc_settings_into() { # <path> <event…>
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains 'no problems and no warnings'
+  refute_output_contains 'switch-client'
 }
 
 @test "doctor warns about an invalid session summary scope and uses current fallback" {
@@ -524,7 +525,7 @@ cc_settings_into() { # <path> <event…>
   assert_success
   assert_output_contains 'set-titles is'
   assert_output_contains 'extra banners, never missing ones'
-  assert_output_contains 'also prevents the first focus level from finding the session'
+  assert_output_contains 'no terminal window title matches the session'
   assert_output_contains "set -g set-titles-string '#S'"
 }
 
@@ -577,6 +578,23 @@ cc_settings_into() { # <path> <event…>
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains '@tama_focus_command replaces the focus capability'
+  refute_output_contains 'no terminal window title matches the session'
+  refute_output_contains 'switch-client'
+}
+
+@test "a non-executable macOS focus capability has no fallback to diagnose" {
+  healthy_server
+  local plugin="$BATS_TEST_TMPDIR/plugin"
+  tama_copy_plugin "$plugin"
+  chmod -x "$plugin/backends/macos/focus"
+  run "$plugin/tamagotchi.tmux"
+  assert_success
+  test_tmux set -g @tama_backend macos
+  test_tmux set -g @tama_terminal_notifier "$plugin/tests/fixtures/fake-notifier"
+
+  run "$plugin/bin/tama" doctor
+  assert_success
+  assert_output_contains 'no focus: a click selects the window and the pane but does not'
   refute_output_contains 'no terminal window title matches the session'
   refute_output_contains 'switch-client'
 }
