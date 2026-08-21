@@ -547,16 +547,8 @@ teardown() {
   # backslash before it. A value stored as anything other than what was passed would
   # leave the pane unable to recognise itself, and every later report would write and
   # wake every client for nothing.
-  local command='' name waited=0
-  tmux_test_server_run respawn-pane -k -t "$PANE" -c "$BATS_TEST_TMPDIR" 'sleep 300'
-  while [ "$command" != sleep ] && [ "$waited" -lt 50 ]; do
-    command="$(
-      tmux_test_server_run display-message -p -t "$PANE" '#{pane_current_command}'
-    )"
-    [ "$command" = sleep ] || sleep 0.1
-    waited=$((waited + 1))
-  done
-  [ "$command" = sleep ]
+  local name
+  tama_arrange_sleeping_pane "$PANE" "$BATS_TEST_TMPDIR"
 
   for name in 'Claude;;' 'Claude;;;' ';' 'Claude\;' 'Cla;ude;'; do
     run "$PLUGIN_ROOT/bin/tama" state clear --pane "$PANE"

@@ -19,12 +19,11 @@ teardown() {
 }
 
 attach_client() { # <session> <name>
-  _tmux_test_server_require_isolated_socket || return 1
   local session="$1" name="$2" fifo="$BATS_TEST_TMPDIR/$2.fifo" waited=0 pid holder
   mkfifo "$fifo"
   sleep 300 >"$fifo" &
   holder=$!
-  tmux -L "$TMUX_TEST_SOCKET" -C -f /dev/null attach -t "$session" <"$fifo" >/dev/null 2>&1 &
+  tmux_test_server_run -C -f /dev/null attach -t "$session" <"$fifo" >/dev/null 2>&1 &
   pid=$!
   CLIENT_PIDS="$CLIENT_PIDS $pid"
   FIFO_PIDS="$FIFO_PIDS $holder"
@@ -41,16 +40,8 @@ session_id() {
 }
 
 arrange_stale_agent_pane() { # <pane>
-  local command='' pane="$1" waited=0
-  tmux_test_server_run respawn-pane -k -t "$pane" 'sleep 300'
-  while [ "$command" != sleep ] && [ "$waited" -lt 50 ]; do
-    command="$(
-      tmux_test_server_run display-message -p -t "$pane" '#{pane_current_command}'
-    )"
-    [ "$command" = sleep ] || sleep 0.1
-    waited=$((waited + 1))
-  done
-  [ "$command" = sleep ] || return 1
+  local pane="$1"
+  tama_arrange_sleeping_pane "$pane" || return 1
   tmux_test_server_run set-option -g @tama_gc_shells sleep
   "$PLUGIN_ROOT/bin/tama" state waiting --pane "$pane"
   tmux_test_server_run set-option -p -t "$pane" @tama_pane_cmd definitely-stale

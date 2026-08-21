@@ -30,12 +30,11 @@ session_scope() {
 }
 
 attach_extra_client() { # <session>
-  _tmux_test_server_require_isolated_socket || return 1
   local fifo="$BATS_TEST_TMPDIR/attach-extra.fifo" waited=0
   mkfifo "$fifo"
   sleep 300 >"$fifo" &
   EXTRA_FIFO_HOLDER_PID=$!
-  tmux -L "$TMUX_TEST_SOCKET" -C attach -t "$1" <"$fifo" >/dev/null 2>&1 &
+  tmux_test_server_run -C attach -t "$1" <"$fifo" >/dev/null 2>&1 &
   EXTRA_CLIENT_PID=$!
   while [ "$(tmux_test_server_run list-clients -t "$1" -F '#{client_name}' | wc -l | tr -d ' ')" -lt 2 ]; do
     waited=$((waited + 1))
@@ -45,12 +44,11 @@ attach_extra_client() { # <session>
 }
 
 attach_unrelated_client() { # <session>
-  _tmux_test_server_require_isolated_socket || return 1
   local fifo="$BATS_TEST_TMPDIR/attach-unrelated.fifo" waited=0
   mkfifo "$fifo"
   sleep 300 >"$fifo" &
   UNRELATED_FIFO_HOLDER_PID=$!
-  tmux -L "$TMUX_TEST_SOCKET" -C attach -t "$1" <"$fifo" >/dev/null 2>&1 &
+  tmux_test_server_run -C attach -t "$1" <"$fifo" >/dev/null 2>&1 &
   UNRELATED_CLIENT_PID=$!
   while [ "$(tmux_test_server_run display-message -p -t "$1" '#{session_attached}')" = '0' ]; do
     waited=$((waited + 1))
