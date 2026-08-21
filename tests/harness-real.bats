@@ -19,3 +19,15 @@ teardown() {
   [ ! -e "$socket" ]
   ! kill -0 "$server_pid" 2>/dev/null
 }
+
+@test "real teardown can recover the server pid from tmux" {
+  tama_start_server
+  local socket="$(tama_socket_dir)/$TAMA_SOCKET"
+  local server_pid="$TAMA_SERVER_PID"
+  unset TAMA_SERVER_PID
+
+  tama_kill_server
+
+  [ ! -e "$socket" ]
+  ! kill -0 "$server_pid" 2>/dev/null
+}

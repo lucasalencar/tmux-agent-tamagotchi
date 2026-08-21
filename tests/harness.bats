@@ -24,9 +24,6 @@ case " $* " in
   *' kill-server '*)
     [ -z "${TAMA_FAKE_KILL_FAILURE:-}" ] || exit 1
     ;;
-  *' has-session '*)
-    [ -z "${TAMA_FAKE_SERVER_UNREACHABLE:-}" ] || exit 1
-    ;;
   *' display-message '*'#{pid}'*)
     [ -z "${TAMA_FAKE_PID_LOOKUP_FAILURE:-}" ] || exit 1
     printf '%s' "${TAMA_FAKE_SERVER_PID:-}"
@@ -105,6 +102,16 @@ assert_surviving_server_is_reported() {
   assert_equal "$TAMA_SERVER_PID" "$$"
 }
 
+@test "server startup propagates refusal to abandon active ownership" {
+  export TAMA_SOCKET=tamatest-owned
+  export TAMA_SERVER_PID=$$
+
+  tama_start_server 2>/dev/null && return 1
+
+  assert_equal "$TAMA_SOCKET" tamatest-owned
+  assert_equal "$TAMA_SERVER_PID" "$$"
+}
+
 @test "server startup remembers the pid needed for reliable teardown" {
   export TAMA_FAKE_SERVER_PID=$$
 
@@ -134,10 +141,9 @@ assert_surviving_server_is_reported() {
   assert_surviving_server_is_reported
 }
 
-@test "an unreachable server process must exit before its socket is removed" {
+@test "a known server process must exit before its socket is removed" {
   arrange_fake_server_socket_file tamatest-exiting
   export TAMA_SERVER_PID=$$
-  export TAMA_FAKE_SERVER_UNREACHABLE=1
   export TAMA_SERVER_EXIT_WAIT_ATTEMPTS=1
 
   run --separate-stderr tama_kill_server
@@ -148,7 +154,6 @@ assert_surviving_server_is_reported() {
 @test "teardown discovers the pid when startup did not record it" {
   arrange_fake_server_socket_file tamatest-fallback
   export TAMA_FAKE_SERVER_PID=$$
-  export TAMA_FAKE_SERVER_UNREACHABLE=1
   export TAMA_SERVER_EXIT_WAIT_ATTEMPTS=1
 
   run --separate-stderr tama_kill_server
@@ -158,7 +163,6 @@ assert_surviving_server_is_reported() {
 
 @test "a socket is removed after its server process finishes exiting" {
   arrange_fake_server_socket_file tamatest-exiting
-  export TAMA_FAKE_SERVER_UNREACHABLE=1
   sleep 0.05 &
   export TAMA_FAKE_SERVER_PID=$!
 
@@ -181,7 +185,6 @@ assert_surviving_server_is_reported() {
 
 @test "successful teardown clears socket and pid ownership" {
   arrange_fake_server_socket_file tamatest-dead
-  export TAMA_FAKE_SERVER_UNREACHABLE=1
   sleep 0 &
   export TAMA_SERVER_PID=$!
   wait "$TAMA_SERVER_PID"
@@ -193,18 +196,23 @@ assert_surviving_server_is_reported() {
 }
 
 @test "a socket removal failure preserves ownership and fails teardown" {
+  local fake_rm_dir="$BATS_TEST_TMPDIR/fake-rm" previous_path="$PATH" kill_status=0
   arrange_fake_server_socket_file tamatest-unremoved
   sleep 0 &
   export TAMA_SERVER_PID=$!
   wait "$TAMA_SERVER_PID"
-  cat >"$BATS_TEST_TMPDIR/bin/rm" <<'FAKE_RM'
+  mkdir -p "$fake_rm_dir"
+  cat >"$fake_rm_dir/rm" <<'FAKE_RM'
 #!/bin/sh
 exit 1
 FAKE_RM
-  chmod +x "$BATS_TEST_TMPDIR/bin/rm"
+  chmod +x "$fake_rm_dir/rm"
+  PATH="$fake_rm_dir:$PATH"
 
-  tama_kill_server && return 1
+  tama_kill_server || kill_status=$?
+  PATH="$previous_path"
 
+  [ "$kill_status" -ne 0 ]
   assert_equal "$TAMA_SOCKET" tamatest-unremoved
   [ -n "$TAMA_SERVER_PID" ]
 }
