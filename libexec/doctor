@@ -486,7 +486,7 @@ doctor_label_command() {
 # anywhere in the line make the executable unknowable without running user syntax.
 doctor_label_command_has_shell_syntax() { # <command line>
   case "$1" in
-    *"'"* | *'"'* | *'|'* | *'&'* | *';'* | *'<'* | *'>'* | *'$'* | *'`'* | *'('* | *')'*)
+    *$'\n'* | *"'"* | *'"'* | *'|'* | *'&'* | *';'* | *'<'* | *'>'* | *'$'* | *'`'* | *'('* | *')'*)
       return 0
       ;;
   esac
@@ -511,7 +511,9 @@ doctor_label_program() { # <plain program word>
         "@tama_label_command runs $program, whose relative path depends on the hook working directory"
       return 0
       ;;
-    *) resolved="$(command -v "$program" 2>/dev/null)" || resolved='' ;;
+    # Ask the same shell the runtime starts, using a fixed script and the program as
+    # data. This checks builtins without evaluating any part of the configured line.
+    *) resolved="$(sh -c 'command -v "$1"' _ "$program" 2>/dev/null)" || resolved='' ;;
   esac
 
   if [ -z "$resolved" ]; then
@@ -521,7 +523,12 @@ doctor_label_program() { # <plain program word>
   fi
 
   case "$resolved" in
-    */*)
+    /*)
+      if [ "$program" = "${program##*/}" ] && doctor_path_has_relative_entry; then
+        doctor_label_command_unchecked \
+          "@tama_label_command runs $program, but PATH resolved it relative to this working directory"
+        return 0
+      fi
       if [ ! -e "$resolved" ]; then
         doctor_fail "@tama_label_command runs $program, which does not resolve to an executable"
         doctor_label_command_cost
@@ -536,12 +543,32 @@ doctor_label_program() { # <plain program word>
       doctor_label_command_cost
       doctor_more "executable file: $resolved"
       ;;
+    */*)
+      doctor_label_command_unchecked \
+        "@tama_label_command runs $program, but PATH resolved it relative to this working directory"
+      ;;
     *)
       doctor_ok "@tama_label_command runs $program"
       doctor_label_command_cost
       doctor_more "shell command: $resolved"
       ;;
   esac
+}
+
+doctor_path_has_relative_entry() {
+  local rest="${PATH:-}" entry last='no'
+  while :; do
+    case "$rest" in
+      *:*) entry="${rest%%:*}"; rest="${rest#*:}" ;;
+      *) entry="$rest"; last='yes' ;;
+    esac
+    case "$entry" in
+      /*) ;;
+      *) return 0 ;;
+    esac
+    [ "$last" = 'no' ] || break
+  done
+  return 1
 }
 
 doctor_label_command_unchecked() { # <verdict>
