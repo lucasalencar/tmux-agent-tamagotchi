@@ -15,9 +15,13 @@ teardown() {
 }
 
 boot_demo() {
-  run env "TAMA_DEMO_PLUGIN_DIR=$1" \
+  run tama_start_detached_server env "TAMA_DEMO_PLUGIN_DIR=$1" \
     tmux -L "$TAMA_SOCKET" -f "${2:-$PLUGIN_ROOT/examples/demo.tmux.conf}" \
-    new-session -d -s demo
+    new-session -d -P -F '#{pid}' -s demo
+  if [ "$status" -eq 0 ]; then
+    TAMA_SERVER_PID="$output"
+    export TAMA_SERVER_PID
+  fi
   # The demo config deliberately leaves `@tama_backend auto`, which on the developer's
   # own Mac resolves to their real notifier — and this suite reaches the dismissal path.
   # See tama_no_backend. Ignored when the boot was meant to fail.
@@ -32,6 +36,14 @@ boot_demo() {
   bin="$(test_tmux show -gqv @tama_bin)"
   assert_equal "$bin" "$PLUGIN_ROOT/bin/tama"
   [ -x "$bin" ]
+}
+
+@test "the demo server records its pid for reliable teardown" {
+  boot_demo "$PLUGIN_ROOT"
+  assert_success
+
+  [ -n "${TAMA_SERVER_PID:-}" ]
+  kill -0 "$TAMA_SERVER_PID"
 }
 
 @test "the demo config finds the plugin when tmux is started from the clone" {

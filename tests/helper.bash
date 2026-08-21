@@ -34,10 +34,29 @@ TAMA_ON_SPELLINGS='on yes 1 true offf'
 tama_reserve_socket() {
   TAMA_SOCKET="$1-$$-${BATS_TEST_NUMBER:-0}-${RANDOM}"
   export TAMA_SOCKET
+  unset TAMA_SERVER_PID
+}
+
+# Starts a tmux server with its streams on files rather than the suite's capture pipe.
+# The caller supplies `-P -F '#{pid}'`; stdout is returned only after tmux has exited,
+# so the long-lived server never inherits the pipe used to return its pid.
+tama_start_detached_server() { # <command> [args...]
+  local stdout_file stderr_file server_pid='' start_status=0
+  stdout_file="${BATS_TEST_TMPDIR:-/tmp}/$TAMA_SOCKET-startup.out"
+  stderr_file="${BATS_TEST_TMPDIR:-/tmp}/$TAMA_SOCKET-startup.err"
+  "$@" </dev/null >"$stdout_file" 2>"$stderr_file" || start_status=$?
+  if [ "$start_status" -ne 0 ]; then
+    cat "$stdout_file" "$stderr_file" >&2
+    rm -f "$stdout_file" "$stderr_file"
+    return "$start_status"
+  fi
+  IFS= read -r server_pid <"$stdout_file" || true
+  rm -f "$stdout_file" "$stderr_file"
+  [ -n "$server_pid" ] || return 1
+  printf '%s' "$server_pid"
 }
 
 tama_start_server() {
-  local startup_log
   tama_reserve_socket tamatest
   # The indirection goes into the environment *before* the server boots as well as
   # after, so that jobs the server spawns for itself — a status line `#()` format, a
@@ -48,16 +67,13 @@ tama_start_server() {
   # Loudly, because everything a test then arranges is built on this session being
   # this test's own. A `duplicate session` here would mean the socket is somebody
   # else's server, and every assertion after it would be about their windows.
-  startup_log="${BATS_TEST_TMPDIR:-/tmp}/$TAMA_SOCKET-startup.log"
-  test_tmux -f /dev/null new-session -d -s t \
-    </dev/null >"$startup_log" 2>&1 || {
+  TAMA_SERVER_PID="$(
+    tama_start_detached_server test_tmux -f /dev/null \
+      new-session -d -P -F '#{pid}' -s t
+  )" || {
     printf 'could not boot a tmux server on %s\n' "$TAMA_SOCKET" >&2
-    cat "$startup_log" >&2
-    rm -f "$startup_log"
     return 1
   }
-  rm -f "$startup_log"
-  TAMA_SERVER_PID="$(test_tmux display-message -p '#{pid}')" || return 1
   export TAMA_SERVER_PID
   tama_no_backend
   tama_point_at_server

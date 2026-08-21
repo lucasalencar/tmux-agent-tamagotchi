@@ -11,7 +11,7 @@ setup() {
 #!/bin/sh
 case " $* " in
   *' new-session '*)
-    printf 'server stdout stayed attached'
+    printf '%s' "${TAMA_FAKE_SERVER_PID:-}"
     printf 'server stderr stayed attached' >&2
     [ -z "${TAMA_FAKE_START_FAILURE:-}" ] || exit 1
     ;;
@@ -41,7 +41,7 @@ create_fake_server_socket() {
 assert_surviving_server_is_reported() {
   [ "$status" -ne 0 ]
   [ -e "$(tama_socket_dir)/$TAMA_SOCKET" ]
-  assert_contains "$stderr" 'test tmux server survived kill-server' 'stderr'
+  assert_stderr_contains 'test tmux server survived kill-server'
 }
 
 @test "a test server cannot retain the suite output streams" {
@@ -58,7 +58,15 @@ assert_surviving_server_is_reported() {
   run --separate-stderr tama_start_server
 
   [ "$status" -ne 0 ]
-  assert_contains "$stderr" 'server stderr stayed attached' 'stderr'
+  assert_stderr_contains 'server stderr stayed attached'
+}
+
+@test "reserving a new socket invalidates the previous server pid" {
+  export TAMA_SERVER_PID=$$
+
+  tama_reserve_socket another
+
+  [ -z "${TAMA_SERVER_PID:-}" ]
 }
 
 @test "server startup remembers the pid needed for reliable teardown" {
@@ -88,7 +96,7 @@ assert_surviving_server_is_reported() {
 
 @test "an unreachable server process must exit before its socket is removed" {
   create_fake_server_socket tamatest-exiting
-  export TAMA_FAKE_SERVER_PID=$$
+  export TAMA_SERVER_PID=$$
   export TAMA_FAKE_SERVER_UNREACHABLE=1
   export TAMA_SERVER_EXIT_WAIT_ATTEMPTS=1
 
