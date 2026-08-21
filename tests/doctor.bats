@@ -218,6 +218,26 @@ PROVIDER
   assert_output_contains 'no problems and no warnings'
 }
 
+@test "doctor rejects a reserved shell word that cannot stand alone as a provider" {
+  healthy_server
+  test_tmux set -g @tama_label_command 'if'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_status 1
+  assert_output_contains '@tama_label_command starts with if, which is not a complete shell command'
+}
+
+@test "doctor resolves builtins with the runtime shell rather than Bash" {
+  sh -c 'command -v compgen >/dev/null 2>&1' &&
+    skip 'this platform uses a runtime shell that also provides compgen'
+  healthy_server
+  test_tmux set -g @tama_label_command 'compgen'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_status 1
+  assert_output_contains '@tama_label_command runs compgen, which does not resolve to an executable'
+}
+
 @test "doctor fails when a bare label provider is not on PATH" {
   healthy_server
   test_tmux set -g @tama_label_command 'tama-label-provider-that-does-not-exist'
@@ -291,6 +311,23 @@ PROVIDER
   assert_success
   assert_output_contains '@tama_label_command runs label-provider, but PATH resolved it relative to this working directory'
   [ ! -e "$marker" ]
+}
+
+@test "doctor keeps an absolute PATH match when a later entry is relative" {
+  healthy_server
+  local provider="$BATS_TEST_TMPDIR/absolute-bin/label-provider"
+  mkdir -p "${provider%/*}" "$BATS_TEST_TMPDIR/relative-bin"
+  printf '#!/bin/sh\n' >"$provider"
+  chmod +x "$provider"
+  PATH="${provider%/*}:relative-bin:$PATH"
+  export PATH
+  test_tmux set -g @tama_label_command 'label-provider'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_label_command runs label-provider'
+  assert_output_contains "executable file: $provider"
+  refute_output_contains 'PATH resolved it relative'
 }
 
 @test "doctor does not reject a home-relative provider when HOME is unavailable" {

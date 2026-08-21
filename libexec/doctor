@@ -495,6 +495,12 @@ doctor_label_command_has_shell_syntax() { # <command line>
 
 doctor_label_program() { # <plain program word>
   local program="$1" resolved path
+  if ! sh -n -c "$program \"\$1\"" 2>/dev/null; then
+    doctor_fail "@tama_label_command starts with $program, which is not a complete shell command"
+    doctor_label_command_cost
+    return 0
+  fi
+
   case "$program" in
     \~/*)
       if [ -z "${HOME:-}" ]; then
@@ -524,7 +530,8 @@ doctor_label_program() { # <plain program word>
 
   case "$resolved" in
     /*)
-      if [ "$program" = "${program##*/}" ] && doctor_path_has_relative_entry; then
+      if [ "$program" = "${program##*/}" ] &&
+        doctor_program_uses_relative_path "$program"; then
         doctor_label_command_unchecked \
           "@tama_label_command runs $program, but PATH resolved it relative to this working directory"
         return 0
@@ -555,17 +562,19 @@ doctor_label_program() { # <plain program word>
   esac
 }
 
-doctor_path_has_relative_entry() {
+doctor_program_uses_relative_path() { # <bare program>
   local rest="${PATH:-}" entry last='no'
   while :; do
     case "$rest" in
       *:*) entry="${rest%%:*}"; rest="${rest#*:}" ;;
       *) entry="$rest"; last='yes' ;;
     esac
-    case "$entry" in
-      /*) ;;
-      *) return 0 ;;
-    esac
+    if [ -f "${entry:-.}/$1" ] && [ -x "${entry:-.}/$1" ]; then
+      case "$entry" in
+        /*) return 1 ;;
+        *) return 0 ;;
+      esac
+    fi
     [ "$last" = 'no' ] || break
   done
   return 1
