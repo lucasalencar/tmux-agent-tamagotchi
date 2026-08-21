@@ -13,6 +13,7 @@ case " $* " in
   *' new-session '*)
     printf 'server stdout stayed attached'
     printf 'server stderr stayed attached' >&2
+    [ -z "${TAMA_FAKE_START_FAILURE:-}" ] || exit 1
     ;;
   *' kill-server '*)
     [ -z "${TAMA_FAKE_KILL_FAILURE:-}" ] || exit 1
@@ -30,7 +31,21 @@ FAKE_TMUX
   export PATH
 }
 
+create_fake_server_socket() {
+  export TAMA_SOCKET="$1"
+  export TMUX_TMPDIR="$BATS_TEST_TMPDIR"
+  mkdir -p "$(tama_socket_dir)"
+  touch "$(tama_socket_dir)/$TAMA_SOCKET"
+}
+
+assert_surviving_server_is_reported() {
+  [ "$status" -ne 0 ]
+  [ -e "$(tama_socket_dir)/$TAMA_SOCKET" ]
+  assert_contains "$stderr" 'test tmux server survived kill-server' 'stderr'
+}
+
 @test "a test server cannot retain the suite output streams" {
+  export TAMA_FAKE_SERVER_PID=$$
   run --separate-stderr tama_start_server
 
   assert_success
@@ -38,44 +53,68 @@ FAKE_TMUX
   assert_equal "$stderr" ''
 }
 
+@test "a failed server start reports tmux's diagnostic" {
+  export TAMA_FAKE_START_FAILURE=1
+  run --separate-stderr tama_start_server
+
+  [ "$status" -ne 0 ]
+  assert_contains "$stderr" 'server stderr stayed attached' 'stderr'
+}
+
+@test "server startup remembers the pid needed for reliable teardown" {
+  export TAMA_FAKE_SERVER_PID=$$
+
+  tama_start_server
+
+  assert_equal "$TAMA_SERVER_PID" "$$"
+}
+
 @test "a failed kill leaves a live server's socket in place and reports it" {
-  export TAMA_SOCKET=tamatest-survivor
-  export TMUX_TMPDIR="$BATS_TEST_TMPDIR"
+  create_fake_server_socket tamatest-survivor
   export TAMA_FAKE_KILL_FAILURE=1
-  mkdir -p "$(tama_socket_dir)"
-  touch "$(tama_socket_dir)/$TAMA_SOCKET"
 
   run --separate-stderr tama_kill_server
 
-  [ "$status" -ne 0 ]
-  [ -e "$(tama_socket_dir)/$TAMA_SOCKET" ]
-  assert_contains "$stderr" 'test tmux server survived kill-server' 'stderr'
+  assert_surviving_server_is_reported
 }
 
 @test "a successful kill that leaves the server alive is detected" {
-  export TAMA_SOCKET=tamatest-survivor
-  export TMUX_TMPDIR="$BATS_TEST_TMPDIR"
-  mkdir -p "$(tama_socket_dir)"
-  touch "$(tama_socket_dir)/$TAMA_SOCKET"
+  create_fake_server_socket tamatest-survivor
 
   run --separate-stderr tama_kill_server
 
-  [ "$status" -ne 0 ]
-  [ -e "$(tama_socket_dir)/$TAMA_SOCKET" ]
-  assert_contains "$stderr" 'test tmux server survived kill-server' 'stderr'
+  assert_surviving_server_is_reported
 }
 
 @test "an unreachable server process must exit before its socket is removed" {
-  export TAMA_SOCKET=tamatest-exiting
-  export TMUX_TMPDIR="$BATS_TEST_TMPDIR"
+  create_fake_server_socket tamatest-exiting
   export TAMA_FAKE_SERVER_PID=$$
   export TAMA_FAKE_SERVER_UNREACHABLE=1
-  mkdir -p "$(tama_socket_dir)"
-  touch "$(tama_socket_dir)/$TAMA_SOCKET"
+  export TAMA_SERVER_EXIT_WAIT_ATTEMPTS=1
 
   run --separate-stderr tama_kill_server
 
-  [ "$status" -ne 0 ]
-  [ -e "$(tama_socket_dir)/$TAMA_SOCKET" ]
-  assert_contains "$stderr" 'test tmux server survived kill-server' 'stderr'
+  assert_surviving_server_is_reported
+}
+
+@test "a socket is removed after its server process finishes exiting" {
+  create_fake_server_socket tamatest-exiting
+  export TAMA_FAKE_SERVER_UNREACHABLE=1
+  sleep 0.05 &
+  export TAMA_FAKE_SERVER_PID=$!
+
+  run --separate-stderr tama_kill_server
+
+  assert_success
+  [ ! -e "$(tama_socket_dir)/$TAMA_SOCKET" ]
+}
+
+@test "a dead server's stale socket is removed" {
+  create_fake_server_socket tamatest-dead
+  export TAMA_FAKE_SERVER_UNREACHABLE=1
+
+  run --separate-stderr tama_kill_server
+
+  assert_success
+  [ ! -e "$(tama_socket_dir)/$TAMA_SOCKET" ]
 }
