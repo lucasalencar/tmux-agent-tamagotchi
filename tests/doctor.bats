@@ -811,6 +811,19 @@ PROVIDER
 
 # --- the focus check ---------------------------------------------------------------
 
+@test "the focus diagnosis does not claim a bundle id controls the click" {
+  healthy_server
+  test_tmux set -g @tama_backend macos
+  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  test_tmux set -g @tama_terminal_app Ghostty
+  test_tmux set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'terminal: Ghostty (@tama_terminal_app)'
+  refute_output_contains 'bundle id'
+}
+
 @test "a title configuration the focus check cannot match warns, and says it fails toward noise" {
   healthy_server
   test_tmux set -g @tama_backend macos
@@ -895,7 +908,7 @@ PROVIDER
   done
 }
 
-@test "the libnotify backend reports whether there is a session bus to reach" {
+@test "libnotify diagnoses its session bus without macOS focus guidance" {
   healthy_server
   test_tmux set -g @tama_backend libnotify
   test_tmux set -g @tama_notify_send "$PLUGIN_ROOT/tests/fixtures/fake-notify-send"
@@ -905,6 +918,9 @@ PROVIDER
   assert_success
   assert_output_contains 'DBUS_SESSION_BUS_ADDRESS is not set'
   assert_output_contains 'every banner fails silently'
+  refute_output_contains 'terminal:'
+  refute_output_contains 'bundle id'
+  refute_output_contains 'The macOS backend identifies the application'
 }
 
 # --- Claude Code -------------------------------------------------------------------

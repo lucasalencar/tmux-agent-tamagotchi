@@ -111,8 +111,10 @@ server that outlived the session — there are no banners and nothing fails.
 
 The macOS backend needs to know your terminal, since neither tmux nor this plugin can
 tell which application is displaying a session: `@tama_terminal_app` is the process
-name it asks the desktop about and `@tama_terminal_bundle_id` is what a banner
-activates when clicked. Both default to Ghostty.
+name it asks the desktop about and defaults to Ghostty. `@tama_terminal_bundle_id`
+remains in the capability environment for custom backends, but the backend shipped
+here does not activate an application by bundle id: its click action raises the
+existing terminal window without sending a reopen event.
 
 Two of its capabilities identify a terminal window by its **title**, which works
 because tmux can be told to put the session name there:

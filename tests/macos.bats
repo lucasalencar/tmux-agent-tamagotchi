@@ -118,7 +118,7 @@ run_click() { # <click command line>
     sh -c "$1"
 }
 
-@test "a banner is handed to terminal-notifier with its title, message and group" {
+@test "a banner hands terminal-notifier its content without activating the terminal" {
   use_macos_backend
   local pane window
   pane="$(agent_pane_elsewhere)"
@@ -137,8 +137,9 @@ run_click() { # <click command line>
   # Grouped per window, which is what makes a second banner replace the first instead of
   # burying the screen, and what lets it be dismissed later.
   assert_notifier_flag group "tmux-window-$window"
-  # And the terminal comes forward on click even if the command line does not run.
-  assert_notifier_flag activate com.mitchellh.ghostty
+  # Activation sends a reopen event that can create a new terminal surface. The click
+  # action's final focus-window command raises the existing one without reopening it.
+  [ ! -e "$TAMA_NOTIFIER_DIR/activate" ]
 }
 
 @test "the macOS backend runs under the bash macOS ships" {
@@ -163,17 +164,6 @@ run_click() { # <click command line>
     "$(test_tmux display-message -p -t "$pane" '#{window_id}')"
   assert_success
   [ -z "$stderr" ]
-}
-
-@test "the terminal a banner activates is configuration, not a hardcoded app" {
-  use_macos_backend
-  test_tmux set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
-
-  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$(agent_pane_elsewhere)"
-  assert_success
-
-  wait_for_notifier
-  assert_notifier_flag activate net.kovidgoyal.kitty
 }
 
 @test "clicking the banner runs the click action the core composed" {
