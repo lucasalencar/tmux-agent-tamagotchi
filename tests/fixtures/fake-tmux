@@ -24,6 +24,14 @@
 
 set -o nounset
 
+# tama_use_fake_tmux always supplies the isolated selector first. Requiring that exact
+# fixture contract means a tmux_run regression fails here before any real tmux exec.
+if [ "${1:-}" != -u ] ||
+  { [ "${2:-}" != -L ] && [ "${2:-}" != -S ]; } || [ -z "${3:-}" ]; then
+  printf 'fake tmux refused an invocation without an explicit server\n' >&2
+  exit 90
+fi
+
 # One argument per line, so a test can assert on which tmux commands ran —
 # `grep -x set` finds a set-option and nothing that merely mentions one, and a
 # command batched behind a `;` is as visible as the first.
@@ -69,7 +77,7 @@ for tama_arg in "$@"; do
   fi
   case "$tama_arg" in
     -V) tama_wants_version=1 ;;
-    -L | -S | -f) tama_skip_next_option_arg=1 ;;
+    -c | -f | -L | -S | -T) tama_skip_next_option_arg=1 ;;
     -*) ;;
     *) break ;;
   esac

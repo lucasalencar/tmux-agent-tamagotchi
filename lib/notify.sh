@@ -185,7 +185,7 @@ tama_notify_tmux_command() {
 
   tama_shell_quote "$path"
   TAMA_NOTIFY_TMUX="$TAMA_QUOTED"
-  TAMA_NOTIFY_TMUX_ENV="TAMA_TMUX=$TAMA_QUOTED"
+  TAMA_NOTIFY_TMUX_ENV="TAMA_TMUX=$TAMA_QUOTED TAMA_TMUX_ARGS='' TAMA_TMUX_SOCKET=''"
 
   # Explicit leading arguments retain their documented word splitting. A socket derived
   # from TMUX takes the exact-socket path below instead, so spaces remain one argument.

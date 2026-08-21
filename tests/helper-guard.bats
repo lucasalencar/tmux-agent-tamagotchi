@@ -44,3 +44,12 @@ load helper
   assert_equal "$output" ''
   assert_equal "$stderr" 'refusing to use the default tmux socket in tests'
 }
+
+@test "the fake tmux refuses an invocation without an explicit server" {
+  run --separate-stderr env TAMA_FAKE_TMUX_VERSION='tmux 3.4' \
+    "$PLUGIN_ROOT/tests/fixtures/fake-tmux" -u -V
+
+  [ "$status" -ne 0 ]
+  assert_equal "$output" ''
+  assert_equal "$stderr" 'fake tmux refused an invocation without an explicit server'
+}

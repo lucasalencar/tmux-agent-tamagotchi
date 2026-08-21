@@ -18,34 +18,65 @@ TAMA_TMUX="${TAMA_TMUX:-tmux}"
 # silently changing the target to default.
 TAMA_TMUX_SERVER_KIND=''
 TAMA_TMUX_SERVER_SOCKET=''
+tama_tmux_args_select_server() {
+  local flags option
+  set -f
+  # shellcheck disable=SC2086  # TAMA_TMUX_ARGS deliberately holds leading words
+  set -- $TAMA_TMUX_ARGS
+  set +f
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --) return 1 ;;
+      -?*)
+        flags="${1#-}"
+        shift
+        while [ -n "$flags" ]; do
+          option="${flags%"${flags#?}"}"
+          flags="${flags#?}"
+          case "$option" in
+            L | S)
+              [ -n "$flags" ] && return 0
+              [ "$#" -gt 0 ] && [ -n "$1" ] && return 0
+              return 1
+              ;;
+            c | f | T)
+              if [ -z "$flags" ]; then
+                [ "$#" -gt 0 ] || return 1
+                shift
+              fi
+              flags=''
+              ;;
+            2 | C | D | h | l | N | u | V | v) ;;
+            *) return 1 ;;
+          esac
+        done
+        ;;
+      *) return 1 ;;
+    esac
+  done
+  return 1
+}
+
+tama_tmux_socket_from_environment() {
+  local socket="${TMUX:-}"
+  socket="${socket%,*}"
+  socket="${socket%,*}"
+  [ -n "$socket" ] && [ -S "$socket" ] || return 1
+  TAMA_TMUX_SERVER_SOCKET="$socket"
+}
+
 tama_tmux_server_resolve() {
-  if [ -n "$TAMA_TMUX_SERVER_KIND" ]; then
-    [ "$TAMA_TMUX_SERVER_KIND" = args ] || [ "$TAMA_TMUX_SERVER_KIND" = socket ]
-    return
-  fi
+  case "$TAMA_TMUX_SERVER_KIND" in
+    args | socket) return 0 ;;
+    default | invalid) return 1 ;;
+  esac
 
   if [ -n "${TAMA_TMUX_ARGS:-}" ]; then
-    set -f
-    # shellcheck disable=SC2086  # TAMA_TMUX_ARGS deliberately holds leading words
-    set -- $TAMA_TMUX_ARGS
-    set +f
-    while [ "$#" -gt 0 ]; do
-      case "$1" in
-        -L | -S)
-          if [ "$#" -gt 1 ] && [ -n "$2" ]; then
-            TAMA_TMUX_SERVER_KIND=args
-            return 0
-          fi
-          ;;
-        -L?* | -S?*)
-          TAMA_TMUX_SERVER_KIND=args
-          return 0
-          ;;
-        -c | -f | -T) shift ;;
-        --) break ;;
-      esac
-      shift
-    done
+    if tama_tmux_args_select_server; then
+      TAMA_TMUX_SERVER_KIND=args
+      return 0
+    fi
     TAMA_TMUX_SERVER_KIND=invalid
     return 1
   fi
@@ -56,12 +87,8 @@ tama_tmux_server_resolve() {
     return 0
   fi
 
-  local socket="${TMUX:-}"
-  socket="${socket%,*}"
-  socket="${socket%,*}"
-  if [ -n "$socket" ] && [ -S "$socket" ]; then
+  if tama_tmux_socket_from_environment; then
     TAMA_TMUX_SERVER_KIND=socket
-    TAMA_TMUX_SERVER_SOCKET="$socket"
     return 0
   fi
 
@@ -79,7 +106,9 @@ tama_tmux_server_resolve() {
 # turn an agent name or a path with an accent in it into a value that never equals
 # itself, so the pane would be rewritten on every tool call.
 tmux_run() {
-  tama_tmux_server_resolve || [ "$TAMA_TMUX_SERVER_KIND" = default ] || return 1
+  if ! tama_tmux_server_resolve && [ "$TAMA_TMUX_SERVER_KIND" != default ]; then
+    return 1
+  fi
   if [ "$TAMA_TMUX_SERVER_KIND" = args ]; then
     # Split into words, but with globbing off: a socket name is not a pattern.
     set -f

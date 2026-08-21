@@ -728,9 +728,13 @@ PROVIDER
   test_tmux select-window -t t:0
 
   click="$(tama_backend_value notify env.TAMA_CLICK)"
-  run_click "$click"
+  run --separate-stderr env -u TMUX \
+    TAMA_TMUX_ARGS='-L tama-guaranteed-missing' TAMA_TMUX_SOCKET=/nonexistent/socket \
+    TAMA_TMUX=/nonexistent/tmux sh -c "$click"
   assert_success
   assert_equal "$(test_tmux display-message -p -t "$window" '#{window_active}')" '1'
+  assert_backend_called focus
+  assert_backend_value focus argv1 t
 }
 
 @test "clicking a banner whose pane has gone still brings the terminal forward" {

@@ -60,6 +60,26 @@ teardown() {
   done
 }
 
+@test "loading does not mistake command flags for a server selector" {
+  run --separate-stderr env -u TMUX \
+    TAMA_TMUX_ARGS='select-pane -L ;' TAMA_TMUX=/nonexistent/tmux \
+    "$PLUGIN_ROOT/tamagotchi.tmux"
+
+  [ "$status" -ne 0 ]
+  assert_equal "$output" ''
+  assert_equal "$stderr" 'tamagotchi: not running inside tmux; nothing was loaded'
+  assert_plugin_not_wired
+}
+
+@test "loading accepts a server selector grouped with global flags" {
+  run --separate-stderr env -u TMUX TAMA_TMUX_ARGS="-uL $TAMA_SOCKET" \
+    TAMA_TMUX=tmux "$PLUGIN_ROOT/tamagotchi.tmux"
+
+  assert_success
+  assert_equal "$stderr" ''
+  assert_plugin_wired "$PLUGIN_ROOT"
+}
+
 @test "loading rejects a TMUX value that does not name a socket" {
   run --separate-stderr env -u TAMA_TMUX_ARGS \
     TMUX="$BATS_TEST_TMPDIR/missing,1,0" TAMA_TMUX=/nonexistent/tmux \
