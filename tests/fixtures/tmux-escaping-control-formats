@@ -7,4 +7,4 @@ for argument in "$@"; do
   esac
 done
 
-exec @TMUX@ -L @SOCKET@ "$@"
+exec @TMUX@ "$@"

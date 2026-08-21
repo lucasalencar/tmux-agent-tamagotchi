@@ -712,6 +712,27 @@ PROVIDER
   assert_backend_value focus argv1 t
 }
 
+@test "clicking reaches an invoking tmux socket whose path contains a space" {
+  arrange_two_windows
+  local pane window socket alias click
+  pane="$(tama_pane_of t:1)"
+  window="$(tama_window_id t:1)"
+  socket="$(test_tmux display-message -p '#{socket_path}')"
+  alias="$BATS_TEST_TMPDIR/tmux socket"
+  ln -s "$socket" "$alias"
+  export TMUX="$alias,1,0"
+  unset TAMA_TMUX_ARGS
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  test_tmux select-window -t t:0
+
+  click="$(tama_backend_value notify env.TAMA_CLICK)"
+  run_click "$click"
+  assert_success
+  assert_equal "$(test_tmux display-message -p -t "$window" '#{window_active}')" '1'
+}
+
 @test "clicking a banner whose pane has gone still brings the terminal forward" {
   arrange_two_windows
   test_tmux split-window -t t:1 -d

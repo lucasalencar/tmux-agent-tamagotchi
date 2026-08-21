@@ -11,7 +11,6 @@
 #                                agent's hook firing and this running
 #   TAMA_FAKE_TMUX_FAIL_COMMAND  set to make calls containing that command fail
 #   TAMA_FAKE_TMUX_LOG           file the calls are appended to
-#   TAMA_FAKE_TMUX_SOCKET        socket name of the test server
 #   TAMA_FAKE_TMUX_COUNTER       file counting this caller's calls, for the two below
 #   TAMA_FAKE_TMUX_WAIT_BEFORE   which of that caller's calls waits for the file …
 #   TAMA_FAKE_TMUX_WAIT_FOR      … named here to exist
@@ -62,15 +61,15 @@ fi
 # The plugin passes `-u` before the command, so the version request is not
 # necessarily the first argument.
 tama_wants_version=''
-tama_option_argument=''
+tama_skip_next_option_arg=''
 for tama_arg in "$@"; do
-  if [ -n "$tama_option_argument" ]; then
-    tama_option_argument=''
+  if [ -n "$tama_skip_next_option_arg" ]; then
+    tama_skip_next_option_arg=''
     continue
   fi
   case "$tama_arg" in
     -V) tama_wants_version=1 ;;
-    -L | -S | -f) tama_option_argument=1 ;;
+    -L | -S | -f) tama_skip_next_option_arg=1 ;;
     -*) ;;
     *) break ;;
   esac
@@ -84,10 +83,10 @@ fi
 
 if [ "$tama_call_number" -eq "${TAMA_FAKE_TMUX_TOUCH_AFTER:-0}" ] &&
   [ -n "${TAMA_FAKE_TMUX_TOUCH:-}" ]; then
-  tmux -L "$TAMA_FAKE_TMUX_SOCKET" "$@"
+  tmux "$@"
   tama_status=$?
   : >"$TAMA_FAKE_TMUX_TOUCH"
   exit "$tama_status"
 fi
 
-exec tmux -L "$TAMA_FAKE_TMUX_SOCKET" "$@"
+exec tmux "$@"

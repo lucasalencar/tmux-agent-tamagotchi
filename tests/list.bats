@@ -101,11 +101,10 @@ record_for() { # <session target> <pane> <agent> <state> <label>
   wrapper="$BATS_TEST_TMPDIR/tmux-escaping-control-formats"
   sed \
     -e "s|@TMUX@|$(command -v tmux)|g" \
-    -e "s|@SOCKET@|$TAMA_SOCKET|g" \
     "$PLUGIN_ROOT/tests/fixtures/tmux-escaping-control-formats" >"$wrapper"
   chmod +x "$wrapper"
   TAMA_TMUX="$wrapper"
-  TAMA_TMUX_ARGS=''
+  TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
 
   run "$PLUGIN_ROOT/bin/tama" list
   assert_success
@@ -172,12 +171,11 @@ record_for() { # <session target> <pane> <agent> <state> <label>
   wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
   sed \
     -e "s|@TMUX@|$(command -v tmux)|g" \
-    -e "s|@SOCKET@|$TAMA_SOCKET|g" \
     "$PLUGIN_ROOT/tests/fixtures/tmux-fail-target" >"$wrapper"
   chmod +x "$wrapper"
   export TAMA_FAIL_TARGET="$(tama_window_id second:0)"
   TAMA_TMUX="$wrapper"
-  TAMA_TMUX_ARGS=''
+  TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" list
   assert_success

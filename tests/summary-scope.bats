@@ -30,6 +30,7 @@ session_scope() {
 }
 
 attach_extra_client() { # <session>
+  tama_require_isolated_test_socket || return 1
   local fifo="$BATS_TEST_TMPDIR/attach-extra.fifo" waited=0
   mkfifo "$fifo"
   sleep 300 >"$fifo" &
@@ -44,6 +45,7 @@ attach_extra_client() { # <session>
 }
 
 attach_unrelated_client() { # <session>
+  tama_require_isolated_test_socket || return 1
   local fifo="$BATS_TEST_TMPDIR/attach-unrelated.fifo" waited=0
   mkfifo "$fifo"
   sleep 300 >"$fifo" &

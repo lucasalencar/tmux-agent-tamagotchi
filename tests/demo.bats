@@ -15,6 +15,7 @@ teardown() {
 }
 
 boot_demo() {
+  tama_require_isolated_test_socket || return 1
   run env "TAMA_DEMO_PLUGIN_DIR=$1" \
     tmux -L "$TAMA_SOCKET" -f "${2:-$PLUGIN_ROOT/examples/demo.tmux.conf}" \
     new-session -d -s demo

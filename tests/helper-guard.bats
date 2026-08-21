@@ -7,7 +7,7 @@ load helper
 @test "the test tmux helper refuses the default socket" {
   local shim="$BATS_TEST_TMPDIR/shim"
   mkdir -p "$shim"
-  ln -s /usr/bin/false "$shim/tmux"
+  ln -s /usr/bin/true "$shim/tmux"
   PATH="$shim:$PATH"
   export PATH
   TAMA_SOCKET=default
@@ -22,13 +22,23 @@ load helper
 @test "the test teardown refuses the default socket" {
   local shim="$BATS_TEST_TMPDIR/shim"
   mkdir -p "$shim"
-  ln -s /usr/bin/false "$shim/tmux"
+  ln -s /usr/bin/true "$shim/tmux"
   PATH="$shim:$PATH"
   export PATH
   export TMUX_TMPDIR="$BATS_TEST_TMPDIR"
   TAMA_SOCKET=default
 
   run --separate-stderr tama_kill_server
+
+  [ "$status" -ne 0 ]
+  assert_equal "$output" ''
+  assert_equal "$stderr" 'refusing to use the default tmux socket in tests'
+}
+
+@test "the test client helper refuses the default socket before attaching" {
+  TAMA_SOCKET=default
+
+  run --separate-stderr tama_attach_client t
 
   [ "$status" -ne 0 ]
   assert_equal "$output" ''
