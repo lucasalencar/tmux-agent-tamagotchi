@@ -21,6 +21,111 @@ teardown() {
   assert_plugin_wired "$PLUGIN_ROOT"
 }
 
+@test "loading without explicit args uses the invoking tmux server socket" {
+  local socket
+  socket="$(test_tmux display-message -p '#{socket_path}')"
+  test_tmux set-environment -g TAMA_TMUX \
+    "$PLUGIN_ROOT/tests/fixtures/tmux-require-socket"
+  test_tmux set-environment -g TAMA_REAL_TMUX "$(command -v tmux)"
+  test_tmux set-environment -g TAMA_EXPECTED_SOCKET "$socket"
+  test_tmux set-environment -gu TAMA_TMUX_ARGS
+
+  run --separate-stderr test_tmux run-shell "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+  assert_equal "$stderr" ''
+  assert_plugin_wired "$PLUGIN_ROOT"
+}
+
+@test "loading outside tmux without explicit args refuses the default server" {
+  run --separate-stderr env -u TMUX -u TAMA_TMUX_ARGS TAMA_TMUX=/nonexistent/tmux \
+    "$PLUGIN_ROOT/tamagotchi.tmux"
+
+  [ "$status" -ne 0 ]
+  assert_equal "$output" ''
+  assert_equal "$stderr" 'tamagotchi: not running inside tmux; nothing was loaded'
+  assert_plugin_not_wired
+}
+
+@test "loading outside tmux rejects args that do not select a server" {
+  local args
+  for args in ' ' '-f /dev/null'; do
+    run --separate-stderr env -u TMUX TAMA_TMUX_ARGS="$args" \
+      TAMA_TMUX=/nonexistent/tmux "$PLUGIN_ROOT/tamagotchi.tmux"
+
+    [ "$status" -ne 0 ] || return 1
+    assert_equal "$output" '' || return 1
+    assert_equal "$stderr" 'tamagotchi: not running inside tmux; nothing was loaded' ||
+      return 1
+    assert_plugin_not_wired || return 1
+  done
+}
+
+@test "loading does not mistake command flags for a server selector" {
+  run --separate-stderr env -u TMUX \
+    TAMA_TMUX_ARGS='select-pane -L ;' TAMA_TMUX=/nonexistent/tmux \
+    "$PLUGIN_ROOT/tamagotchi.tmux"
+
+  [ "$status" -ne 0 ]
+  assert_equal "$output" ''
+  assert_equal "$stderr" 'tamagotchi: not running inside tmux; nothing was loaded'
+  assert_plugin_not_wired
+}
+
+@test "loading accepts a server selector grouped with global flags" {
+  run --separate-stderr env -u TMUX TAMA_TMUX_ARGS="-uL $TAMA_SOCKET" \
+    TAMA_TMUX=tmux "$PLUGIN_ROOT/tamagotchi.tmux"
+
+  assert_success
+  assert_equal "$stderr" ''
+  assert_plugin_wired "$PLUGIN_ROOT"
+}
+
+@test "loading rejects a TMUX value that does not name a socket" {
+  run --separate-stderr env -u TAMA_TMUX_ARGS \
+    TMUX="$BATS_TEST_TMPDIR/missing,1,0" TAMA_TMUX=/nonexistent/tmux \
+    "$PLUGIN_ROOT/tamagotchi.tmux"
+
+  [ "$status" -ne 0 ]
+  assert_equal "$output" ''
+  assert_equal "$stderr" 'tamagotchi: not running inside tmux; nothing was loaded'
+  assert_plugin_not_wired
+}
+
+@test "loading preserves commas in the invoking tmux socket path" {
+  local socket alias
+  socket="$(test_tmux display-message -p '#{socket_path}')"
+  alias="$BATS_TEST_TMPDIR/tmux,socket"
+  ln -s "$socket" "$alias"
+
+  run --separate-stderr env -u TAMA_TMUX_ARGS TMUX="$alias,1,0" \
+    TAMA_TMUX="$PLUGIN_ROOT/tests/fixtures/tmux-require-socket" \
+    TAMA_REAL_TMUX="$(command -v tmux)" TAMA_EXPECTED_SOCKET="$alias" \
+    "$PLUGIN_ROOT/tamagotchi.tmux"
+
+  assert_success
+  assert_equal "$stderr" ''
+  assert_plugin_wired "$PLUGIN_ROOT"
+}
+
+@test "loading never falls back after the resolved socket disappears" {
+  local socket alias marker
+  socket="$(test_tmux display-message -p '#{socket_path}')"
+  alias="$BATS_TEST_TMPDIR/invoking-socket"
+  marker="$BATS_TEST_TMPDIR/socket-removed"
+  ln -s "$socket" "$alias"
+
+  run --separate-stderr env -u TAMA_TMUX_ARGS TMUX="$alias,1,0" \
+    TAMA_TMUX="$PLUGIN_ROOT/tests/fixtures/tmux-require-socket" \
+    TAMA_REAL_TMUX="$(command -v tmux)" TAMA_EXPECTED_SOCKET="$alias" \
+    TAMA_REAL_SOCKET="$socket" TAMA_REMOVE_EXPECTED_SOCKET_ONCE="$marker" \
+    "$PLUGIN_ROOT/tamagotchi.tmux"
+
+  assert_success
+  assert_equal "$stderr" ''
+  [ -e "$marker" ]
+  assert_plugin_wired "$PLUGIN_ROOT"
+}
+
 @test "loading the plugin changes nothing else about the server" {
   local before
   before="$(tama_server_state)"

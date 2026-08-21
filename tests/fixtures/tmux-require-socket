@@ -1,0 +1,15 @@
+#!/bin/sh
+
+if [ "$1" != '-u' ] || [ "$2" != '-S' ] || [ "$3" != "$TAMA_EXPECTED_SOCKET" ]; then
+  printf 'tmux was not given the invoking server socket: %s\n' "$*" >&2
+  exit 90
+fi
+shift 3
+
+if [ -n "${TAMA_REMOVE_EXPECTED_SOCKET_ONCE:-}" ] &&
+  [ ! -e "$TAMA_REMOVE_EXPECTED_SOCKET_ONCE" ]; then
+  rm "$TAMA_EXPECTED_SOCKET"
+  : >"$TAMA_REMOVE_EXPECTED_SOCKET_ONCE"
+fi
+
+exec "$TAMA_REAL_TMUX" -u -S "${TAMA_REAL_SOCKET:-$TAMA_EXPECTED_SOCKET}" "$@"

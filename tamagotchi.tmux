@@ -40,6 +40,11 @@ fi
 # shellcheck source=lib/hooks.sh
 . "$TAMA_PLUGIN_DIR/lib/hooks.sh"
 
+if ! tama_tmux_server_resolve; then
+  printf 'tamagotchi: not running inside tmux; nothing was loaded\n' >&2
+  exit 1
+fi
+
 main() {
   local version warning
   version="$(tama_tmux_version)"

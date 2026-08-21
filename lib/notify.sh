@@ -155,7 +155,7 @@ tama_notify_click() { # <window_id> <pane_id> <session>
 # How to reach *this* tmux server from a process the desktop starts, quoted, in two
 # shapes: TAMA_NOTIFY_TMUX is a tmux invocation to put a command after, and
 # TAMA_NOTIFY_TMUX_ENV is the same answer as environment assignments to put in front of a
-# `bin/tama`, which reaches tmux through those two variables and nothing else.
+# `bin/tama`.
 #
 # A click arrives long after the hook that raised the banner has exited, in a process
 # with none of its environment: no `$TMUX`, no `$TAMA_TMUX`, and on macOS not even the
@@ -163,17 +163,15 @@ tama_notify_click() { # <window_id> <pane_id> <session>
 # it has to name the right server — a user running tmux on a socket of their own would
 # otherwise have their clicks land on a server they are not looking at, or on none.
 #
-#   * an explicit `$TAMA_TMUX_ARGS` wins, because it is how the tests point the plugin
-#     at their own server and how a user with an unusual setup would say so too
-#   * otherwise the socket is taken from `$TMUX`, which names it exactly, and only if
-#     it really is a socket — a value that is not one would make every click fail
-#   * otherwise nothing, which is the default server, which is where a plugin loaded
-#     by a plain `tmux` lives
+# Server resolution is shared with tmux_run. The difference here is the final branch:
+# with no explicit selector and no `$TMUX`, a click keeps the deliberate default-server
+# fallback. The plugin entrypoint refuses that same branch, because running it by hand
+# must never reconfigure an implicit server.
 #
 # The binary is resolved to an absolute path while there is still a `PATH` to resolve
 # it with.
 tama_notify_tmux_command() {
-  local path="$TAMA_TMUX" resolved socket arg args=''
+  local path="$TAMA_TMUX" resolved arg args=''
   case "$path" in
     # Already a path. `command -v` on one is not an improvement.
     */*) ;;
@@ -183,24 +181,16 @@ tama_notify_tmux_command() {
       ;;
   esac
 
-  if [ -n "${TAMA_TMUX_ARGS:-}" ]; then
-    args="$TAMA_TMUX_ARGS"
-  else
-    socket="${TMUX:-}"
-    socket="${socket%%,*}"
-    if [ -n "$socket" ] && [ -S "$socket" ]; then
-      args="-S $socket"
-    fi
-  fi
+  tama_tmux_server_resolve || true
 
   tama_shell_quote "$path"
   TAMA_NOTIFY_TMUX="$TAMA_QUOTED"
-  TAMA_NOTIFY_TMUX_ENV="TAMA_TMUX=$TAMA_QUOTED"
+  TAMA_NOTIFY_TMUX_ENV="TAMA_TMUX=$TAMA_QUOTED TAMA_TMUX_ARGS='' TAMA_TMUX_SOCKET=''"
 
-  # For the invocation, one quoted word per argument. For the environment, the whole list
-  # as one value, because that is what it is: `tmux_run` splits it into words itself, so
-  # an argument with a space in it could not have survived there in the first place.
-  if [ -n "$args" ]; then
+  # Explicit leading arguments retain their documented word splitting. A socket derived
+  # from TMUX takes the exact-socket path below instead, so spaces remain one argument.
+  if [ "$TAMA_TMUX_SERVER_KIND" = args ]; then
+    args="$TAMA_TMUX_ARGS"
     # Split into words, globbing off, exactly as tmux_run does.
     set -f
     # shellcheck disable=SC2086  # deliberate: "-L socket" is two arguments
@@ -210,9 +200,14 @@ tama_notify_tmux_command() {
       tama_shell_quote "$arg"
       TAMA_NOTIFY_TMUX="$TAMA_NOTIFY_TMUX $TAMA_QUOTED"
     done
+    tama_shell_quote "$args"
+    TAMA_NOTIFY_TMUX_ENV="$TAMA_NOTIFY_TMUX_ENV TAMA_TMUX_ARGS=$TAMA_QUOTED"
+  elif [ "$TAMA_TMUX_SERVER_KIND" = socket ]; then
+    TAMA_NOTIFY_TMUX="$TAMA_NOTIFY_TMUX -S"
+    tama_shell_quote "$TAMA_TMUX_SERVER_SOCKET"
+    TAMA_NOTIFY_TMUX="$TAMA_NOTIFY_TMUX $TAMA_QUOTED"
+    TAMA_NOTIFY_TMUX_ENV="$TAMA_NOTIFY_TMUX_ENV TAMA_TMUX_SOCKET=$TAMA_QUOTED"
   fi
-  tama_shell_quote "$args"
-  TAMA_NOTIFY_TMUX_ENV="$TAMA_NOTIFY_TMUX_ENV TAMA_TMUX_ARGS=$TAMA_QUOTED"
   return 0
 }
 

@@ -8,8 +8,97 @@ set -o nounset
 # Every script reaches tmux through this indirection so tests can point it at
 # their own server. TAMA_TMUX is the path to the binary — it may contain spaces,
 # so it is never split — and TAMA_TMUX_ARGS holds leading arguments, which may
-# not.
+# not. TAMA_TMUX_SOCKET is the exact-socket form used when even that splitting
+# cannot preserve a path, such as in a command persisted for a desktop click.
 TAMA_TMUX="${TAMA_TMUX:-tmux}"
+
+# Resolve the server once per process. Consumers decide whether the deliberate
+# `default` fallback is acceptable; `invalid` never reaches tmux_run. The exact socket
+# is cached so a server disappearing after resolution fails at that socket instead of
+# silently changing the target to default.
+TAMA_TMUX_SERVER_KIND=''
+TAMA_TMUX_SERVER_SOCKET=''
+tama_tmux_args_select_server() {
+  local flags option
+  set -f
+  # shellcheck disable=SC2086  # TAMA_TMUX_ARGS deliberately holds leading words
+  set -- $TAMA_TMUX_ARGS
+  set +f
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --) return 1 ;;
+      -?*)
+        flags="${1#-}"
+        shift
+        while [ -n "$flags" ]; do
+          option="${flags%"${flags#?}"}"
+          flags="${flags#?}"
+          case "$option" in
+            L | S)
+              [ -n "$flags" ] && return 0
+              [ "$#" -gt 0 ] && [ -n "$1" ] && return 0
+              return 1
+              ;;
+            c | f | T)
+              if [ -z "$flags" ]; then
+                [ "$#" -gt 0 ] || return 1
+                shift
+              fi
+              flags=''
+              ;;
+            2 | C | D | h | l | N | u | V | v) ;;
+            *) return 1 ;;
+          esac
+        done
+        ;;
+      *) return 1 ;;
+    esac
+  done
+  return 1
+}
+
+tama_tmux_socket_from_environment() {
+  local socket="${TMUX:-}"
+  socket="${socket%,*}"
+  socket="${socket%,*}"
+  [ -n "$socket" ] && [ -S "$socket" ] || return 1
+  TAMA_TMUX_SERVER_SOCKET="$socket"
+}
+
+tama_tmux_server_resolve() {
+  case "$TAMA_TMUX_SERVER_KIND" in
+    args | socket) return 0 ;;
+    default | invalid) return 1 ;;
+  esac
+
+  if [ -n "${TAMA_TMUX_ARGS:-}" ]; then
+    if tama_tmux_args_select_server; then
+      TAMA_TMUX_SERVER_KIND=args
+      return 0
+    fi
+    TAMA_TMUX_SERVER_KIND=invalid
+    return 1
+  fi
+
+  if [ -n "${TAMA_TMUX_SOCKET:-}" ]; then
+    TAMA_TMUX_SERVER_KIND=socket
+    TAMA_TMUX_SERVER_SOCKET="$TAMA_TMUX_SOCKET"
+    return 0
+  fi
+
+  if tama_tmux_socket_from_environment; then
+    TAMA_TMUX_SERVER_KIND=socket
+    return 0
+  fi
+
+  if [ -n "${TMUX:-}" ]; then
+    TAMA_TMUX_SERVER_KIND=invalid
+  else
+    TAMA_TMUX_SERVER_KIND=default
+  fi
+  return 1
+}
 
 # `-u` says this client speaks UTF-8. Without it tmux decides from the ambient
 # locale, and a server whose locale is C — a CI runner, a systemd unit, a cron job —
@@ -17,12 +106,17 @@ TAMA_TMUX="${TAMA_TMUX:-tmux}"
 # turn an agent name or a path with an accent in it into a value that never equals
 # itself, so the pane would be rewritten on every tool call.
 tmux_run() {
-  if [ -n "${TAMA_TMUX_ARGS:-}" ]; then
+  if ! tama_tmux_server_resolve && [ "$TAMA_TMUX_SERVER_KIND" != default ]; then
+    return 1
+  fi
+  if [ "$TAMA_TMUX_SERVER_KIND" = args ]; then
     # Split into words, but with globbing off: a socket name is not a pattern.
     set -f
     # shellcheck disable=SC2086  # deliberate: "-L socket" is two arguments
     set -- $TAMA_TMUX_ARGS "$@"
     set +f
+  elif [ "$TAMA_TMUX_SERVER_KIND" = socket ]; then
+    set -- -S "$TAMA_TMUX_SERVER_SOCKET" "$@"
   fi
   "$TAMA_TMUX" -u "$@"
 }

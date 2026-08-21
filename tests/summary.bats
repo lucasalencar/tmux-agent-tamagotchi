@@ -206,12 +206,11 @@ session_id() {
   wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
   sed \
     -e "s|@TMUX@|$(command -v tmux)|g" \
-    -e "s|@SOCKET@|$TAMA_SOCKET|g" \
     "$PLUGIN_ROOT/tests/fixtures/tmux-fail-target" >"$wrapper"
   chmod +x "$wrapper"
   export TAMA_FAIL_TARGET="$(tama_window_id t:1)"
   TAMA_TMUX="$wrapper"
-  TAMA_TMUX_ARGS=''
+  TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
   assert_success
@@ -232,12 +231,11 @@ session_id() {
   wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
   sed \
     -e "s|@TMUX@|$(command -v tmux)|g" \
-    -e "s|@SOCKET@|$TAMA_SOCKET|g" \
     "$PLUGIN_ROOT/tests/fixtures/tmux-fail-target" >"$wrapper"
   chmod +x "$wrapper"
   export TAMA_FAIL_TARGET="$(tama_window_id later:0)"
   TAMA_TMUX="$wrapper"
-  TAMA_TMUX_ARGS=''
+  TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" summary "$target"
   assert_success

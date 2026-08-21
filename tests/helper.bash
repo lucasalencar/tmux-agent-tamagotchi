@@ -70,11 +70,20 @@ tama_point_at_server() {
   unset TMUX_PANE
 }
 
+# No test may resolve the socket name that tmux itself treats as the live default.
+tama_require_isolated_test_socket() {
+  if [ "${TAMA_SOCKET:-}" = default ]; then
+    printf 'refusing to use the default tmux socket in tests\n' >&2
+    return 1
+  fi
+}
+
 # kill-server does not remove the socket file. Remove it separately, but never while
 # it still addresses a live server: unlinking then would make the survivor impossible
 # for any later teardown to reach.
 tama_kill_server() {
   if [ -n "${TAMA_SOCKET:-}" ]; then
+    tama_require_isolated_test_socket || return 1
     local server_pid='' waited=0
     server_pid="$(
       tmux -L "$TAMA_SOCKET" display-message -p '#{pid}' 2>/dev/null
@@ -99,6 +108,7 @@ tama_socket_dir() {
 }
 
 test_tmux() {
+  tama_require_isolated_test_socket || return 1
   tmux -L "$TAMA_SOCKET" "$@"
 }
 
@@ -145,6 +155,7 @@ STUB
 # for a user's shell — a hook recipe — can be run verbatim without reaching the
 # real tmux.
 tama_shim_tmux_on_path() {
+  tama_require_isolated_test_socket || return 1
   local bin="$BATS_TEST_TMPDIR/shim"
   mkdir -p "$bin"
   cat >"$bin/tmux" <<SHIM
@@ -363,6 +374,7 @@ tama_render_summary() { # <session target>
 # waits for the client, not for that hook. Tests that inspect state the hook can change
 # use tama_attach_client_without_attach_hook unless they cover the hook itself.
 tama_attach_client() {
+  tama_require_isolated_test_socket || return 1
   local session="$1"
   local fifo="$BATS_TEST_TMPDIR/attach-$session.fifo"
   mkfifo "$fifo"
@@ -503,12 +515,12 @@ tama_use_bash_32_or_skip() {
 # Points the tmux indirection at a fake that reports the given version string
 # and logs every call, so the version guard can be driven from a test.
 tama_use_fake_tmux() {
+  tama_require_isolated_test_socket || return 1
   export TAMA_FAKE_TMUX_VERSION="$1"
-  export TAMA_FAKE_TMUX_SOCKET="$TAMA_SOCKET"
   export TAMA_FAKE_TMUX_LOG="$BATS_TEST_TMPDIR/tmux-calls.log"
   : >"$TAMA_FAKE_TMUX_LOG"
   export TAMA_TMUX="$PLUGIN_ROOT/tests/fixtures/fake-tmux"
-  export TAMA_TMUX_ARGS=''
+  export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
 }
 
 # Points the tmux indirection at the logging fake — reporting the real version,
