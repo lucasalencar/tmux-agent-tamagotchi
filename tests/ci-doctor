@@ -9,7 +9,7 @@ set -o nounset
 cleanup() {
   local result=$?
   trap - EXIT HUP INT TERM
-  tama_kill_server || exit 1
+  tmux_test_server_stop || exit 1
   exit "$result"
 }
 

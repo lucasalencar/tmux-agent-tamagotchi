@@ -10,13 +10,13 @@ setup() {
   tama_use_fake_backend
   export CODEX_HOME="$BATS_TEST_TMPDIR/default-codex-home"
   mkdir -p "$CODEX_HOME"
-  PANE="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
-  WINDOW="$(test_tmux display-message -p -t "$PANE" '#{window_id}')"
+  PANE="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | head -1)"
+  WINDOW="$(tmux_test_server_run display-message -p -t "$PANE" '#{window_id}')"
 }
 
 teardown() {
   tama_detach_client
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 hook() { # <event> [payload]
@@ -156,14 +156,14 @@ PY
 
   local plugin_with_spaces="$BATS_TEST_TMPDIR/plugin with spaces"
   tama_copy_plugin "$plugin_with_spaces"
-  test_tmux set -g @tama_bin "$plugin_with_spaces/bin/tama"
+  tmux_test_server_run set -g @tama_bin "$plugin_with_spaces/bin/tama"
   TMUX_PANE="$PANE" run --separate-stderr sh -c "$command" \
     <<<"$(payload UserPromptSubmit)"
   assert_success
   [ -z "$output" ]
   [ -z "$stderr" ]
 
-  test_tmux set -gu @tama_bin
+  tmux_test_server_run set -gu @tama_bin
   TMUX_PANE="$PANE" run --separate-stderr sh -c "$command" \
     <<<"$(payload UserPromptSubmit)"
   assert_success

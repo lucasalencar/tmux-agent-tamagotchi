@@ -17,18 +17,18 @@ setup() {
 }
 
 teardown() {
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 @test "tmux reports an unset user option as a failure" {
-  run test_tmux show -gv @tama_never_set
+  run tmux_test_server_run show -gv @tama_never_set
   [ "$status" -ne 0 ]
 }
 
 @test "tmux reports a user option set to empty as success with no value" {
-  test_tmux set -g @tama_deliberately_empty ''
+  tmux_test_server_run set -g @tama_deliberately_empty ''
 
-  run test_tmux show -gv @tama_deliberately_empty
+  run tmux_test_server_run show -gv @tama_deliberately_empty
   assert_success
   assert_equal "$output" ''
 }
@@ -36,9 +36,9 @@ teardown() {
 @test "tmux reports a user option's value with its whitespace intact" {
   # The icon prefix and the flag text are single spaces, so a reader that
   # trimmed would silently change what the status line shows.
-  test_tmux set -g @tama_configured ' * '
+  tmux_test_server_run set -g @tama_configured ' * '
 
-  run test_tmux show -gv @tama_configured
+  run tmux_test_server_run show -gv @tama_configured
   assert_success
   assert_equal "$output" ' * '
 }

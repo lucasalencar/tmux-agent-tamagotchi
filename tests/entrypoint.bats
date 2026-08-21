@@ -9,7 +9,7 @@ setup() {
 }
 
 teardown() {
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 @test "loading the plugin exports its bin path as tmux options" {
@@ -23,14 +23,14 @@ teardown() {
 
 @test "loading without explicit args uses the invoking tmux server socket" {
   local socket
-  socket="$(test_tmux display-message -p '#{socket_path}')"
-  test_tmux set-environment -g TAMA_TMUX \
+  socket="$(tmux_test_server_run display-message -p '#{socket_path}')"
+  tmux_test_server_run set-environment -g TAMA_TMUX \
     "$PLUGIN_ROOT/tests/fixtures/tmux-require-socket"
-  test_tmux set-environment -g TAMA_REAL_TMUX "$(command -v tmux)"
-  test_tmux set-environment -g TAMA_EXPECTED_SOCKET "$socket"
-  test_tmux set-environment -gu TAMA_TMUX_ARGS
+  tmux_test_server_run set-environment -g TAMA_REAL_TMUX "$(command -v tmux)"
+  tmux_test_server_run set-environment -g TAMA_EXPECTED_SOCKET "$socket"
+  tmux_test_server_run set-environment -gu TAMA_TMUX_ARGS
 
-  run --separate-stderr test_tmux run-shell "$PLUGIN_ROOT/tamagotchi.tmux"
+  run --separate-stderr tmux_test_server_run run-shell "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
   assert_equal "$stderr" ''
   assert_plugin_wired "$PLUGIN_ROOT"
@@ -72,7 +72,7 @@ teardown() {
 }
 
 @test "loading accepts a server selector grouped with global flags" {
-  run --separate-stderr env -u TMUX TAMA_TMUX_ARGS="-uL $TAMA_SOCKET" \
+  run --separate-stderr env -u TMUX TAMA_TMUX_ARGS="-uL $TMUX_TEST_SOCKET" \
     TAMA_TMUX=tmux "$PLUGIN_ROOT/tamagotchi.tmux"
 
   assert_success
@@ -93,7 +93,7 @@ teardown() {
 
 @test "loading preserves commas in the invoking tmux socket path" {
   local socket alias
-  socket="$(test_tmux display-message -p '#{socket_path}')"
+  socket="$(tmux_test_server_run display-message -p '#{socket_path}')"
   alias="$BATS_TEST_TMPDIR/tmux,socket"
   ln -s "$socket" "$alias"
 
@@ -109,7 +109,7 @@ teardown() {
 
 @test "loading never falls back after the resolved socket disappears" {
   local socket alias marker
-  socket="$(test_tmux display-message -p '#{socket_path}')"
+  socket="$(tmux_test_server_run display-message -p '#{socket_path}')"
   alias="$BATS_TEST_TMPDIR/invoking-socket"
   marker="$BATS_TEST_TMPDIR/socket-removed"
   ln -s "$socket" "$alias"
@@ -156,7 +156,7 @@ teardown() {
   # is exactly the kind of asymmetry nobody notices until their own hook stops firing.
   local event
   for event in after-select-window after-select-pane client-focus-in client-attached; do
-    test_tmux set-hook -ga "$event" "run-shell -b 'echo mine'"
+    tmux_test_server_run set-hook -ga "$event" "run-shell -b 'echo mine'"
   done
 
   run "$PLUGIN_ROOT/tamagotchi.tmux"
@@ -164,7 +164,7 @@ teardown() {
 
   local hooks
   for event in after-select-window after-select-pane client-focus-in client-attached; do
-    hooks="$(test_tmux show-options -g "$event")"
+    hooks="$(tmux_test_server_run show-options -g "$event")"
     assert_contains "$hooks" 'echo mine' "the user's $event hook"
     assert_contains "$hooks" '@tama_bin' "the plugin's $event hook"
   done
@@ -180,13 +180,13 @@ teardown() {
   # attached to without ever selecting it. Coming back is two events, not one: a
   # terminal that reports focus fires client-focus-in, and a bare `attach` fires
   # client-attached, so wiring only one leaves the other kind of terminal uncovered.
-  assert_contains "$(test_tmux show-options -g after-select-window)" \
+  assert_contains "$(tmux_test_server_run show-options -g after-select-window)" \
     'on-select --window' 'the window-selection hook'
-  assert_contains "$(test_tmux show-options -g after-select-pane)" \
+  assert_contains "$(tmux_test_server_run show-options -g after-select-pane)" \
     'gc --window' 'the pane-selection hook'
-  assert_contains "$(test_tmux show-options -g client-focus-in)" \
+  assert_contains "$(tmux_test_server_run show-options -g client-focus-in)" \
     'on-select --all --window' 'the focus-in hook'
-  assert_contains "$(test_tmux show-options -g client-attached)" \
+  assert_contains "$(tmux_test_server_run show-options -g client-attached)" \
     'on-select --all --window' 'the attach hook'
 }
 
@@ -199,7 +199,7 @@ teardown() {
   assert_success
 
   local hooks
-  hooks="$(test_tmux show-options -g after-select-window)"
+  hooks="$(tmux_test_server_run show-options -g after-select-window)"
   assert_contains "$hooks" '@tama_bin' 'the hook recipe'
   case "$hooks" in
     *"$PLUGIN_ROOT"*)
@@ -210,7 +210,7 @@ teardown() {
 }
 
 @test "hook management can be turned off" {
-  test_tmux set -g @tama_manage_hooks off
+  tmux_test_server_run set -g @tama_manage_hooks off
 
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
@@ -220,7 +220,7 @@ teardown() {
   # `tama on-select` and `tama gc` from hooks they wrote.
   local event
   for event in after-select-window after-select-pane client-focus-in client-attached; do
-    assert_equal "$(test_tmux show-options -g "$event" 2>/dev/null)" "$event"
+    assert_equal "$(tmux_test_server_run show-options -g "$event" 2>/dev/null)" "$event"
   done
   assert_plugin_wired "$PLUGIN_ROOT"
 }
@@ -231,7 +231,7 @@ teardown() {
 unwire_hooks() {
   local event
   for event in after-select-window after-select-pane client-focus-in client-attached; do
-    test_tmux set-hook -gu "$event" 2>/dev/null || true
+    tmux_test_server_run set-hook -gu "$event" 2>/dev/null || true
   done
 }
 
@@ -239,15 +239,15 @@ unwire_hooks() {
   local spelling event
   for spelling in $TAMA_OFF_SPELLINGS; do
     unwire_hooks
-    test_tmux set -g @tama_manage_hooks "$spelling"
+    tmux_test_server_run set -g @tama_manage_hooks "$spelling"
 
     run "$PLUGIN_ROOT/tamagotchi.tmux"
     assert_success || return 1
 
     for event in after-select-window after-select-pane client-focus-in client-attached; do
-      [ "$(test_tmux show-options -g "$event" 2>/dev/null)" = "$event" ] || {
+      [ "$(tmux_test_server_run show-options -g "$event" 2>/dev/null)" = "$event" ] || {
         printf '@tama_manage_hooks %s still wired %s: %s\n' "$spelling" "$event" \
-          "$(test_tmux show-options -g "$event")" >&2
+          "$(tmux_test_server_run show-options -g "$event")" >&2
         return 1
       }
     done
@@ -263,12 +263,12 @@ unwire_hooks() {
   local spelling
   for spelling in $TAMA_ON_SPELLINGS; do
     unwire_hooks
-    test_tmux set -g @tama_manage_hooks "$spelling"
+    tmux_test_server_run set -g @tama_manage_hooks "$spelling"
 
     run "$PLUGIN_ROOT/tamagotchi.tmux"
     assert_success || return 1
 
-    test_tmux show-hooks -g | grep -qF -- '@tama_bin' || {
+    tmux_test_server_run show-hooks -g | grep -qF -- '@tama_bin' || {
       printf '@tama_manage_hooks %s wired no hooks at all\n' "$spelling" >&2
       return 1
     }
@@ -284,25 +284,25 @@ unwire_hooks() {
   # matters is that tmux and the shell agree on what it means — and reached through
   # the CLI, so it cannot pass on a value the test wrote itself.
   local pane
-  pane="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
+  pane="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | head -1)"
   run "$PLUGIN_ROOT/bin/tama" state running --pane "$pane"
   assert_success
   # Rendered against the window's own id rather than the session, because that is
   # what the exported format passes: a session name would resolve to whatever window
   # it is looking at, and would pass an implementation that named windows by index.
-  assert_equal "$(tama_render_icons "$(test_tmux display-message -p -t "$pane" '#{window_id}')")" ' ●'
+  assert_equal "$(tama_render_icons "$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')")" ' ●'
 }
 
 @test "loading exports a session summary without rewriting status-left" {
-  test_tmux set -g status-left 'mine #{session_name}'
+  tmux_test_server_run set -g status-left 'mine #{session_name}'
   local pane
   pane="$(tama_pane_of t:0)"
-  test_tmux set -p -t "$pane" @tama_pane_state_main running
+  tmux_test_server_run set -p -t "$pane" @tama_pane_state_main running
 
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
 
-  assert_equal "$(test_tmux show -gv status-left)" 'mine #{session_name}'
+  assert_equal "$(tmux_test_server_run show -gv status-left)" 'mine #{session_name}'
   assert_equal "$(tama_render_summary t)" '● 1 ◐ 0 ○ 0'
 }
 
@@ -312,7 +312,7 @@ unwire_hooks() {
 
   # This is how the status line and every hook recipe will reach them, so it is
   # the observation that matters, not the scope they happen to be stored in.
-  assert_equal "$(test_tmux display-message -p '#{@tama_bin}')" "$PLUGIN_ROOT/bin/tama"
+  assert_equal "$(tmux_test_server_run display-message -p '#{@tama_bin}')" "$PLUGIN_ROOT/bin/tama"
 }
 
 @test "the exported bin option is a runnable absolute path" {
@@ -320,7 +320,7 @@ unwire_hooks() {
   assert_success
 
   local bin
-  bin="$(test_tmux show -gqv @tama_bin)"
+  bin="$(tmux_test_server_run show -gqv @tama_bin)"
   [ -x "$bin" ]
   run "$bin" version
   assert_success
@@ -349,7 +349,7 @@ unwire_hooks() {
 
   assert_plugin_wired "$PLUGIN_ROOT"
   local bin
-  bin="$(test_tmux show -gqv @tama_bin)"
+  bin="$(tmux_test_server_run show -gqv @tama_bin)"
   [ -x "$bin" ]
 }
 

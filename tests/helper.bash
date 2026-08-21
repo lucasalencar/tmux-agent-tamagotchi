@@ -9,6 +9,9 @@
 PLUGIN_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PLUGIN_ROOT
 
+# shellcheck source=tests/lib/tmux-test-server.sh
+. "$PLUGIN_ROOT/tests/lib/tmux-test-server.sh"
+
 # tmux's own vocabulary for a flag option turned off — what lib/options.sh reads and
 # what both the README and `tama --help` print. It lives here once because a suite
 # that only ever wrote `off` is exactly what let three of the plugin's options go on
@@ -23,153 +26,29 @@ TAMA_OFF_SPELLINGS='off no 0 false'
 # shellcheck disable=SC2034  # read by the bats suites, which shellcheck cannot see
 TAMA_ON_SPELLINGS='on yes 1 true offf'
 
-# Names a socket for this test without booting anything on it.
-#
-# The random tail is what makes the name unique, and it has to be: a pid and a test
-# number repeat across runs — macOS recycles pids freely — and a server still alive
-# on that name is *adopted* rather than replaced, since `tmux -L` connects to
-# whatever is listening. The symptom is not a connection error but a test failing
-# somewhere else entirely, on a window index or a session name the leftover already
-# has. Kept short because a socket path has a length limit.
-tama_reserve_socket() {
-  if [ -n "${TAMA_SOCKET:-}" ]; then
-    printf 'cannot reserve another tmux socket before tearing down %s\n' \
-      "$TAMA_SOCKET" >&2
-    return 1
-  fi
-  TAMA_SOCKET="$1-$$-${BATS_TEST_NUMBER:-0}-${RANDOM}"
-  export TAMA_SOCKET
-  unset TAMA_SERVER_PID
-}
-
-# Starts one named tmux session with its streams on files rather than the suite's
-# capture pipe, then records the server pid before returning. Only the short-lived
-# tmux client writes the pid file; the server never inherits a suite output stream.
-tama_start_tmux_session() { # <config> <session>
-  local config="$1" session="$2"
-  local stdout_file stderr_file server_pid='' start_status=0
-  stdout_file="${BATS_TEST_TMPDIR:-/tmp}/$TAMA_SOCKET-startup.out"
-  stderr_file="${BATS_TEST_TMPDIR:-/tmp}/$TAMA_SOCKET-startup.err"
-  test_tmux -f "$config" new-session -d -P -F '#{pid}' -s "$session" \
-    </dev/null >"$stdout_file" 2>"$stderr_file" || start_status=$?
-  IFS= read -r server_pid <"$stdout_file" || true
-  if [ -n "$server_pid" ]; then
-    TAMA_SERVER_PID="$server_pid"
-    export TAMA_SERVER_PID
-  fi
-  if [ "$start_status" -ne 0 ]; then
-    cat "$stdout_file" "$stderr_file" >&2
-    rm -f "$stdout_file" "$stderr_file"
-    return "$start_status"
-  fi
-  rm -f "$stdout_file" "$stderr_file"
-  [ -n "$server_pid" ] || return 1
-}
-
 tama_start_server() {
-  tama_reserve_socket tamatest || return 1
-  # The indirection goes into the environment *before* the server boots as well as
-  # after, so that jobs the server spawns for itself — a status line `#()` format, a
-  # hook — inherit it and cannot reach the user's tmux. $TMUX cannot be exported
-  # this early: a tmux client that sees it believes it is nested.
-  export TAMA_TMUX=tmux
-  export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
-  # Loudly, because everything a test then arranges is built on this session being
-  # this test's own. A `duplicate session` here would mean the socket is somebody
-  # else's server, and every assertion after it would be about their windows.
-  tama_start_tmux_session /dev/null t || {
-    printf 'could not boot a tmux server on %s\n' "$TAMA_SOCKET" >&2
-    return 1
-  }
+  tmux_test_server_start /dev/null t tama_prepare_test_server_environment || return 1
   tama_no_backend
   tama_point_at_server
 }
 
+tama_prepare_test_server_environment() {
+  export TAMA_TMUX=tmux
+  export TAMA_TMUX_ARGS="-L $TMUX_TEST_SOCKET"
+}
+
 # Disable auto so tests never reach a developer's real notifier.
 tama_no_backend() {
-  test_tmux set -g @tama_backend ''
+  tmux_test_server_run set -g @tama_backend ''
 }
 
 # Export only after startup because tmux treats an existing TMUX as nesting.
 tama_point_at_server() {
-  export TAMA_TMUX=tmux
-  export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
-  export TMUX="/tmp/$TAMA_SOCKET,0,0"
+  tama_prepare_test_server_environment
+  export TMUX="/tmp/$TMUX_TEST_SOCKET,0,0"
   # Whatever tmux the suite is being run from must not reach into it: a test that
   # means "no pane was given" has to mean that on a developer's machine too.
   unset TMUX_PANE
-}
-
-# No test may resolve the socket name that tmux itself treats as the live default.
-tama_require_isolated_test_socket() {
-  if [ "${TAMA_SOCKET:-}" = default ]; then
-    printf 'refusing to use the default tmux socket in tests\n' >&2
-    return 1
-  fi
-}
-
-# kill-server does not remove the socket file. Remove it separately, but never while
-# it still addresses a live server: unlinking then would make the survivor impossible
-# for any later teardown to reach.
-tama_wait_for_server_exit() { # <pid>
-  local probed=0 waited=0
-  # Five seconds is generous for normal tmux shutdown, while still turning a true
-  # survivor into a prompt failure instead of another silent suite timeout.
-  local attempts="${TAMA_SERVER_EXIT_WAIT_ATTEMPTS:-500}"
-  # Normal shutdown finishes within a few built-in probes. Give it CPU time without
-  # spawning one `sleep` process per test; back off only for a genuinely slow exit.
-  while kill -0 "$1" 2>/dev/null && [ "$probed" -lt 1000 ]; do
-    probed=$((probed + 1))
-  done
-  while kill -0 "$1" 2>/dev/null && [ "$waited" -lt "$attempts" ]; do
-    sleep 0.01
-    waited=$((waited + 1))
-  done
-  ! kill -0 "$1" 2>/dev/null
-}
-
-tama_report_surviving_server() {
-  printf 'test tmux server survived kill-server on %s\n' "$TAMA_SOCKET" >&2
-  return 1
-}
-
-tama_report_unknown_server() {
-  printf 'could not identify test tmux server on %s; socket preserved\n' \
-    "$TAMA_SOCKET" >&2
-  return 1
-}
-
-tama_kill_server() {
-  if [ -n "${TAMA_SOCKET:-}" ]; then
-    tama_require_isolated_test_socket || return 1
-    local server_pid="${TAMA_SERVER_PID:-}"
-    if [ -z "$server_pid" ]; then
-      server_pid="$(test_tmux display-message -p '#{pid}' 2>/dev/null)" || {
-        tama_report_unknown_server
-        return 1
-      }
-      if [ -z "$server_pid" ]; then
-        tama_report_unknown_server
-        return 1
-      fi
-    fi
-    test_tmux kill-server 2>/dev/null || true
-    if ! tama_wait_for_server_exit "$server_pid"; then
-      tama_report_surviving_server
-      return 1
-    fi
-    rm -f "$(tama_socket_dir)/$TAMA_SOCKET" || return 1
-    unset TAMA_SOCKET TAMA_SERVER_PID
-  fi
-}
-
-tama_socket_dir() {
-  printf '%s/tmux-%s' "${TMUX_TMPDIR:-/tmp}" "$(id -u)"
-}
-
-test_tmux() {
-  tama_require_isolated_test_socket || return 1
-  tmux -L "$TAMA_SOCKET" "$@"
 }
 
 # Copies the plugin to another path, which is also how the tests exercise the
@@ -215,12 +94,12 @@ STUB
 # for a user's shell — a hook recipe — can be run verbatim without reaching the
 # real tmux.
 tama_shim_tmux_on_path() {
-  tama_require_isolated_test_socket || return 1
+  _tmux_test_server_require_isolated_socket || return 1
   local bin="$BATS_TEST_TMPDIR/shim"
   mkdir -p "$bin"
   cat >"$bin/tmux" <<SHIM
 #!/bin/sh
-exec $(command -v tmux) -L "$TAMA_SOCKET" "\$@"
+exec $(command -v tmux) -L "$TMUX_TEST_SOCKET" "\$@"
 SHIM
   chmod +x "$bin/tmux"
   PATH="$bin:$PATH"
@@ -243,7 +122,7 @@ tama_fake_backend_env() {
 # third-party backend is configured, so this exercises that resolution rather than a
 # path only the tests can produce.
 tama_use_fake_backend() {
-  test_tmux set -g @tama_backend "$PLUGIN_ROOT/tests/fixtures/fake-backend"
+  tmux_test_server_run set -g @tama_backend "$PLUGIN_ROOT/tests/fixtures/fake-backend"
 }
 
 # A copy of the fake backend with one capability missing, for the claims about what the
@@ -383,7 +262,7 @@ tama_icons() {
 # command. Attaching a real client would, but only after a status-interval tick.
 tama_render_icons() {
   local job command
-  job="$(test_tmux show -gqv @tama_icons)"
+  job="$(tmux_test_server_run show -gqv @tama_icons)"
   case "$job" in
     '#('*')') ;;
     *)
@@ -396,7 +275,7 @@ tama_render_icons() {
   # At the *first* `)`, which is where tmux ends a job — a helper that stripped at
   # the last one would accept a command tmux would have truncated.
   job="${job%%')'*}"
-  command="$(test_tmux display-message -p -t "$1" "$job")"
+  command="$(tmux_test_server_run display-message -p -t "$1" "$job")"
   # /bin/sh, because that is what tmux runs a job with.
   sh -c "$command"
 }
@@ -404,7 +283,7 @@ tama_render_icons() {
 # The session summary as exported for composition into status-left.
 tama_render_summary() { # <session target>
   local job command
-  job="$(test_tmux show -gqv @tama_status_summary)"
+  job="$(tmux_test_server_run show -gqv @tama_status_summary)"
   case "$job" in
     '#('*')') ;;
     *)
@@ -414,7 +293,7 @@ tama_render_summary() { # <session target>
   esac
   job="${job#'#('}"
   job="${job%%')'*}"
-  command="$(test_tmux display-message -p -t "$1" "$job")"
+  command="$(tmux_test_server_run display-message -p -t "$1" "$job")"
   sh -c "$command"
 }
 
@@ -434,21 +313,21 @@ tama_render_summary() { # <session target>
 # waits for the client, not for that hook. Tests that inspect state the hook can change
 # use tama_attach_client_without_attach_hook unless they cover the hook itself.
 tama_attach_client() {
-  tama_require_isolated_test_socket || return 1
+  _tmux_test_server_require_isolated_socket || return 1
   local session="$1"
   local fifo="$BATS_TEST_TMPDIR/attach-$session.fifo"
   mkfifo "$fifo"
   # Outlives the test; both this and the client are killed in teardown.
   sleep 300 >"$fifo" &
   TAMA_FIFO_HOLDER_PID=$!
-  tmux -L "$TAMA_SOCKET" -C attach -t "$session" <"$fifo" >/dev/null 2>&1 &
+  tmux -L "$TMUX_TEST_SOCKET" -C attach -t "$session" <"$fifo" >/dev/null 2>&1 &
   TAMA_CLIENT_PID=$!
 
   # The client is up when tmux says the session has one. Polled rather than slept
   # on: a fixed sleep is either slower than it needs to be or flaky on a loaded CI
   # runner, and this is the fact the test actually depends on.
   local waited=0
-  while [ "$(test_tmux display-message -p -t "$session" '#{session_attached}')" = '0' ]; do
+  while [ "$(tmux_test_server_run display-message -p -t "$session" '#{session_attached}')" = '0' ]; do
     waited=$((waited + 1))
     if [ "$waited" -gt 200 ]; then
       printf 'no client attached to %s after 10s\n' "$session" >&2
@@ -459,7 +338,7 @@ tama_attach_client() {
 }
 
 tama_attach_client_without_attach_hook() {
-  test_tmux set-hook -gu client-attached
+  tmux_test_server_run set-hook -gu client-attached
   tama_attach_client "$1"
 }
 
@@ -475,7 +354,7 @@ tama_detach_client() {
 # thing the user would see stays empty.
 assert_flagged() {
   local rendered
-  rendered="$(test_tmux display-message -p -t "$1" '#{E:@tama_flag}')"
+  rendered="$(tmux_test_server_run display-message -p -t "$1" '#{E:@tama_flag}')"
   if [ -z "$rendered" ]; then
     printf 'expected window %s to be flagged, but @tama_flag rendered empty\n' "$1" >&2
     return 1
@@ -484,7 +363,7 @@ assert_flagged() {
 
 assert_not_flagged() {
   local rendered
-  rendered="$(test_tmux display-message -p -t "$1" '#{E:@tama_flag}')"
+  rendered="$(tmux_test_server_run display-message -p -t "$1" '#{E:@tama_flag}')"
   if [ -n "$rendered" ]; then
     printf 'expected window %s not to be flagged, got: %s\n' "$1" "$rendered" >&2
     return 1
@@ -496,7 +375,7 @@ assert_not_flagged() {
 # "eventually" or it is timing noise. Polled on the fact the test is about.
 wait_until_not_flagged() {
   local waited=0
-  while [ -n "$(test_tmux display-message -p -t "$1" '#{E:@tama_flag}')" ]; do
+  while [ -n "$(tmux_test_server_run display-message -p -t "$1" '#{E:@tama_flag}')" ]; do
     waited=$((waited + 1))
     if [ "$waited" -gt 200 ]; then
       printf 'window %s was still flagged after 10s\n' "$1" >&2
@@ -510,7 +389,7 @@ wait_until_not_flagged() {
 # clearing must *unset* it, not write an empty string.
 assert_window_option_unset() {
   local value
-  if value="$(test_tmux show -w -t "$1" -v "@tama_$2")"; then
+  if value="$(tmux_test_server_run show -w -t "$1" -v "@tama_$2")"; then
     printf 'expected @tama_%s to be unset on %s, got: %s\n' "$2" "$1" "$value" >&2
     return 1
   fi
@@ -519,12 +398,12 @@ assert_window_option_unset() {
 # The window id of a window named by session:index — the identity everything in the
 # plugin uses, resolved once so a test never passes an index to the CLI.
 tama_window_id() {
-  test_tmux display-message -p -t "$1" '#{window_id}'
+  tmux_test_server_run display-message -p -t "$1" '#{window_id}'
 }
 
 # The active pane of a window named by session:index.
 tama_pane_of() {
-  test_tmux display-message -p -t "$1" '#{pane_id}'
+  tmux_test_server_run display-message -p -t "$1" '#{pane_id}'
 }
 
 # A pane option as tmux stores it. Without -q so that an option which was never
@@ -532,7 +411,7 @@ tama_pane_of() {
 # and an agent pane.
 assert_pane_option() {
   local value
-  value="$(test_tmux show -p -t "$1" -v "@tama_pane_$2")" || {
+  value="$(tmux_test_server_run show -p -t "$1" -v "@tama_pane_$2")" || {
     printf 'expected @tama_pane_%s to be set on %s\n' "$2" "$1" >&2
     return 1
   }
@@ -541,7 +420,7 @@ assert_pane_option() {
 
 assert_pane_option_unset() {
   local value
-  if value="$(test_tmux show -p -t "$1" -v "@tama_pane_$2")"; then
+  if value="$(tmux_test_server_run show -p -t "$1" -v "@tama_pane_$2")"; then
     printf 'expected @tama_pane_%s to be unset on %s, got: %s\n' "$2" "$1" "$value" >&2
     return 1
   fi
@@ -575,12 +454,12 @@ tama_use_bash_32_or_skip() {
 # Points the tmux indirection at a fake that reports the given version string
 # and logs every call, so the version guard can be driven from a test.
 tama_use_fake_tmux() {
-  tama_require_isolated_test_socket || return 1
+  _tmux_test_server_require_isolated_socket || return 1
   export TAMA_FAKE_TMUX_VERSION="$1"
   export TAMA_FAKE_TMUX_LOG="$BATS_TEST_TMPDIR/tmux-calls.log"
   : >"$TAMA_FAKE_TMUX_LOG"
   export TAMA_TMUX="$PLUGIN_ROOT/tests/fixtures/fake-tmux"
-  export TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
+  export TAMA_TMUX_ARGS="-L $TMUX_TEST_SOCKET"
 }
 
 # Points the tmux indirection at the logging fake — reporting the real version,
@@ -611,22 +490,22 @@ refute_tmux_command() {
 # scopes, hooks and key bindings. Whatever the entrypoint grows to install, a
 # second load must not change this.
 tama_server_state() {
-  test_tmux show -g
-  test_tmux show -s
-  test_tmux show-hooks -g
-  test_tmux list-keys
+  tmux_test_server_run show -g
+  tmux_test_server_run show -s
+  tmux_test_server_run show-hooks -g
+  tmux_test_server_run list-keys
 }
 
 # Both discovery options point at the given clone.
 assert_plugin_wired() {
   local root="$1"
-  assert_equal "$(test_tmux show -gqv @tama_bin)" "$root/bin/tama" || return 1
-  assert_equal "$(test_tmux show -gqv @tama_bin_dir)" "$root/bin"
+  assert_equal "$(tmux_test_server_run show -gqv @tama_bin)" "$root/bin/tama" || return 1
+  assert_equal "$(tmux_test_server_run show -gqv @tama_bin_dir)" "$root/bin"
 }
 
 assert_plugin_not_wired() {
-  assert_equal "$(test_tmux show -gqv @tama_bin)" '' || return 1
-  assert_equal "$(test_tmux show -gqv @tama_bin_dir)" ''
+  assert_equal "$(tmux_test_server_run show -gqv @tama_bin)" '' || return 1
+  assert_equal "$(tmux_test_server_run show -gqv @tama_bin_dir)" ''
 }
 
 # Loads the plugin against a tmux that reports the given version, and says

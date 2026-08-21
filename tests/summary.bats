@@ -9,25 +9,25 @@ setup() {
 }
 
 teardown() {
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 set_pane_state() { # <pane> <state> [subagents]
-  test_tmux set -p -t "$1" @tama_pane_state_main "$2"
-  [ "$#" -lt 3 ] || test_tmux set -p -t "$1" @tama_pane_subagents "$3"
+  tmux_test_server_run set -p -t "$1" @tama_pane_state_main "$2"
+  [ "$#" -lt 3 ] || tmux_test_server_run set -p -t "$1" @tama_pane_subagents "$3"
 }
 
 session_id() {
-  test_tmux display-message -p -t "$1" '#{session_id}'
+  tmux_test_server_run display-message -p -t "$1" '#{session_id}'
 }
 
 @test "summary renders every supported state in order for one session" {
   local running waiting idle background error
   running="$(tama_pane_of t:0)"
-  waiting="$(test_tmux split-window -d -P -F '#{pane_id}' -t t:0)"
-  idle="$(test_tmux split-window -d -P -F '#{pane_id}' -t t:0)"
-  background="$(test_tmux split-window -d -P -F '#{pane_id}' -t t:0)"
-  error="$(test_tmux split-window -d -P -F '#{pane_id}' -t t:0)"
+  waiting="$(tmux_test_server_run split-window -d -P -F '#{pane_id}' -t t:0)"
+  idle="$(tmux_test_server_run split-window -d -P -F '#{pane_id}' -t t:0)"
+  background="$(tmux_test_server_run split-window -d -P -F '#{pane_id}' -t t:0)"
+  error="$(tmux_test_server_run split-window -d -P -F '#{pane_id}' -t t:0)"
 
   set_pane_state "$running" running
   set_pane_state "$waiting" waiting
@@ -49,9 +49,9 @@ session_id() {
 @test "summary renders unsupported nonempty reported states in the unknown bucket" {
   local unknown ordinary
   unknown="$(tama_pane_of t:0)"
-  ordinary="$(test_tmux split-window -d -P -F '#{pane_id}' -t t:0)"
+  ordinary="$(tmux_test_server_run split-window -d -P -F '#{pane_id}' -t t:0)"
   set_pane_state "$unknown" surprised
-  test_tmux set -p -t "$ordinary" @tama_pane_state_main ''
+  tmux_test_server_run set -p -t "$ordinary" @tama_pane_state_main ''
 
   run "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
   assert_success
@@ -62,7 +62,7 @@ session_id() {
   local unknown
   unknown="$(tama_pane_of t:0)"
   set_pane_state "$unknown" surprised
-  test_tmux set -g @tama_icon_unknown '#[fg=magenta]U'
+  tmux_test_server_run set -g @tama_icon_unknown '#[fg=magenta]U'
 
   run "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
   assert_success
@@ -73,12 +73,12 @@ session_id() {
   local waiting
   waiting="$(tama_pane_of t:0)"
   set_pane_state "$waiting" waiting
-  test_tmux set -g @tama_summary_show_running never
-  test_tmux set -g @tama_summary_show_waiting nonzero
-  test_tmux set -g @tama_summary_show_idle never
-  test_tmux set -g @tama_summary_show_background always
-  test_tmux set -g @tama_summary_show_error always
-  test_tmux set -g @tama_summary_show_unknown always
+  tmux_test_server_run set -g @tama_summary_show_running never
+  tmux_test_server_run set -g @tama_summary_show_waiting nonzero
+  tmux_test_server_run set -g @tama_summary_show_idle never
+  tmux_test_server_run set -g @tama_summary_show_background always
+  tmux_test_server_run set -g @tama_summary_show_error always
+  tmux_test_server_run set -g @tama_summary_show_unknown always
 
   run "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
   assert_success
@@ -89,16 +89,16 @@ session_id() {
   local running
   running="$(tama_pane_of t:0)"
   set_pane_state "$running" running
-  test_tmux set -g @tama_icon_running '#[fg=green]R'
-  test_tmux set -g @tama_icon_waiting '#[fg=yellow]W'
-  test_tmux set -g @tama_icon_idle '#[fg=white]I'
-  test_tmux set -g @tama_icon_background '#[fg=cyan]B'
-  test_tmux set -g @tama_icon_error '#[fg=red]E'
-  test_tmux set -g @tama_summary_show_background always
-  test_tmux set -g @tama_summary_show_error always
-  test_tmux set -g @tama_summary_prefix '#[bold]<'
-  test_tmux set -g @tama_summary_separator '#[default]|'
-  test_tmux set -g @tama_summary_suffix '>#[nobold]'
+  tmux_test_server_run set -g @tama_icon_running '#[fg=green]R'
+  tmux_test_server_run set -g @tama_icon_waiting '#[fg=yellow]W'
+  tmux_test_server_run set -g @tama_icon_idle '#[fg=white]I'
+  tmux_test_server_run set -g @tama_icon_background '#[fg=cyan]B'
+  tmux_test_server_run set -g @tama_icon_error '#[fg=red]E'
+  tmux_test_server_run set -g @tama_summary_show_background always
+  tmux_test_server_run set -g @tama_summary_show_error always
+  tmux_test_server_run set -g @tama_summary_prefix '#[bold]<'
+  tmux_test_server_run set -g @tama_summary_separator '#[default]|'
+  tmux_test_server_run set -g @tama_summary_suffix '>#[nobold]'
 
   run "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
   assert_success
@@ -106,12 +106,12 @@ session_id() {
 }
 
 @test "summary falls back independently from invalid bucket policies" {
-  test_tmux set -g @tama_summary_show_running sometimes
-  test_tmux set -g @tama_summary_show_waiting sometimes
-  test_tmux set -g @tama_summary_show_idle sometimes
-  test_tmux set -g @tama_summary_show_background sometimes
-  test_tmux set -g @tama_summary_show_error sometimes
-  test_tmux set -g @tama_summary_show_unknown sometimes
+  tmux_test_server_run set -g @tama_summary_show_running sometimes
+  tmux_test_server_run set -g @tama_summary_show_waiting sometimes
+  tmux_test_server_run set -g @tama_summary_show_idle sometimes
+  tmux_test_server_run set -g @tama_summary_show_background sometimes
+  tmux_test_server_run set -g @tama_summary_show_error sometimes
+  tmux_test_server_run set -g @tama_summary_show_unknown sometimes
 
   run "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
   assert_success
@@ -121,16 +121,16 @@ session_id() {
 @test "summary counts only agent panes in the requested session" {
   local stale cleared ordinary elsewhere
   stale="$(tama_pane_of t:0)"
-  cleared="$(test_tmux split-window -d -P -F '#{pane_id}' -t t:0)"
-  ordinary="$(test_tmux split-window -d -P -F '#{pane_id}' -t t:0)"
-  test_tmux new-session -d -s elsewhere
+  cleared="$(tmux_test_server_run split-window -d -P -F '#{pane_id}' -t t:0)"
+  ordinary="$(tmux_test_server_run split-window -d -P -F '#{pane_id}' -t t:0)"
+  tmux_test_server_run new-session -d -s elsewhere
   elsewhere="$(tama_pane_of elsewhere:0)"
 
   set_pane_state "$stale" waiting
-  test_tmux set -p -t "$stale" @tama_pane_cmd definitely-stale
+  tmux_test_server_run set -p -t "$stale" @tama_pane_cmd definitely-stale
   set_pane_state "$cleared" running
-  test_tmux set -pu -t "$cleared" @tama_pane_state_main
-  test_tmux set -p -t "$ordinary" @tama_pane_agent residue
+  tmux_test_server_run set -pu -t "$cleared" @tama_pane_state_main
+  tmux_test_server_run set -p -t "$ordinary" @tama_pane_agent residue
   set_pane_state "$elsewhere" error
 
   run "$PLUGIN_ROOT/bin/tama" summary "$(session_id t:0)"
@@ -145,13 +145,13 @@ session_id() {
   set_pane_state "$local_pane" running
   target="$(session_id t)"
 
-  test_tmux new-session -d -s detached
+  tmux_test_server_run new-session -d -s detached
   remote_pane="$(tama_pane_of detached:0)"
   set_pane_state "$remote_pane" waiting
-  test_tmux new-session -d -s linked
-  test_tmux link-window -k -s detached:0 -t linked:0
+  tmux_test_server_run new-session -d -s linked
+  tmux_test_server_run link-window -k -s detached:0 -t linked:0
 
-  test_tmux set -t "$target" @tama_summary_scope all
+  tmux_test_server_run set -t "$target" @tama_summary_scope all
 
   run "$PLUGIN_ROOT/bin/tama" summary "$target"
   assert_success
@@ -163,13 +163,13 @@ session_id() {
   first="$(session_id t)"
   first_pane="$(tama_pane_of t:0)"
   set_pane_state "$first_pane" running
-  test_tmux new-session -d -s other
+  tmux_test_server_run new-session -d -s other
   second="$(session_id other)"
   second_pane="$(tama_pane_of other:0)"
   set_pane_state "$second_pane" waiting
 
-  test_tmux set-option -t "$first" @tama_summary_scope all
-  test_tmux set-option -t "$second" @tama_summary_scope invalid
+  tmux_test_server_run set-option -t "$first" @tama_summary_scope all
+  tmux_test_server_run set-option -t "$second" @tama_summary_scope invalid
 
   run "$PLUGIN_ROOT/bin/tama" summary "$first"
   assert_success
@@ -183,13 +183,13 @@ session_id() {
 @test "summary reuses configured state icons" {
   local running background
   running="$(tama_pane_of t:0)"
-  background="$(test_tmux split-window -d -P -F '#{pane_id}' -t t:0)"
+  background="$(tmux_test_server_run split-window -d -P -F '#{pane_id}' -t t:0)"
   set_pane_state "$running" running
   set_pane_state "$background" idle child
-  test_tmux set -g @tama_icon_running R
-  test_tmux set -g @tama_icon_waiting W
-  test_tmux set -g @tama_icon_idle I
-  test_tmux set -g @tama_icon_background B
+  tmux_test_server_run set -g @tama_icon_running R
+  tmux_test_server_run set -g @tama_icon_waiting W
+  tmux_test_server_run set -g @tama_icon_idle I
+  tmux_test_server_run set -g @tama_icon_background B
 
   run "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
   assert_success
@@ -200,7 +200,7 @@ session_id() {
   local first second wrapper
   first="$(tama_pane_of t:0)"
   set_pane_state "$first" running
-  second="$(test_tmux new-window -d -P -F '#{pane_id}' -t t:1)"
+  second="$(tmux_test_server_run new-window -d -P -F '#{pane_id}' -t t:1)"
   set_pane_state "$second" waiting
 
   wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
@@ -210,7 +210,7 @@ session_id() {
   chmod +x "$wrapper"
   export TAMA_FAIL_TARGET="$(tama_window_id t:1)"
   TAMA_TMUX="$wrapper"
-  TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
+  TAMA_TMUX_ARGS="-L $TMUX_TEST_SOCKET"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
   assert_success
@@ -223,10 +223,10 @@ session_id() {
   target="$(session_id t)"
   first="$(tama_pane_of t:0)"
   set_pane_state "$first" running
-  test_tmux new-session -d -s later
+  tmux_test_server_run new-session -d -s later
   second="$(tama_pane_of later:0)"
   set_pane_state "$second" waiting
-  test_tmux set-option -t "$target" @tama_summary_scope all
+  tmux_test_server_run set-option -t "$target" @tama_summary_scope all
 
   wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
   sed \
@@ -235,7 +235,7 @@ session_id() {
   chmod +x "$wrapper"
   export TAMA_FAIL_TARGET="$(tama_window_id later:0)"
   TAMA_TMUX="$wrapper"
-  TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
+  TAMA_TMUX_ARGS="-L $TMUX_TEST_SOCKET"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" summary "$target"
   assert_success

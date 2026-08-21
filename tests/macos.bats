@@ -38,7 +38,7 @@ setup() {
 
 teardown() {
   tama_detach_client
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 require_darwin() {
@@ -49,7 +49,7 @@ require_darwin() {
 # the backend off on every test server precisely so that `auto` is never reached by
 # accident; the three tests that are *about* `auto` have to put it back.
 use_no_configuration() {
-  test_tmux set -gu @tama_backend
+  tmux_test_server_run set -gu @tama_backend
 }
 
 refute_darwin() {
@@ -59,8 +59,8 @@ refute_darwin() {
 # The backend under test, with the notifier named by absolute path — which is also how a
 # user with their own build of it says so.
 use_macos_backend() {
-  test_tmux set -g @tama_backend macos
-  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  tmux_test_server_run set -g @tama_backend macos
+  tmux_test_server_run set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
 }
 
 # The plugin backgrounds the notifier on purpose — it must not cost an agent's turn — so
@@ -107,7 +107,7 @@ assert_notifier_flag() { # <flag> <expected>
 # An agent pane in a second window, so the user is somewhere else — the ordinary case
 # for a notification. Prints the pane id.
 agent_pane_elsewhere() {
-  test_tmux new-window -t t: -d -P -F '#{pane_id}'
+  tmux_test_server_run new-window -t t: -d -P -F '#{pane_id}'
 }
 
 # Runs a click action the way the desktop runs it: with none of the environment the hook
@@ -122,7 +122,7 @@ run_click() { # <click command line>
   use_macos_backend
   local pane window
   pane="$(agent_pane_elsewhere)"
-  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
     --pane "$pane"
@@ -160,14 +160,14 @@ run_click() { # <click command line>
   assert_notifier_flag message "it's waiting"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" dismiss \
-    "$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+    "$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
   assert_success
   [ -z "$stderr" ]
 }
 
 @test "the terminal a banner activates is configuration, not a hardcoded app" {
   use_macos_backend
-  test_tmux set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
+  tmux_test_server_run set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$(agent_pane_elsewhere)"
   assert_success
@@ -188,19 +188,19 @@ run_click() { # <click command line>
 printf '%s' "\$1" >"$focused"
 FOCUS
   chmod +x "$BATS_TEST_TMPDIR/fake-focus"
-  test_tmux set -g @tama_focus_command "$BATS_TEST_TMPDIR/fake-focus"
+  tmux_test_server_run set -g @tama_focus_command "$BATS_TEST_TMPDIR/fake-focus"
 
   local pane window
   pane="$(agent_pane_elsewhere)"
-  test_tmux split-window -t "$pane" -d
-  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  tmux_test_server_run split-window -t "$pane" -d
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
   wait_for_notifier
 
-  test_tmux select-window -t t:0
-  assert_equal "$(test_tmux display-message -p -t "$window" '#{window_active}')" '0'
+  tmux_test_server_run select-window -t t:0
+  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{window_active}')" '0'
 
   # Exactly what terminal-notifier will run when the banner is clicked, with a PATH the
   # backend adds because launchd gives one that cannot find bash.
@@ -208,8 +208,8 @@ FOCUS
   assert_success
   [ -z "$stderr" ]
 
-  assert_equal "$(test_tmux display-message -p -t "$window" '#{window_active}')" '1'
-  assert_equal "$(test_tmux display-message -p -t "$window" '#{pane_id}')" "$pane"
+  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{window_active}')" '1'
+  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{pane_id}')" "$pane"
   assert_equal "$(cat "$focused")" 't'
 }
 
@@ -217,7 +217,7 @@ FOCUS
   use_macos_backend
   local pane window
   pane="$(agent_pane_elsewhere)"
-  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
@@ -242,10 +242,10 @@ FOCUS
 
 @test "a group named ALL never removes every notification" {
   use_macos_backend
-  test_tmux set -g @tama_group_format ALL
+  tmux_test_server_run set -g @tama_group_format ALL
   local pane window
   pane="$(agent_pane_elsewhere)"
-  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
@@ -262,11 +262,11 @@ FOCUS
 
 @test "a notifier that is not installed is silence, not a failed turn" {
   use_macos_backend
-  test_tmux set -g @tama_terminal_notifier /nonexistent/terminal-notifier
+  tmux_test_server_run set -g @tama_terminal_notifier /nonexistent/terminal-notifier
 
   local pane window
   pane="$(agent_pane_elsewhere)"
-  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$pane"
   assert_success
@@ -306,11 +306,11 @@ FOCUS
   # `macos` here would mean every capability is a process started to fail, and a user
   # with no idea why.
   use_no_configuration
-  test_tmux set -g @tama_terminal_notifier /nonexistent/terminal-notifier
+  tmux_test_server_run set -g @tama_terminal_notifier /nonexistent/terminal-notifier
 
   local pane window
   pane="$(agent_pane_elsewhere)"
-  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$pane"
   assert_success
@@ -326,7 +326,7 @@ FOCUS
   # Linux runner that may well have one. Pointed at nothing, so that what runs here is
   # the resolution and not somebody's notification daemon: `auto` landing on `libnotify`
   # is tests/linux.bats's claim to make, and it makes it against a fixture.
-  test_tmux set -g @tama_notify_send /nonexistent/notify-send
+  tmux_test_server_run set -g @tama_notify_send /nonexistent/notify-send
   local bin="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$bin"
   cp "$PLUGIN_ROOT/tests/fixtures/fake-notifier" "$bin/terminal-notifier"
@@ -351,7 +351,7 @@ FOCUS
   # The desktop's half cannot agree, because there is no such application. Every way of
   # not knowing means deliver — that is the whole failure direction of ADR-0004, and it
   # is why this is the half worth testing without a desktop.
-  test_tmux set -g @tama_terminal_app 'tama-no-such-application'
+  tmux_test_server_run set -g @tama_terminal_app 'tama-no-such-application'
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$(tama_pane_of t:0)"
   assert_success
@@ -369,8 +369,8 @@ FOCUS
   # `focus` capability runs here and matches window titles.
   local target="tamafocus-target-$$-$BATS_TEST_NUMBER-$RANDOM"
   local other="tamafocus-other-$$-$BATS_TEST_NUMBER-$RANDOM"
-  test_tmux new-session -d -s "$target"
-  test_tmux new-session -d -s "$other"
+  tmux_test_server_run new-session -d -s "$target"
+  tmux_test_server_run new-session -d -s "$other"
   tama_attach_client "$other"
 
   # No terminal window is showing the target session — nothing is showing anything, this
@@ -381,14 +381,14 @@ FOCUS
   assert_success
 
   local waited=0
-  while [ "$(test_tmux display-message -p -t "$target" '#{session_attached}')" = '0' ]; do
+  while [ "$(tmux_test_server_run display-message -p -t "$target" '#{session_attached}')" = '0' ]; do
     waited=$((waited + 1))
     if [ "$waited" -gt 200 ]; then
       printf 'the client was never switched to %s; clients:\n%s\n' "$target" \
-        "$(test_tmux list-clients -F '#{client_tty} #{client_session}')" >&2
+        "$(tmux_test_server_run list-clients -F '#{client_tty} #{client_session}')" >&2
       return 1
     fi
     sleep 0.05
   done
-  assert_equal "$(test_tmux display-message -p -t "$other" '#{session_attached}')" '0'
+  assert_equal "$(tmux_test_server_run display-message -p -t "$other" '#{session_attached}')" '0'
 }
