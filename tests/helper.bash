@@ -51,6 +51,23 @@ tama_point_at_server() {
   unset TMUX_PANE
 }
 
+tama_arrange_sleeping_pane() { # <pane> [cwd]
+  local command='' pane="$1" cwd="${2:-}" waited=0
+  if [ -n "$cwd" ]; then
+    tmux_test_server_run respawn-pane -k -t "$pane" -c "$cwd" 'sleep 300'
+  else
+    tmux_test_server_run respawn-pane -k -t "$pane" 'sleep 300'
+  fi
+  while [ "$command" != sleep ] && [ "$waited" -lt 50 ]; do
+    command="$(
+      tmux_test_server_run display-message -p -t "$pane" '#{pane_current_command}'
+    )"
+    [ "$command" = sleep ] || sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ "$command" = sleep ]
+}
+
 # Copies the plugin to another path, which is also how the tests exercise the
 # promise that it works from any clone path. Copies everything so a test copy
 # cannot silently lag behind the real plugin as directories are added.
@@ -313,14 +330,13 @@ tama_render_summary() { # <session target>
 # waits for the client, not for that hook. Tests that inspect state the hook can change
 # use tama_attach_client_without_attach_hook unless they cover the hook itself.
 tama_attach_client() {
-  _tmux_test_server_require_isolated_socket || return 1
   local session="$1"
   local fifo="$BATS_TEST_TMPDIR/attach-$session.fifo"
   mkfifo "$fifo"
   # Outlives the test; both this and the client are killed in teardown.
   sleep 300 >"$fifo" &
   TAMA_FIFO_HOLDER_PID=$!
-  tmux -L "$TMUX_TEST_SOCKET" -C attach -t "$session" <"$fifo" >/dev/null 2>&1 &
+  tmux_test_server_run -C attach -t "$session" <"$fifo" >/dev/null 2>&1 &
   TAMA_CLIENT_PID=$!
 
   # The client is up when tmux says the session has one. Polled rather than slept

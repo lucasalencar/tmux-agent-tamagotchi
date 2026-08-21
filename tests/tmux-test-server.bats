@@ -6,9 +6,12 @@ load helper
 
 setup() {
   local bin="$BATS_TEST_TMPDIR/bin"
+  export TAMA_FAKE_TMUX_LOG="$BATS_TEST_TMPDIR/tmux.log"
+  : >"$TAMA_FAKE_TMUX_LOG"
   mkdir -p "$bin"
   cat >"$bin/tmux" <<'FAKE_TMUX'
 #!/bin/sh
+printf '%s\n' "$*" >>"$TAMA_FAKE_TMUX_LOG"
 case " $* " in
   *' new-session '*)
     if [ -n "${TAMA_FAKE_LONG_LIVED_SERVER:-}" ]; then
@@ -94,6 +97,7 @@ assert_surviving_server_is_reported() {
 
   [ "$start_status" -eq 42 ]
   [ -z "${TMUX_TEST_SOCKET:-}" ]
+  ! grep -q ' new-session ' "$TAMA_FAKE_TMUX_LOG"
 }
 
 @test "reserving a socket clears a stale pid with no socket ownership" {
