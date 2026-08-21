@@ -37,24 +37,28 @@ tama_reserve_socket() {
   unset TAMA_SERVER_PID
 }
 
-# Starts a tmux server with its streams on files rather than the suite's capture pipe,
-# then records its pid before returning. Only the short-lived tmux client writes the
-# pid file; the server never inherits a suite output stream.
-tama_start_server_and_record_pid() { # <command> [args through new-session...]
+# Starts one named tmux session with its streams on files rather than the suite's
+# capture pipe, then records the server pid before returning. Only the short-lived
+# tmux client writes the pid file; the server never inherits a suite output stream.
+tama_start_tmux_server() { # <config> <session>
+  local config="$1" session="$2"
   local stdout_file stderr_file server_pid='' start_status=0
   stdout_file="${BATS_TEST_TMPDIR:-/tmp}/$TAMA_SOCKET-startup.out"
   stderr_file="${BATS_TEST_TMPDIR:-/tmp}/$TAMA_SOCKET-startup.err"
-  "$@" -P -F '#{pid}' </dev/null >"$stdout_file" 2>"$stderr_file" || start_status=$?
+  test_tmux -f "$config" new-session -d -P -F '#{pid}' -s "$session" \
+    </dev/null >"$stdout_file" 2>"$stderr_file" || start_status=$?
+  IFS= read -r server_pid <"$stdout_file" || true
+  if [ -n "$server_pid" ]; then
+    TAMA_SERVER_PID="$server_pid"
+    export TAMA_SERVER_PID
+  fi
   if [ "$start_status" -ne 0 ]; then
     cat "$stdout_file" "$stderr_file" >&2
     rm -f "$stdout_file" "$stderr_file"
     return "$start_status"
   fi
-  IFS= read -r server_pid <"$stdout_file" || true
   rm -f "$stdout_file" "$stderr_file"
   [ -n "$server_pid" ] || return 1
-  TAMA_SERVER_PID="$server_pid"
-  export TAMA_SERVER_PID
 }
 
 tama_start_server() {
@@ -68,8 +72,7 @@ tama_start_server() {
   # Loudly, because everything a test then arranges is built on this session being
   # this test's own. A `duplicate session` here would mean the socket is somebody
   # else's server, and every assertion after it would be about their windows.
-  tama_start_server_and_record_pid test_tmux -f /dev/null \
-    new-session -d -s t || {
+  tama_start_tmux_server /dev/null t || {
     printf 'could not boot a tmux server on %s\n' "$TAMA_SOCKET" >&2
     return 1
   }
@@ -129,6 +132,7 @@ tama_kill_server() {
       return 1
     fi
     rm -f "$(tama_socket_dir)/$TAMA_SOCKET"
+    unset TAMA_SOCKET TAMA_SERVER_PID
   fi
 }
 

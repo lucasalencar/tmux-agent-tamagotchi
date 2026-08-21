@@ -15,20 +15,24 @@ teardown() {
 }
 
 boot_demo() {
+  local boot_status
   output=''
   stderr=''
-  tama_start_server_and_record_pid env "TAMA_DEMO_PLUGIN_DIR=$1" \
-    tmux -L "$TAMA_SOCKET" -f "${2:-$PLUGIN_ROOT/examples/demo.tmux.conf}" \
-    new-session -d -s demo
-  status=$?
+  TAMA_DEMO_PLUGIN_DIR="$1"
+  export TAMA_DEMO_PLUGIN_DIR
+  tama_start_tmux_server "${2:-$PLUGIN_ROOT/examples/demo.tmux.conf}" demo
+  boot_status=$?
+  unset TAMA_DEMO_PLUGIN_DIR
+  status="$boot_status"
   # The demo config deliberately leaves `@tama_backend auto`, which on the developer's
   # own Mac resolves to their real notifier — and this suite reaches the dismissal path.
   # See tama_no_backend. Ignored when the boot was meant to fail.
   tama_no_backend 2>/dev/null || true
+  return "$boot_status"
 }
 
 @test "the demo config boots a throwaway server with the plugin loaded" {
-  boot_demo "$PLUGIN_ROOT"
+  boot_demo "$PLUGIN_ROOT" || return 1
   assert_success
 
   local bin
@@ -38,7 +42,7 @@ boot_demo() {
 }
 
 @test "the demo server records its pid for reliable teardown" {
-  boot_demo "$PLUGIN_ROOT"
+  boot_demo "$PLUGIN_ROOT" || return 1
   assert_success
 
   [ -n "${TAMA_SERVER_PID:-}" ]
@@ -47,14 +51,14 @@ boot_demo() {
 
 @test "the demo config finds the plugin when tmux is started from the clone" {
   cd "$PLUGIN_ROOT" || return 1
-  boot_demo '' examples/demo.tmux.conf
+  boot_demo '' examples/demo.tmux.conf || return 1
   assert_success
 
   assert_equal "$(test_tmux show -gqv @tama_bin)" "$PLUGIN_ROOT/bin/tama"
 }
 
 @test "the demo status line contributes nothing for a window with no agent" {
-  boot_demo "$PLUGIN_ROOT"
+  boot_demo "$PLUGIN_ROOT" || return 1
   assert_success
 
   # The demo interpolates the plugin's exported formats into the window status
@@ -76,7 +80,7 @@ boot_demo() {
 }
 
 @test "an agent reporting a state moves the icons in the demo status line" {
-  boot_demo "$PLUGIN_ROOT"
+  boot_demo "$PLUGIN_ROOT" || return 1
   assert_success
   tama_point_at_server
 
@@ -92,7 +96,7 @@ boot_demo() {
 }
 
 @test "an agent that needs the user marks the window in the demo status line" {
-  boot_demo "$PLUGIN_ROOT"
+  boot_demo "$PLUGIN_ROOT" || return 1
   assert_success
   tama_point_at_server
 
