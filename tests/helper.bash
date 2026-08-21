@@ -330,6 +330,7 @@ tama_render_summary() { # <session target>
 # waits for the client, not for that hook. Tests that inspect state the hook can change
 # use tama_attach_client_without_attach_hook unless they cover the hook itself.
 tama_attach_client() {
+  _tmux_test_server_require_isolated_socket || return 1
   local session="$1"
   local fifo="$BATS_TEST_TMPDIR/attach-$session.fifo"
   mkfifo "$fifo"
