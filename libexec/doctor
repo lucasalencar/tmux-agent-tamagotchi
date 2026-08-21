@@ -486,7 +486,7 @@ doctor_label_command() {
 # anywhere in the line make the executable unknowable without running user syntax.
 doctor_label_command_has_shell_syntax() { # <command line>
   case "$1" in
-    *$'\n'* | *"'"* | *'"'* | *'|'* | *'&'* | *';'* | *'<'* | *'>'* | *'$'* | *'`'* | *'('* | *')'*)
+    *[[:cntrl:]]* | *"'"* | *'"'* | *'|'* | *'&'* | *';'* | *'<'* | *'>'* | *'$'* | *'`'* | *'('* | *')'*)
       return 0
       ;;
   esac
@@ -555,6 +555,12 @@ doctor_label_program() { # <plain program word>
         "@tama_label_command runs $program, but PATH resolved it relative to this working directory"
       ;;
     *)
+      if doctor_program_uses_relative_path "$program" &&
+        ! doctor_program_is_shell_builtin "$program"; then
+        doctor_label_command_unchecked \
+          "@tama_label_command runs $program, but PATH resolved it relative to this working directory"
+        return 0
+      fi
       doctor_ok "@tama_label_command runs $program"
       doctor_label_command_cost
       doctor_more "shell command: $resolved"
@@ -578,6 +584,27 @@ doctor_program_uses_relative_path() { # <bare program>
     [ "$last" = 'no' ] || break
   done
   return 1
+}
+
+doctor_program_is_shell_builtin() { # <bare program>
+  local rest="${PATH:-}" entry last='no'
+  local absolute_path='/dev/null/tama-no-such-directory' resolved
+  while :; do
+    case "$rest" in
+      *:*) entry="${rest%%:*}"; rest="${rest#*:}" ;;
+      *) entry="$rest"; last='yes' ;;
+    esac
+    case "$entry" in
+      /*) absolute_path="$absolute_path:$entry" ;;
+    esac
+    [ "$last" = 'no' ] || break
+  done
+  resolved="$(PATH="$absolute_path" sh -c 'command -v "$1"' _ "$1" 2>/dev/null)" ||
+    resolved=''
+  case "$resolved" in
+    '' | */*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 doctor_label_command_unchecked() { # <verdict>

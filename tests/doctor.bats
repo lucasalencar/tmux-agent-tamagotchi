@@ -265,6 +265,16 @@ PROVIDER
   assert_output_contains '@tama_label_command is set, but its executable cannot be checked without evaluating shell syntax'
 }
 
+@test "doctor does not split control characters that the shell keeps in a word" {
+  healthy_server
+  test_tmux set -g @tama_label_command $'/bin/echo\rignored'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_label_command is set, but its executable cannot be checked without evaluating shell syntax'
+  refute_output_contains '@tama_label_command runs /bin/echo'
+}
+
 @test "doctor leaves environment assignments to the shell" {
   healthy_server
   test_tmux set -g @tama_label_command 'LABEL_STYLE=short label-provider'
@@ -328,6 +338,22 @@ PROVIDER
   assert_output_contains '@tama_label_command runs label-provider'
   assert_output_contains "executable file: $provider"
   refute_output_contains 'PATH resolved it relative'
+}
+
+@test "doctor recognizes a bare result selected through an empty PATH entry" {
+  healthy_server
+  local provider="$BATS_TEST_TMPDIR/label-provider"
+  printf '#!/bin/sh\n' >"$provider"
+  chmod +x "$provider"
+  PATH=":$PATH"
+  export PATH
+  [ "$(sh -c 'command -v "$1"' _ label-provider)" = 'label-provider' ] ||
+    skip 'this shell reports an absolute path for empty PATH entries'
+  test_tmux set -g @tama_label_command 'label-provider'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_label_command runs label-provider, but PATH resolved it relative to this working directory'
 }
 
 @test "doctor does not reject a home-relative provider when HOME is unavailable" {
