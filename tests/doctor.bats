@@ -113,6 +113,15 @@ cc_settings_into() { # <path> <event…>
   assert_output_contains '@tama_label_command is unset: window labels are not provided'
 }
 
+@test "doctor distinguishes an explicitly empty label provider" {
+  healthy_server
+  test_tmux set -g @tama_label_command ''
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_label_command is empty: window labels are deliberately disabled'
+}
+
 @test "doctor reports an executable label provider without running it" {
   healthy_server
   local marker="$BATS_TEST_TMPDIR/provider-ran"
@@ -126,9 +135,11 @@ PROVIDER
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains "@tama_label_command names an executable file: $provider"
+  assert_output_contains "@tama_label_command runs $provider"
+  assert_output_contains "executable file: $provider"
   assert_output_contains 'runs synchronously inside the agent hook that asks for a label'
   assert_output_contains 'has no timeout'
+  assert_output_contains 'no problems and no warnings'
   [ ! -e "$marker" ]
 }
 
@@ -147,8 +158,46 @@ PROVIDER
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains "@tama_label_command names an executable file: $provider"
+  assert_output_contains '@tama_label_command runs ~/bin/label-provider'
+  assert_output_contains "executable file: $provider"
   [ ! -e "$marker" ]
+}
+
+@test "doctor resolves a label provider on PATH and redacts its arguments" {
+  healthy_server
+  local marker="$BATS_TEST_TMPDIR/provider-ran"
+  local provider="$BATS_TEST_TMPDIR/bin/label-provider"
+  mkdir -p "${provider%/*}"
+  cat >"$provider" <<PROVIDER
+#!/bin/sh
+touch "$marker"
+PROVIDER
+  chmod +x "$provider"
+  PATH="${provider%/*}:$PATH"
+  export PATH
+  test_tmux set -g @tama_label_command 'label-provider --token secret-value'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_label_command runs label-provider'
+  assert_output_contains "executable file: $provider"
+  refute_output_contains '--token'
+  refute_output_contains 'secret-value'
+  [ ! -e "$marker" ]
+}
+
+@test "doctor leaves shell syntax unexecuted and does not expose its arguments" {
+  healthy_server
+  local provider="$BATS_TEST_TMPDIR/label provider"
+  printf '#!/bin/sh\n' >"$provider"
+  chmod +x "$provider"
+  test_tmux set -g @tama_label_command "'$provider' --token secret-value"
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_label_command is set, but its executable cannot be checked without evaluating shell syntax'
+  refute_output_contains '--token'
+  refute_output_contains 'secret-value'
 }
 
 @test "doctor fails when the configured label provider does not exist" {
@@ -158,7 +207,7 @@ PROVIDER
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
-  assert_output_contains "@tama_label_command names $provider, which does not exist"
+  assert_output_contains "@tama_label_command runs $provider, which does not resolve to an executable"
   assert_output_contains '1 problem'
 }
 
@@ -171,8 +220,19 @@ PROVIDER
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
-  assert_output_contains "@tama_label_command names $provider, which is not executable"
+  assert_output_contains "@tama_label_command runs $provider, which is not an executable file"
   assert_output_contains '1 problem'
+}
+
+@test "doctor fails when the configured label provider is a directory" {
+  healthy_server
+  local provider="$BATS_TEST_TMPDIR/label-provider"
+  mkdir "$provider"
+  test_tmux set -g @tama_label_command "$provider"
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_status 1
+  assert_output_contains "@tama_label_command runs $provider, which is not an executable file"
 }
 
 @test "doctor warns about an invalid session summary scope and uses current fallback" {

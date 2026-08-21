@@ -451,31 +451,69 @@ doctor_notifications() {
 }
 
 doctor_label_command() {
-  local configured path
-  configured="$(tama_opt tama_label_command '')"
-  if [ -z "$configured" ]; then
+  local configured program resolved path home
+  if ! configured="$(tmux_run show -gv @tama_label_command 2>/dev/null)"; then
     doctor_ok '@tama_label_command is unset: window labels are not provided'
     return 0
   fi
 
-  path="$configured"
-  case "$path" in
-    \~/*)
-      [ -n "${HOME:-}" ] && path="$HOME/${path#\~/}"
+  if [ -z "$configured" ]; then
+    doctor_ok '@tama_label_command is empty: window labels are deliberately disabled'
+    return 0
+  fi
+
+  doctor_label_command_cost
+  program="$(doctor_program "$configured")"
+
+  # The runtime accepts a shell line, and inspecting one accurately means asking a
+  # shell to evaluate it — exactly the side effect doctor must avoid. A plain first
+  # word is safe to resolve; quoting, expansion and operators are only reported as
+  # configured, with the entire line kept out of this pasteable output.
+  case "$program" in
+    '' | *[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./~+-]*)
+      doctor_ok '@tama_label_command is set, but its executable cannot be checked without evaluating shell syntax'
+      return 0
       ;;
   esac
 
-  if [ ! -e "$path" ]; then
-    doctor_fail "@tama_label_command names $path, which does not exist"
+  path="$program"
+  case "$path" in
+    \~/*)
+      home="${HOME:-}"
+      [ -n "$home" ] || home="$(cd ~ 2>/dev/null && pwd -P)" || home=''
+      [ -n "$home" ] && path="$home/${path#\~/}"
+      ;;
+  esac
+
+  case "$path" in
+    */*) resolved="$path" ;;
+    *) resolved="$(command -v "$path" 2>/dev/null)" || resolved='' ;;
+  esac
+
+  if [ -z "$resolved" ] || [ ! -e "$resolved" ]; then
+    doctor_fail "@tama_label_command runs $program, which does not resolve to an executable"
     return 0
   fi
 
-  if [ ! -f "$path" ] || [ ! -x "$path" ]; then
-    doctor_fail "@tama_label_command names $path, which is not executable"
-    return 0
-  fi
+  # A shell builtin is runnable without being a file. Anything with a path, however,
+  # has to be the executable file the shell will actually start.
+  case "$resolved" in
+    */*)
+      if [ ! -f "$resolved" ] || [ ! -x "$resolved" ]; then
+        doctor_fail "@tama_label_command runs $program, which is not an executable file"
+        return 0
+      fi
+      doctor_ok "@tama_label_command runs $program"
+      doctor_more "executable file: $resolved"
+      ;;
+    *)
+      doctor_ok "@tama_label_command runs $program"
+      doctor_more "shell command: $resolved"
+      ;;
+  esac
+}
 
-  doctor_ok "@tama_label_command names an executable file: $path"
+doctor_label_command_cost() {
   doctor_more 'It runs synchronously inside the agent hook that asks for a label and'
   doctor_more 'has no timeout. A slow provider makes the agent turn wait just as long.'
 }
