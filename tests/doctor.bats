@@ -620,11 +620,16 @@ cc_settings_into() { # <path> <event…>
   test_tmux set -g @tama_backend macos
   test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
   test_tmux set -g @tama_suppress_when_focused off
+  test_tmux set -g set-titles off
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains 'every banner is delivered'
   assert_output_contains 'terminal window cannot be raised for the session'
+  assert_output_contains 'terminal: ghostty (@tama_terminal_app)'
+  assert_output_contains "set-titles is 'off', so focus cannot reliably find the session's window"
+  assert_output_contains 'may therefore reach the switch-client fallback described above'
+  assert_output_contains "set -g set-titles-string '#S'"
 }
 
 @test "doctor reads a flag option the way the rest of the plugin reads it" {

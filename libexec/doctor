@@ -779,6 +779,46 @@ doctor_focus_action() {
   doctor_uses_macos_focus || return 0
   doctor_section 'the focus action'
   doctor_focus_fallback
+  tama_opt_enabled tama_suppress_when_focused on || doctor_focus_action_configuration
+}
+
+doctor_focus_action_configuration() {
+  tama_backend_export_terminal
+  doctor_ok "terminal: $TAMA_TERMINAL_APP (@tama_terminal_app), bundle id $TAMA_TERMINAL_BUNDLE_ID"
+  doctor_more 'The focus action sends that application name to macOS automation. Neither'
+  doctor_more 'tmux nor this plugin can discover which application displays the session.'
+
+  if [ "$TAMA_DOCTOR_SERVER" = 'no' ]; then
+    doctor_more 'No server to read set-titles from; see the setup section.'
+    return 0
+  fi
+
+  local titles string
+  titles="$(tmux_run show -gv set-titles 2>/dev/null)" || titles=''
+  string="$(tmux_run show -gv set-titles-string 2>/dev/null)" || string=''
+
+  if [ "$titles" != 'on' ]; then
+    doctor_warn "set-titles is '$titles', so focus cannot reliably find the session's window"
+    doctor_focus_action_title_cost
+    return 0
+  fi
+
+  case "$string" in
+    *'#S'* | *'#{session_name}'*)
+      doctor_ok "set-titles is on and set-titles-string carries the session name"
+      ;;
+    *)
+      doctor_warn "set-titles-string is '$string', so focus cannot identify the session's window"
+      doctor_focus_action_title_cost
+      ;;
+  esac
+}
+
+doctor_focus_action_title_cost() {
+  doctor_more 'A click may therefore reach the switch-client fallback described above.'
+  doctor_more 'Fix it with:'
+  doctor_more '  set -g set-titles on'
+  doctor_more "  set -g set-titles-string '#S'"
 }
 
 doctor_focus_check() {
