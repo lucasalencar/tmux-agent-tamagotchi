@@ -762,12 +762,12 @@ doctor_program() { # <command line>
 }
 
 # ---------------------------------------------------------------------------
-# The focus check
+# Focus
 #
-# ADR-0004: a banner is suppressed only when tmux says the window is current in its own
-# session with somebody attached *and* the backend says the terminal really is in front.
-# The backend half identifies the terminal window by its title, which is why the title
-# configuration is worth a warning — and worth saying which way it fails.
+# The action brings a session's terminal forward after a click. Separately, ADR-0004
+# suppresses a banner only when tmux says the window is current in its own session with
+# somebody attached *and* the backend says the terminal really is in front. Both use the
+# terminal title, which is why its configuration is worth a warning and an explanation.
 # ---------------------------------------------------------------------------
 
 doctor_focus() {
@@ -844,7 +844,8 @@ doctor_uses_macos_focus() {
 # false confidence. Explain the mechanism instead, which is enough to make an apparently
 # unrelated terminal changing sessions diagnosable.
 doctor_focus_fallback() {
-  doctor_more 'When no terminal window title matches the session, a click falls back to'
+  doctor_more 'When the terminal window cannot be raised for the session — because no title'
+  doctor_more 'matches or macOS automation fails — a click falls back to'
   doctor_more '`tmux switch-client`: if one exists, it repurposes an arbitrary client attached to another session.'
   doctor_more 'Doctor cannot predict which client a future click would choose; the choice is made'
   doctor_more 'at click time from the clients then attached to other sessions.'

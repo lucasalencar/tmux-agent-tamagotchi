@@ -513,7 +513,7 @@ cc_settings_into() { # <path> <event…>
   assert_output_contains 'used as given or not at all'
 }
 
-# --- the focus check ---------------------------------------------------------------
+# --- focus -------------------------------------------------------------------------
 
 @test "a title configuration the focus check cannot match warns, and says it fails toward noise" {
   healthy_server
@@ -525,7 +525,7 @@ cc_settings_into() { # <path> <event…>
   assert_success
   assert_output_contains 'set-titles is'
   assert_output_contains 'extra banners, never missing ones'
-  assert_output_contains 'no terminal window title matches the session'
+  assert_output_contains 'terminal window cannot be raised for the session'
   assert_output_contains "set -g set-titles-string '#S'"
 }
 
@@ -563,7 +563,9 @@ cc_settings_into() { # <path> <event…>
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains 'no terminal window title matches the session'
+  assert_output_contains 'terminal window cannot be raised for the session'
+  assert_output_contains 'no title'
+  assert_output_contains 'macOS automation fails'
   assert_output_contains 'switch-client'
   assert_output_contains 'if one exists'
   assert_output_contains 'an arbitrary client attached to another session'
@@ -580,7 +582,7 @@ cc_settings_into() { # <path> <event…>
   assert_success
   assert_output_contains 'backend: macos'
   assert_output_contains 'the focus action'
-  assert_output_contains 'no terminal window title matches the session'
+  assert_output_contains 'terminal window cannot be raised for the session'
 }
 
 @test "a focus override does not inherit the macOS backend fallback diagnosis" {
@@ -592,7 +594,7 @@ cc_settings_into() { # <path> <event…>
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains '@tama_focus_command replaces the focus capability'
-  refute_output_contains 'no terminal window title matches the session'
+  refute_output_contains 'terminal window cannot be raised for the session'
   refute_output_contains 'switch-client'
 }
 
@@ -609,7 +611,7 @@ cc_settings_into() { # <path> <event…>
   run "$plugin/bin/tama" doctor
   assert_success
   assert_output_contains 'no focus: a click selects the window and the pane but does not'
-  refute_output_contains 'no terminal window title matches the session'
+  refute_output_contains 'terminal window cannot be raised for the session'
   refute_output_contains 'switch-client'
 }
 
@@ -622,7 +624,7 @@ cc_settings_into() { # <path> <event…>
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains 'every banner is delivered'
-  assert_output_contains 'no terminal window title matches the session'
+  assert_output_contains 'terminal window cannot be raised for the session'
 }
 
 @test "doctor reads a flag option the way the rest of the plugin reads it" {
