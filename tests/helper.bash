@@ -37,6 +37,7 @@ tama_reserve_socket() {
 }
 
 tama_start_server() {
+  local startup_log
   tama_reserve_socket tamatest
   # The indirection goes into the environment *before* the server boots as well as
   # after, so that jobs the server spawns for itself — a status line `#()` format, a
@@ -47,10 +48,17 @@ tama_start_server() {
   # Loudly, because everything a test then arranges is built on this session being
   # this test's own. A `duplicate session` here would mean the socket is somebody
   # else's server, and every assertion after it would be about their windows.
-  test_tmux -f /dev/null new-session -d -s t </dev/null >/dev/null 2>&1 || {
+  startup_log="${BATS_TEST_TMPDIR:-/tmp}/$TAMA_SOCKET-startup.log"
+  test_tmux -f /dev/null new-session -d -s t \
+    </dev/null >"$startup_log" 2>&1 || {
     printf 'could not boot a tmux server on %s\n' "$TAMA_SOCKET" >&2
+    cat "$startup_log" >&2
+    rm -f "$startup_log"
     return 1
   }
+  rm -f "$startup_log"
+  TAMA_SERVER_PID="$(test_tmux display-message -p '#{pid}')" || return 1
+  export TAMA_SERVER_PID
   tama_no_backend
   tama_point_at_server
 }
@@ -73,21 +81,37 @@ tama_point_at_server() {
 # kill-server does not remove the socket file. Remove it separately, but never while
 # it still addresses a live server: unlinking then would make the survivor impossible
 # for any later teardown to reach.
+tama_wait_for_server_exit() { # <pid>
+  local waited=0
+  # Five seconds is generous for normal tmux shutdown, while still turning a true
+  # survivor into a prompt failure instead of another silent suite timeout.
+  local attempts="${TAMA_SERVER_EXIT_WAIT_ATTEMPTS:-500}"
+  while kill -0 "$1" 2>/dev/null && [ "$waited" -lt "$attempts" ]; do
+    sleep 0.01
+    waited=$((waited + 1))
+  done
+  ! kill -0 "$1" 2>/dev/null
+}
+
+tama_report_surviving_server() {
+  printf 'test tmux server survived kill-server on %s\n' "$TAMA_SOCKET" >&2
+  return 1
+}
+
 tama_kill_server() {
   if [ -n "${TAMA_SOCKET:-}" ]; then
-    local server_pid='' waited=0
-    server_pid="$(
-      tmux -L "$TAMA_SOCKET" display-message -p '#{pid}' 2>/dev/null
-    )" || server_pid=''
-    tmux -L "$TAMA_SOCKET" kill-server 2>/dev/null || true
-    while [ -n "$server_pid" ] && kill -0 "$server_pid" 2>/dev/null &&
-      [ "$waited" -lt 100 ]; do
-      sleep 0.01
-      waited=$((waited + 1))
-    done
-    if { [ -n "$server_pid" ] && kill -0 "$server_pid" 2>/dev/null; } ||
-      { [ -z "$server_pid" ] && tmux -L "$TAMA_SOCKET" has-session 2>/dev/null; }; then
-      printf 'test tmux server survived kill-server on %s\n' "$TAMA_SOCKET" >&2
+    local server_pid="${TAMA_SERVER_PID:-}"
+    if [ -z "$server_pid" ]; then
+      server_pid="$(test_tmux display-message -p '#{pid}' 2>/dev/null)" || server_pid=''
+    fi
+    test_tmux kill-server 2>/dev/null || true
+    if [ -n "$server_pid" ]; then
+      if ! tama_wait_for_server_exit "$server_pid"; then
+        tama_report_surviving_server
+        return 1
+      fi
+    elif test_tmux has-session 2>/dev/null; then
+      tama_report_surviving_server
       return 1
     fi
     rm -f "$(tama_socket_dir)/$TAMA_SOCKET"
