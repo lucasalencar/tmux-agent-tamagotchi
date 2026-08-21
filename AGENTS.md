@@ -7,6 +7,9 @@ code review before committing.
 
 ### CI
 
+Run test targets outside the agent sandbox from the first attempt: the suite starts tmux
+servers whose sockets under `/private/tmp` are rejected by the sandbox.
+
 Before considering any task that changes tracked files complete, verify the CI run for the
 resulting commit (or its pull request) has concluded successfully. Report a blocked or failed
 run as unfinished work rather than declaring the task done.
