@@ -22,9 +22,12 @@ test:
 	bats -r tests
 
 doctor:
-	@socket="tama-doctor-$$$$"; \
+	@set -e; \
+	socket="tama-doctor-$$$$-$$(date +%s)"; \
 	trap 'tmux -L "$$socket" kill-server >/dev/null 2>&1 || true' EXIT HUP INT TERM; \
 	tmux -L "$$socket" -f /dev/null new-session -d -s tama-doctor </dev/null; \
 	tmux -L "$$socket" set -g @tama_backend ''; \
 	TAMA_TMUX_ARGS="-L $$socket" ./tamagotchi.tmux; \
-	TAMA_TMUX_ARGS="-L $$socket" ./bin/tama doctor
+	TAMA_TMUX_ARGS="-L $$socket" ./bin/tama doctor; \
+	tmux -L "$$socket" kill-server; \
+	trap - EXIT HUP INT TERM
