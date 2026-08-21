@@ -19,6 +19,7 @@ teardown() {
 }
 
 attach_client() { # <session> <name>
+  _tmux_test_server_require_isolated_socket || return 1
   local session="$1" name="$2" fifo="$BATS_TEST_TMPDIR/$2.fifo" waited=0 pid holder
   mkfifo "$fifo"
   sleep 300 >"$fifo" &
