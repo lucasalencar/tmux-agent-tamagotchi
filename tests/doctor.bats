@@ -137,7 +137,8 @@ PROVIDER
   assert_success
   assert_output_contains "@tama_label_command runs $provider"
   assert_output_contains "executable file: $provider"
-  assert_output_contains 'runs synchronously inside the agent hook that asks for a label'
+  assert_output_contains "@tama_label_command runs $provider
+       It runs synchronously inside the agent hook that asks for a label"
   assert_output_contains 'has no timeout'
   assert_output_contains 'no problems and no warnings'
   [ ! -e "$marker" ]
@@ -188,8 +189,12 @@ PROVIDER
 
 @test "doctor leaves shell syntax unexecuted and does not expose its arguments" {
   healthy_server
+  local marker="$BATS_TEST_TMPDIR/provider-ran"
   local provider="$BATS_TEST_TMPDIR/label provider"
-  printf '#!/bin/sh\n' >"$provider"
+  cat >"$provider" <<PROVIDER
+#!/bin/sh
+touch "$marker"
+PROVIDER
   chmod +x "$provider"
   test_tmux set -g @tama_label_command "'$provider' --token secret-value"
 
@@ -198,6 +203,58 @@ PROVIDER
   assert_output_contains '@tama_label_command is set, but its executable cannot be checked without evaluating shell syntax'
   refute_output_contains '--token'
   refute_output_contains 'secret-value'
+  [ ! -e "$marker" ]
+}
+
+@test "doctor accepts a shell builtin as a label provider" {
+  healthy_server
+  test_tmux set -g @tama_label_command 'printf label'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_label_command runs printf'
+  assert_output_contains 'shell command: printf'
+  assert_output_contains 'no problems and no warnings'
+}
+
+@test "doctor fails when a bare label provider is not on PATH" {
+  healthy_server
+  test_tmux set -g @tama_label_command 'tama-label-provider-that-does-not-exist'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_status 1
+  assert_output_contains '@tama_label_command runs tama-label-provider-that-does-not-exist, which does not resolve to an executable'
+}
+
+@test "doctor does not guess through shell operators" {
+  healthy_server
+  test_tmux set -g @tama_label_command 'missing-provider || printf fallback'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_label_command is set, but its executable cannot be checked without evaluating shell syntax'
+}
+
+@test "doctor leaves relative provider paths to the hook working directory" {
+  healthy_server
+  local provider="$BATS_TEST_TMPDIR/label-provider"
+  printf '#!/bin/sh\n' >"$provider"
+  chmod +x "$provider"
+  test_tmux set -g @tama_label_command './label-provider'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_label_command runs ./label-provider, whose relative path depends on the hook working directory'
+}
+
+@test "doctor does not reject a home-relative provider when HOME is unavailable" {
+  healthy_server
+  test_tmux set -g @tama_label_command '~/bin/label-provider'
+  unset HOME
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_label_command runs ~/bin/label-provider, but this shell has no HOME to resolve it'
 }
 
 @test "doctor fails when the configured label provider does not exist" {
