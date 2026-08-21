@@ -40,6 +40,22 @@ session_id() {
   tmux_test_server_run display-message -p -t "$1" '#{session_id}'
 }
 
+arrange_stale_agent_pane() { # <pane>
+  local command='' pane="$1" waited=0
+  tmux_test_server_run respawn-pane -k -t "$pane" 'sleep 300'
+  while [ "$command" != sleep ] && [ "$waited" -lt 50 ]; do
+    command="$(
+      tmux_test_server_run display-message -p -t "$pane" '#{pane_current_command}'
+    )"
+    [ "$command" = sleep ] || sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ "$command" = sleep ] || return 1
+  tmux_test_server_run set-option -g @tama_gc_shells sleep
+  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$pane"
+  tmux_test_server_run set-option -p -t "$pane" @tama_pane_cmd definitely-stale
+}
+
 @test "state changes refresh linked current summaries and unrelated all summaries once" {
   local pane linked_client linked_current_client all_client current_client
   pane="$(tama_pane_of t:0)"
@@ -113,12 +129,9 @@ session_id() {
   third="$(tama_pane_of other:0)"
   attach_client t first_client
   attach_client other other_client
-  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$first"
-  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$second"
-  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$third"
-  tmux_test_server_run set-option -p -t "$first" @tama_pane_cmd definitely-stale
-  tmux_test_server_run set-option -p -t "$second" @tama_pane_cmd definitely-stale
-  tmux_test_server_run set-option -p -t "$third" @tama_pane_cmd definitely-stale
+  arrange_stale_agent_pane "$first"
+  arrange_stale_agent_pane "$second"
+  arrange_stale_agent_pane "$third"
 
   tama_log_tmux_calls
   run "$PLUGIN_ROOT/bin/tama" gc --all
@@ -142,8 +155,7 @@ session_id() {
   attach_client linked linked_client
   attach_client all-view all_client
   attach_client current-view current_client
-  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$pane"
-  tmux_test_server_run set-option -p -t "$pane" @tama_pane_cmd definitely-stale
+  arrange_stale_agent_pane "$pane"
 
   tama_log_tmux_calls
   run "$PLUGIN_ROOT/bin/tama" gc --window "$window"
