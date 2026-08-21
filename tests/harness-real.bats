@@ -8,13 +8,14 @@ teardown() {
   tama_kill_server
 }
 
-@test "a real test server leaves no socket after teardown" {
+@test "stopping a real test server removes its socket and process" {
   tama_start_server
   local socket="$(tama_socket_dir)/$TAMA_SOCKET"
+  local server_pid="$TAMA_SERVER_PID"
   [ -S "$socket" ]
 
   tama_kill_server
 
   [ ! -e "$socket" ]
-  TAMA_SOCKET=''
+  ! kill -0 "$server_pid" 2>/dev/null
 }
