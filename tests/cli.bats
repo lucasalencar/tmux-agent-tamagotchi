@@ -9,7 +9,7 @@ setup() {
 }
 
 teardown() {
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 # Sets $PLUGIN to a copy of the plugin that has one dispatchable subcommand.
@@ -105,7 +105,7 @@ extract_hook_recipe() {
   # A hook runs on machines where the plugin is absent, and on a tmux too old for
   # the entrypoint to have wired anything, so the recipe must not fail the
   # agent's turn there.
-  test_tmux set -gu @tama_bin
+  tmux_test_server_run set -gu @tama_bin
   tama_shim_tmux_on_path
 
   run --separate-stderr sh -c "$(extract_hook_recipe)"
@@ -337,6 +337,6 @@ extract_hook_recipe() {
   assert_plugin_wired "$plugin"
 
   # And the path it published is runnable as published.
-  run "$(test_tmux show -gqv @tama_bin)" version
+  run "$(tmux_test_server_run show -gqv @tama_bin)" version
   assert_success
 }

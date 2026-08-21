@@ -10,12 +10,12 @@ load helper
 
 setup() {
   tama_start_server
-  WINDOW="$(test_tmux display-message -p -t t '#{window_id}')"
-  PANE="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
+  WINDOW="$(tmux_test_server_run display-message -p -t t '#{window_id}')"
+  PANE="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | head -1)"
 }
 
 teardown() {
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 # Reports a state on a pane the way an agent hook would.
@@ -49,10 +49,10 @@ report() {
 }
 
 @test "a window with two agent panes shows two glyphs, in pane order" {
-  test_tmux split-window -d -t t
+  tmux_test_server_run split-window -d -t t
   local first second
-  first="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
-  second="$(test_tmux list-panes -t t -F '#{pane_id}' | tail -1)"
+  first="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | head -1)"
+  second="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | tail -1)"
 
   report "$first" waiting
   report "$second" running
@@ -66,32 +66,32 @@ report() {
 }
 
 @test "an icon option can equal the window id" {
-  test_tmux split-window -d -t t
+  tmux_test_server_run split-window -d -t t
   local first second
-  first="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
-  second="$(test_tmux list-panes -t t -F '#{pane_id}' | tail -1)"
+  first="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | head -1)"
+  second="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | tail -1)"
 
   report "$first" running
   report "$second" waiting
-  test_tmux set -g @tama_icon_separator "$WINDOW"
+  tmux_test_server_run set -g @tama_icon_separator "$WINDOW"
 
   assert_equal "$(tama_icons "$WINDOW")" " ●${WINDOW}◐"
 }
 
 @test "a pane with no agent in it contributes nothing" {
-  test_tmux split-window -d -t t
+  tmux_test_server_run split-window -d -t t
   local second
-  second="$(test_tmux list-panes -t t -F '#{pane_id}' | tail -1)"
+  second="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | tail -1)"
 
   report "$second" running
   assert_equal "$(tama_icons "$WINDOW")" ' ●'
 }
 
 @test "the icons are the window's own, not the whole server's" {
-  test_tmux new-window -d -t t:
+  tmux_test_server_run new-window -d -t t:
   local other_window other_pane
-  other_window="$(test_tmux list-windows -t t -F '#{window_id}' | tail -1)"
-  other_pane="$(test_tmux list-panes -t "$other_window" -F '#{pane_id}')"
+  other_window="$(tmux_test_server_run list-windows -t t -F '#{window_id}' | tail -1)"
+  other_pane="$(tmux_test_server_run list-panes -t "$other_window" -F '#{pane_id}')"
 
   report "$PANE" running
   report "$other_pane" waiting
@@ -107,13 +107,13 @@ report() {
   # another session's window.
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
-  test_tmux new-session -d -s other
+  tmux_test_server_run new-session -d -s other
   local other_window other_pane
-  other_window="$(test_tmux display-message -p -t other '#{window_id}')"
-  other_pane="$(test_tmux list-panes -t other -F '#{pane_id}')"
+  other_window="$(tmux_test_server_run display-message -p -t other '#{window_id}')"
+  other_pane="$(tmux_test_server_run list-panes -t other -F '#{pane_id}')"
   # Both are window 0 — of different sessions.
-  assert_equal "$(test_tmux display-message -p -t "$WINDOW" '#{window_index}')" \
-    "$(test_tmux display-message -p -t "$other_window" '#{window_index}')"
+  assert_equal "$(tmux_test_server_run display-message -p -t "$WINDOW" '#{window_index}')" \
+    "$(tmux_test_server_run display-message -p -t "$other_window" '#{window_index}')"
 
   report "$PANE" running
   report "$other_pane" waiting
@@ -176,7 +176,7 @@ report() {
   # other clone once per window per status interval.
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
-  [ -n "$(test_tmux show -gqv @tama_icons)" ]
+  [ -n "$(tmux_test_server_run show -gqv @tama_icons)" ]
 
   local plugin
   plugin="$(printf '%s/one\ntwo/tamagotchi' "$BATS_TEST_TMPDIR")"
@@ -186,9 +186,9 @@ report() {
   run --separate-stderr "$plugin/tamagotchi.tmux"
   assert_success
   [ -n "$stderr" ]
-  assert_equal "$(test_tmux show -gqv @tama_icons)" ''
+  assert_equal "$(tmux_test_server_run show -gqv @tama_icons)" ''
   # Everything else still loads: the icons are one feature, not the plugin.
-  assert_equal "$(test_tmux show -gqv @tama_bin)" "$(cd -P "$plugin" && pwd)/bin/tama"
+  assert_equal "$(tmux_test_server_run show -gqv @tama_bin)" "$(cd -P "$plugin" && pwd)/bin/tama"
 }
 
 @test "the exported format renders the icons the way a status line would" {
@@ -225,11 +225,11 @@ report() {
 #
 
 @test "each state's glyph can be replaced on its own" {
-  test_tmux set -g @tama_icon_running 'R'
-  test_tmux set -g @tama_icon_waiting 'W'
-  test_tmux set -g @tama_icon_idle 'I'
-  test_tmux set -g @tama_icon_error 'E'
-  test_tmux set -g @tama_icon_background 'B'
+  tmux_test_server_run set -g @tama_icon_running 'R'
+  tmux_test_server_run set -g @tama_icon_waiting 'W'
+  tmux_test_server_run set -g @tama_icon_idle 'I'
+  tmux_test_server_run set -g @tama_icon_error 'E'
+  tmux_test_server_run set -g @tama_icon_background 'B'
 
   report "$PANE" running
   assert_equal "$(tama_icons "$WINDOW")" ' R'
@@ -248,7 +248,7 @@ report() {
 }
 
 @test "one state's override leaves the others alone" {
-  test_tmux set -g @tama_icon_waiting '!!'
+  tmux_test_server_run set -g @tama_icon_waiting '!!'
 
   report "$PANE" running
   assert_equal "$(tama_icons "$WINDOW")" ' ●'
@@ -258,7 +258,7 @@ report() {
 }
 
 @test "an icon set to nothing draws nothing for that state" {
-  test_tmux set -g @tama_icon_running ''
+  tmux_test_server_run set -g @tama_icon_running ''
 
   report "$PANE" running
   # Not the default glyph: an option set to the empty string is a configuration,
@@ -269,7 +269,7 @@ report() {
 @test "the ascii preset replaces the whole set" {
   # For terminals with no wide-glyph support: every one of these is a single
   # column of ASCII.
-  test_tmux set -g @tama_icon_set ascii
+  tmux_test_server_run set -g @tama_icon_set ascii
 
   report "$PANE" running
   assert_equal "$(tama_icons "$WINDOW")" ' *'
@@ -288,7 +288,7 @@ report() {
 }
 
 @test "the pets preset replaces the whole set" {
-  test_tmux set -g @tama_icon_set pets
+  tmux_test_server_run set -g @tama_icon_set pets
 
   report "$PANE" running
   assert_equal "$(tama_icons "$WINDOW")" ' 🐥'
@@ -307,8 +307,8 @@ report() {
 }
 
 @test "an individual icon wins over the preset" {
-  test_tmux set -g @tama_icon_set ascii
-  test_tmux set -g @tama_icon_running '●'
+  tmux_test_server_run set -g @tama_icon_set ascii
+  tmux_test_server_run set -g @tama_icon_running '●'
 
   report "$PANE" running
   assert_equal "$(tama_icons "$WINDOW")" ' ●'
@@ -320,19 +320,19 @@ report() {
 
 @test "a preset nobody recognises draws the default set" {
   # A typo in an option must not empty the status line it was meant to decorate.
-  test_tmux set -g @tama_icon_set 'asci'
+  tmux_test_server_run set -g @tama_icon_set 'asci'
 
   report "$PANE" running
   assert_equal "$(tama_icons "$WINDOW")" ' ●'
 }
 
 @test "turning idle off takes those icons away and leaves the others" {
-  test_tmux set -g @tama_icon_set ascii
-  test_tmux set -g @tama_show_idle off
-  test_tmux split-window -d -t t
+  tmux_test_server_run set -g @tama_icon_set ascii
+  tmux_test_server_run set -g @tama_show_idle off
+  tmux_test_server_run split-window -d -t t
   local first second
-  first="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
-  second="$(test_tmux list-panes -t t -F '#{pane_id}' | tail -1)"
+  first="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | head -1)"
+  second="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | tail -1)"
 
   report "$first" idle
   report "$second" running
@@ -340,7 +340,7 @@ report() {
 }
 
 @test "a window whose only agent pane is idle contributes nothing when idle is off" {
-  test_tmux set -g @tama_show_idle off
+  tmux_test_server_run set -g @tama_show_idle off
 
   report "$PANE" idle
   # Not a bare prefix: the prefix exists to separate icons from the window name,
@@ -355,7 +355,7 @@ report() {
   # went on reading `false` as on. All four, on one option of each kind, from here on.
   local spelling icons
   for spelling in $TAMA_OFF_SPELLINGS; do
-    test_tmux set -g @tama_show_idle "$spelling"
+    tmux_test_server_run set -g @tama_show_idle "$spelling"
     report "$PANE" idle
     icons="$(tama_icons "$WINDOW")"
     [ -z "$icons" ] || {
@@ -370,7 +370,7 @@ report() {
   # silently, which is the whole reason the vocabulary is a list and not a negation.
   local spelling icons
   for spelling in $TAMA_ON_SPELLINGS; do
-    test_tmux set -g @tama_show_idle "$spelling"
+    tmux_test_server_run set -g @tama_show_idle "$spelling"
     report "$PANE" idle
     icons="$(tama_icons "$WINDOW")"
     [ "$icons" = ' ○' ] || {
@@ -383,7 +383,7 @@ report() {
 @test "every spelling tmux has for off stops background being distinguished" {
   local spelling icons
   for spelling in $TAMA_OFF_SPELLINGS; do
-    test_tmux set -g @tama_show_background "$spelling"
+    tmux_test_server_run set -g @tama_show_background "$spelling"
     report "$PANE" subagent-start sub-1
     report "$PANE" idle
     icons="$(tama_icons "$WINDOW")"
@@ -396,7 +396,7 @@ report() {
 }
 
 @test "turning background off draws those panes as running, not as nothing" {
-  test_tmux set -g @tama_show_background off
+  tmux_test_server_run set -g @tama_show_background off
   report "$PANE" subagent-start sub-1
   report "$PANE" idle
 
@@ -406,9 +406,9 @@ report() {
 }
 
 @test "background falls back to whatever running was configured to be" {
-  test_tmux set -g @tama_show_background off
-  test_tmux set -g @tama_icon_running 'R'
-  test_tmux set -g @tama_icon_background 'B'
+  tmux_test_server_run set -g @tama_show_background off
+  tmux_test_server_run set -g @tama_icon_running 'R'
+  tmux_test_server_run set -g @tama_icon_background 'B'
   report "$PANE" subagent-start sub-1
   report "$PANE" idle
 
@@ -416,13 +416,13 @@ report() {
 }
 
 @test "the prefix, separator and suffix are the user's" {
-  test_tmux set -g @tama_icon_prefix ' ['
-  test_tmux set -g @tama_icon_separator '|'
-  test_tmux set -g @tama_icon_suffix ']'
-  test_tmux split-window -d -t t
+  tmux_test_server_run set -g @tama_icon_prefix ' ['
+  tmux_test_server_run set -g @tama_icon_separator '|'
+  tmux_test_server_run set -g @tama_icon_suffix ']'
+  tmux_test_server_run split-window -d -t t
   local first second
-  first="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
-  second="$(test_tmux list-panes -t t -F '#{pane_id}' | tail -1)"
+  first="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | head -1)"
+  second="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | tail -1)"
 
   report "$first" running
   report "$second" waiting
@@ -430,7 +430,7 @@ report() {
 }
 
 @test "the separator only ever comes between two icons" {
-  test_tmux set -g @tama_icon_separator '|'
+  tmux_test_server_run set -g @tama_icon_separator '|'
 
   report "$PANE" running
   assert_equal "$(tama_icons "$WINDOW")" ' ●'
@@ -440,15 +440,15 @@ report() {
   # The distinction the option reader exists for: never set means the default
   # space, set to empty means the user put the icons somewhere that does not
   # want one.
-  test_tmux set -g @tama_icon_prefix ''
+  tmux_test_server_run set -g @tama_icon_prefix ''
   report "$PANE" running
 
   assert_equal "$(tama_icons "$WINDOW")" '●'
 }
 
 @test "the prefix and suffix are absent when nothing is drawn" {
-  test_tmux set -g @tama_icon_prefix '['
-  test_tmux set -g @tama_icon_suffix ']'
+  tmux_test_server_run set -g @tama_icon_prefix '['
+  tmux_test_server_run set -g @tama_icon_suffix ']'
 
   assert_equal "$(tama_icons "$WINDOW")" ''
 }
@@ -462,7 +462,7 @@ report() {
 set -g @tama_icon_set ascii
 set -g @tama_icon_prefix '<'
 CONF
-  test_tmux source-file "$conf"
+  tmux_test_server_run source-file "$conf"
 
   assert_equal "$(tama_icons "$WINDOW")" '<*'
 }
@@ -472,8 +472,8 @@ CONF
   # a format — so a `#` has to arrive doubled, which is how a format spells one.
   # Otherwise an icon of `#{...}` would be a format the user did not write, and
   # one of `#(...)` a command run once per window per status interval.
-  test_tmux set -g @tama_icon_running '#{host}'
-  test_tmux set -g @tama_icon_prefix ' #'
+  tmux_test_server_run set -g @tama_icon_running '#{host}'
+  tmux_test_server_run set -g @tama_icon_prefix ' #'
   report "$PANE" running
 
   assert_equal "$(tama_icons "$WINDOW")" ' ####{host}'

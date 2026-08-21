@@ -14,7 +14,7 @@ load helper
   local plugin="$BATS_TEST_TMPDIR/plugin"
   tama_copy_plugin "$plugin"
   printf '%s\n' '#!/usr/bin/env bash' \
-    'tmux -L "$TAMA_SOCKET" display-message -p "#{pid}" >"$TAMA_CI_SERVER_PID"' \
+    'tmux -L "$TMUX_TEST_SOCKET" display-message -p "#{pid}" >"$TAMA_CI_SERVER_PID"' \
     ': >"$TAMA_CI_DOCTOR_MARKER"' 'exit 1' \
     >"$plugin/libexec/doctor"
   chmod +x "$plugin/libexec/doctor"
@@ -30,5 +30,5 @@ load helper
   [ -e "$TAMA_CI_DOCTOR_MARKER" ]
   ! kill -0 "$(cat "$TAMA_CI_SERVER_PID")" 2>/dev/null
   [ -z "$(find "$TMUX_TMPDIR" ! -type d -print)" ]
-  rmdir "$(tama_socket_dir)" "$TMUX_TMPDIR"
+  rmdir "$(_tmux_test_server_socket_dir)" "$TMUX_TMPDIR"
 }

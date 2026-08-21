@@ -17,22 +17,22 @@ setup() {
 
 teardown() {
   tama_detach_client
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 # A second window in the session, so that a test can put the user somewhere other than
 # the window the agent is in — which is the ordinary case for a notification.
 arrange_two_windows() {
-  test_tmux new-window -t t: -d
+  tmux_test_server_run new-window -t t: -d
 }
 
 # Wait for both live and stored cwd values; tmux intermittently omits the live path.
 agent_pane_in() { # <directory-name>
   local name="$1" dir="$BATS_TEST_TMPDIR/$1" pane waited=0
   mkdir -p "$dir"
-  pane="$(test_tmux new-window -t t: -d -P -F '#{pane_id}' -c "$dir")"
+  pane="$(tmux_test_server_run new-window -t t: -d -P -F '#{pane_id}' -c "$dir")"
   while [ "$(basename \
-    "$(test_tmux display-message -p -t "$pane" '#{pane_current_path}')")" != "$name" ]; do
+    "$(tmux_test_server_run display-message -p -t "$pane" '#{pane_current_path}')")" != "$name" ]; do
     waited=$((waited + 1))
     if [ "$waited" -gt 200 ]; then
       printf 'tmux never reported %s as the directory of %s\n' "$dir" "$pane" >&2
@@ -46,7 +46,7 @@ agent_pane_in() { # <directory-name>
   # report that landed with nothing to record has to be made again.
   waited=0
   while [ "$(basename \
-    "$(test_tmux show -p -t "$pane" -qv @tama_pane_cwd 2>/dev/null)")" != "$name" ]; do
+    "$(tmux_test_server_run show -p -t "$pane" -qv @tama_pane_cwd 2>/dev/null)")" != "$name" ]; do
     "$PLUGIN_ROOT/bin/tama" state running --pane "$pane"
     waited=$((waited + 1))
     if [ "$waited" -gt 20 ]; then
@@ -59,7 +59,7 @@ agent_pane_in() { # <directory-name>
 }
 
 window_of() { # <pane>
-  test_tmux display-message -p -t "$1" '#{window_id}'
+  tmux_test_server_run display-message -p -t "$1" '#{window_id}'
 }
 
 # Desktop clicks inherit none of the hook environment; poison TAMA_TMUX so missing
@@ -177,7 +177,7 @@ run_click() { # <click command line>
 @test "a backend that cannot tell whether the terminal is in front delivers" {
   # Which is what makes a backend without the capability — libnotify, none — usable at
   # all. Every way of not knowing lands on noise rather than on silence.
-  test_tmux set -g @tama_backend "$(tama_fake_backend_without focused)"
+  tmux_test_server_run set -g @tama_backend "$(tama_fake_backend_without focused)"
   tama_attach_client t
   export TAMA_FAKE_FOCUSED=0
 
@@ -201,7 +201,7 @@ run_click() { # <click command line>
 }
 
 @test "suppression can be turned off, and then nothing is asked or dropped" {
-  test_tmux set -g @tama_suppress_when_focused off
+  tmux_test_server_run set -g @tama_suppress_when_focused off
   tama_attach_client t
   export TAMA_FAKE_FOCUSED=0
 
@@ -221,7 +221,7 @@ run_click() { # <click command line>
   export TAMA_FAKE_FOCUSED=0
   local spelling
   for spelling in $TAMA_OFF_SPELLINGS; do
-    test_tmux set -g @tama_suppress_when_focused "$spelling"
+    tmux_test_server_run set -g @tama_suppress_when_focused "$spelling"
     : >"$TAMA_TEST_LOG"
 
     run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
@@ -243,7 +243,7 @@ run_click() { # <click command line>
   export TAMA_FAKE_FOCUSED=0
   local spelling
   for spelling in $TAMA_ON_SPELLINGS; do
-    test_tmux set -g @tama_suppress_when_focused "$spelling"
+    tmux_test_server_run set -g @tama_suppress_when_focused "$spelling"
     : >"$TAMA_TEST_LOG"
 
     run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
@@ -258,7 +258,7 @@ run_click() { # <click command line>
 @test "every spelling tmux has for off turns notifications off" {
   local spelling
   for spelling in $TAMA_OFF_SPELLINGS; do
-    test_tmux set -g @tama_notifications "$spelling"
+    tmux_test_server_run set -g @tama_notifications "$spelling"
     : >"$TAMA_TEST_LOG"
 
     run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
@@ -272,7 +272,7 @@ run_click() { # <click command line>
 @test "a value outside that vocabulary leaves notifications on" {
   local spelling
   for spelling in $TAMA_ON_SPELLINGS; do
-    test_tmux set -g @tama_notifications "$spelling"
+    tmux_test_server_run set -g @tama_notifications "$spelling"
     : >"$TAMA_TEST_LOG"
 
     run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
@@ -284,7 +284,7 @@ run_click() { # <click command line>
 }
 
 @test "notifications can be turned off entirely while the icons keep working" {
-  test_tmux set -g @tama_notifications off
+  tmux_test_server_run set -g @tama_notifications off
 
   local pane window
   pane="$(tama_pane_of t:0)"
@@ -307,7 +307,7 @@ run_click() { # <click command line>
 @test "the title is a real tmux format, expanded against the pane that spoke" {
   # No template engine of the plugin's own, and no idea of a "project": whatever tmux
   # can express, including things the plugin has never heard of.
-  test_tmux set -g @tama_title_format '#{session_name}:#{window_index} #{pane_id}'
+  tmux_test_server_run set -g @tama_title_format '#{session_name}:#{window_index} #{pane_id}'
   local pane
   pane="$(tama_pane_of t:0)"
 
@@ -317,7 +317,7 @@ run_click() { # <click command line>
 }
 
 @test "a new group can name the agent notify just stored" {
-  test_tmux set -g @tama_group_format '#{@tama_pane_agent}'
+  tmux_test_server_run set -g @tama_group_format '#{@tama_pane_agent}'
   local pane
   pane="$(tama_pane_of t:0)"
 
@@ -367,8 +367,8 @@ run_click() { # <click command line>
 printf 'the %s window\n' "$1"
 PROVIDER
   chmod +x "$provider"
-  test_tmux set -g @tama_label_command "$provider"
-  test_tmux set -g @tama_group_format 'label-#{@tama_pane_label}'
+  tmux_test_server_run set -g @tama_label_command "$provider"
+  tmux_test_server_run set -g @tama_group_format 'label-#{@tama_pane_label}'
 
   local pane window
   pane="$(agent_pane_in the-api)"
@@ -390,7 +390,7 @@ PROVIDER
 exit 1
 PROVIDER
   chmod +x "$provider"
-  test_tmux set -g @tama_label_command "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
 
   local pane
   pane="$(agent_pane_in the-api)"
@@ -410,7 +410,7 @@ PROVIDER
 printf 'one\ttwo\n'
 PROVIDER
   chmod +x "$provider"
-  test_tmux set -g @tama_label_command "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
 
   local pane
   pane="$(tama_pane_of t:0)"
@@ -429,7 +429,7 @@ PROVIDER
 printf 'a label\n'
 PROVIDER
   chmod +x "$provider"
-  test_tmux set -g @tama_label_command "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
 
   local pane
   pane="$(tama_pane_of t:0)"
@@ -440,7 +440,7 @@ PROVIDER
   run "$PLUGIN_ROOT/bin/tama" state clear --pane "$pane"
   assert_success
   assert_pane_option_unset "$pane" label
-  assert_equal "$(test_tmux show -p -t "$pane" | grep -c '^@tama_' || true)" '0'
+  assert_equal "$(tmux_test_server_run show -p -t "$pane" | grep -c '^@tama_' || true)" '0'
 }
 
 @test "an agent name tmux reads as a command separator leaves the mark all the same" {
@@ -456,7 +456,7 @@ PROVIDER
   # dismiss it.
   arrange_two_windows
   tama_attach_client_without_attach_hook t
-  test_tmux select-window -t t:0
+  tmux_test_server_run select-window -t t:0
 
   local pane window
   pane="$(tama_pane_of t:1)"
@@ -472,7 +472,7 @@ PROVIDER
   # And the consequence the mark exists for, end to end.
   local group
   group="$(tama_backend_value notify env.TAMA_GROUP)"
-  test_tmux select-window -t t:1
+  tmux_test_server_run select-window -t t:1
   wait_until_not_flagged "$window"
   wait_until_backend_called dismiss
   assert_backend_value dismiss argv1 "$group"
@@ -488,7 +488,7 @@ PROVIDER
 printf 'the ; window;\n'
 PROVIDER
   chmod +x "$provider"
-  test_tmux set -g @tama_label_command "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
 
   local pane window
   pane="$(tama_pane_of t:0)"
@@ -524,7 +524,7 @@ PROVIDER
   # One configurable format, read in one place, precisely so that these two cannot
   # drift apart: a dismissal naming a different group than the banner leaves the banner
   # on screen with nothing to say why.
-  test_tmux set -g @tama_group_format 'agent-#{session_name}-#{window_id}'
+  tmux_test_server_run set -g @tama_group_format 'agent-#{session_name}-#{window_id}'
 
   local pane window
   pane="$(tama_pane_of t:0)"
@@ -543,13 +543,13 @@ PROVIDER
   local pane window
   pane="$(tama_pane_of t:0)"
   window="$(tama_window_id t:0)"
-  test_tmux set -g @tama_group_format 'before-#{window_id}'
+  tmux_test_server_run set -g @tama_group_format 'before-#{window_id}'
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
   assert_backend_value notify env.TAMA_GROUP "before-$window"
 
-  test_tmux set -g @tama_group_format 'after-#{window_id}'
+  tmux_test_server_run set -g @tama_group_format 'after-#{window_id}'
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed again' --pane "$pane"
   assert_success
   assert_backend_value notify env.TAMA_GROUP "before-$window"
@@ -566,8 +566,8 @@ PROVIDER
 @test "an empty group is still dismissed when the user arrives" {
   arrange_two_windows
   tama_attach_client t
-  test_tmux select-window -t t:0
-  test_tmux set -g @tama_group_format ''
+  tmux_test_server_run select-window -t t:0
+  tmux_test_server_run set -g @tama_group_format ''
 
   local pane window
   pane="$(tama_pane_of t:1)"
@@ -584,8 +584,8 @@ PROVIDER
 @test "a group with a newline is still dismissed when the user arrives" {
   arrange_two_windows
   tama_attach_client t
-  test_tmux select-window -t t:0
-  test_tmux set -g @tama_group_format $'before-#{window_id}\nafter'
+  tmux_test_server_run select-window -t t:0
+  tmux_test_server_run set -g @tama_group_format $'before-#{window_id}\nafter'
 
   local pane window expected
   pane="$(tama_pane_of t:1)"
@@ -616,7 +616,7 @@ PROVIDER
 @test "arriving dismisses a banner after its mark was cleared separately" {
   arrange_two_windows
   tama_attach_client t
-  test_tmux select-window -t t:0
+  tmux_test_server_run select-window -t t:0
 
   local pane window
   pane="$(tama_pane_of t:1)"
@@ -633,7 +633,7 @@ PROVIDER
 @test "an explicit dismiss without a pending banner uses the configured group" {
   local window
   window="$(tama_window_id t:0)"
-  test_tmux set -g @tama_group_format 'manual-#{window_id}'
+  tmux_test_server_run set -g @tama_group_format 'manual-#{window_id}'
 
   run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
   assert_success
@@ -645,7 +645,7 @@ PROVIDER
   # the window and both the mark and the banner go.
   arrange_two_windows
   tama_attach_client t
-  test_tmux select-window -t t:0
+  tmux_test_server_run select-window -t t:0
 
   local pane window
   pane="$(tama_pane_of t:1)"
@@ -657,7 +657,7 @@ PROVIDER
   local group
   group="$(tama_backend_value notify env.TAMA_GROUP)"
 
-  test_tmux select-window -t t:1
+  tmux_test_server_run select-window -t t:1
   wait_until_not_flagged "$window"
   wait_until_backend_called dismiss
   assert_backend_value dismiss argv1 "$group"
@@ -670,8 +670,8 @@ PROVIDER
   arrange_two_windows
   tama_attach_client t
 
-  test_tmux select-window -t t:1
-  test_tmux select-window -t t:0
+  tmux_test_server_run select-window -t t:1
+  tmux_test_server_run select-window -t t:0
   # Nothing to wait for, so wait for the sweep that runs on the same event to have had
   # its chance, then assert on the absence.
   sleep 0.5
@@ -679,7 +679,7 @@ PROVIDER
 }
 
 @test "dismiss is a no-op with notifications off" {
-  test_tmux set -g @tama_notifications off
+  tmux_test_server_run set -g @tama_notifications off
   run "$PLUGIN_ROOT/bin/tama" dismiss "$(tama_window_id t:0)"
   assert_success
   refute_backend_called dismiss
@@ -687,19 +687,19 @@ PROVIDER
 
 @test "clicking the banner lands the cursor on the pane that spoke" {
   arrange_two_windows
-  test_tmux split-window -t t:1 -d
+  tmux_test_server_run split-window -t t:1 -d
 
   # The second pane of the other window: a click has to find the pane, not just the
   # window, and not just the pane that happened to be active.
   local pane window
-  pane="$(test_tmux list-panes -t t:1 -F '#{pane_id}' | tail -1)"
+  pane="$(tmux_test_server_run list-panes -t t:1 -F '#{pane_id}' | tail -1)"
   window="$(tama_window_id t:1)"
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
 
-  test_tmux select-window -t t:0
-  assert_equal "$(test_tmux display-message -p -t "$window" '#{window_active}')" '0'
+  tmux_test_server_run select-window -t t:0
+  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{window_active}')" '0'
 
   # The click, run the way the desktop would run it: one command line, no environment
   # of the plugin's left.
@@ -708,8 +708,8 @@ PROVIDER
   run_click "$click"
   assert_success
 
-  assert_equal "$(test_tmux display-message -p -t "$window" '#{window_active}')" '1'
-  assert_equal "$(test_tmux display-message -p -t "$window" '#{pane_id}')" "$pane"
+  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{window_active}')" '1'
+  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{pane_id}')" "$pane"
   # And the terminal itself comes forward, which is the step tmux cannot do.
   assert_backend_called focus
   assert_backend_value focus argv1 t
@@ -720,7 +720,7 @@ PROVIDER
   local pane window socket alias click
   pane="$(tama_pane_of t:1)"
   window="$(tama_window_id t:1)"
-  socket="$(test_tmux display-message -p '#{socket_path}')"
+  socket="$(tmux_test_server_run display-message -p '#{socket_path}')"
   alias="$BATS_TEST_TMPDIR/tmux socket"
   ln -s "$socket" "$alias"
   export TMUX="$alias,1,0"
@@ -728,24 +728,24 @@ PROVIDER
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
-  test_tmux select-window -t t:0
+  tmux_test_server_run select-window -t t:0
 
   click="$(tama_backend_value notify env.TAMA_CLICK)"
   run --separate-stderr env -u TMUX \
     TAMA_TMUX_ARGS='-L tama-guaranteed-missing' TAMA_TMUX_SOCKET=/nonexistent/socket \
     TAMA_TMUX=/nonexistent/tmux sh -c "$click"
   assert_success
-  assert_equal "$(test_tmux display-message -p -t "$window" '#{window_active}')" '1'
+  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{window_active}')" '1'
   assert_backend_called focus
   assert_backend_value focus argv1 t
 }
 
 @test "clicking a banner whose pane has gone still brings the terminal forward" {
   arrange_two_windows
-  test_tmux split-window -t t:1 -d
+  tmux_test_server_run split-window -t t:1 -d
 
   local pane window
-  pane="$(test_tmux list-panes -t t:1 -F '#{pane_id}' | tail -1)"
+  pane="$(tmux_test_server_run list-panes -t t:1 -F '#{pane_id}' | tail -1)"
   window="$(tama_window_id t:1)"
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
@@ -753,14 +753,14 @@ PROVIDER
   local click
   click="$(tama_backend_value notify env.TAMA_CLICK)"
 
-  test_tmux select-window -t t:0
-  test_tmux kill-pane -t "$pane"
+  tmux_test_server_run select-window -t t:0
+  tmux_test_server_run kill-pane -t "$pane"
 
   run_click "$click"
   assert_success
   # The steps are chained so that each happens whatever the one before it did: the
   # window is still selected, and the terminal is still brought forward.
-  assert_equal "$(test_tmux display-message -p -t "$window" '#{window_active}')" '1'
+  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{window_active}')" '1'
   assert_backend_called focus
 }
 
@@ -778,7 +778,7 @@ PROVIDER
   local click
   click="$(tama_backend_value notify env.TAMA_CLICK)"
 
-  test_tmux kill-window -t "$window"
+  tmux_test_server_run kill-window -t "$window"
 
   run_click "$click"
   assert_success
@@ -803,10 +803,10 @@ PROVIDER
   # session called this is legal in tmux, and every part of the click has to arrive as
   # one word whatever is in it.
   local session="my 'project'; touch $BATS_TEST_TMPDIR/pwned"
-  test_tmux -f /dev/null new-session -d -s "$session"
+  tmux_test_server_run -f /dev/null new-session -d -s "$session"
 
   local pane
-  pane="$(test_tmux list-panes -t "$session" -F '#{pane_id}' | head -1)"
+  pane="$(tmux_test_server_run list-panes -t "$session" -F '#{pane_id}' | head -1)"
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
 
@@ -870,7 +870,7 @@ NOTIFIER
   chmod +x "$own"
   # A command line, not a path, so it can carry its own flags — and the title and the
   # message are still appended as arguments rather than pasted into it.
-  test_tmux set -g @tama_notify_command "$own --loud"
+  tmux_test_server_run set -g @tama_notify_command "$own --loud"
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
     --pane "$(tama_pane_of t:0)"
@@ -887,7 +887,7 @@ NOTIFIER
   # Where `auto` lands on a machine with no notifier. It ships no `focused`, on
   # purpose: one that exited 0 would mean "the user is looking", and every notification
   # on the machine would be dropped.
-  test_tmux set -g @tama_backend none
+  tmux_test_server_run set -g @tama_backend none
   tama_attach_client_without_attach_hook t
   export TAMA_FAKE_FOCUSED=0
 
@@ -909,26 +909,26 @@ NOTIFIER
   pane="$(tama_pane_of t:0)"
 
   # A backend that is not there.
-  test_tmux set -g @tama_backend not-a-backend
+  tmux_test_server_run set -g @tama_backend not-a-backend
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$pane"
   assert_success
   [ -z "$output" ]
   [ -z "$stderr" ]
 
   # A name that would reach out of the plugin's own backends directory.
-  test_tmux set -g @tama_backend '../../etc'
+  tmux_test_server_run set -g @tama_backend '../../etc'
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$pane"
   assert_success
   [ -z "$stderr" ]
 
   # Backends off entirely.
-  test_tmux set -g @tama_backend ''
+  tmux_test_server_run set -g @tama_backend ''
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$pane"
   assert_success
   [ -z "$stderr" ]
 
   # A backend with no notify capability.
-  test_tmux set -g @tama_backend "$(tama_fake_backend_without notify)"
+  tmux_test_server_run set -g @tama_backend "$(tama_fake_backend_without notify)"
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$pane"
   assert_success
   [ -z "$stderr" ]
@@ -943,7 +943,7 @@ printf 'and something on stdout\n'
 exit 4
 BROKEN
   chmod +x "$broken/notify"
-  test_tmux set -g @tama_backend "$broken"
+  tmux_test_server_run set -g @tama_backend "$broken"
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$pane"
   assert_success
   [ -z "$output" ]
@@ -979,7 +979,7 @@ BROKEN
   local doomed_pane doomed_window
   doomed_pane="$(tama_pane_of t:1)"
   doomed_window="$(tama_window_id t:1)"
-  test_tmux kill-window -t "$doomed_window"
+  tmux_test_server_run kill-window -t "$doomed_window"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' \
     --pane "$doomed_pane"
@@ -1052,7 +1052,7 @@ BROKEN
   # The argument check comes before the configuration and before the environment, so
   # that a hook whose author has made a mistake hears about it even on a machine where
   # notifications are off.
-  test_tmux set -g @tama_notifications off
+  tmux_test_server_run set -g @tama_notifications off
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code
   assert_usage_error 'message'
 }

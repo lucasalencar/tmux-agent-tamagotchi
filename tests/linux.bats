@@ -43,7 +43,7 @@ setup() {
 
 teardown() {
   tama_detach_client
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 require_darwin() {
@@ -57,15 +57,15 @@ refute_darwin() {
 # The backend under test, with `notify-send` named by absolute path — which is also how a
 # user whose libnotify lives somewhere unusual says so.
 use_libnotify_backend() {
-  test_tmux set -g @tama_backend libnotify
-  test_tmux set -g @tama_notify_send "$PLUGIN_ROOT/tests/fixtures/fake-notify-send"
+  tmux_test_server_run set -g @tama_backend libnotify
+  tmux_test_server_run set -g @tama_notify_send "$PLUGIN_ROOT/tests/fixtures/fake-notify-send"
 }
 
 # An unconfigured machine, for the tests about what `auto` resolves to. The helper turns
 # the backend off on every test server precisely so that `auto` is never reached by
 # accident; the tests that are *about* `auto` have to put it back.
 use_no_configuration() {
-  test_tmux set -gu @tama_backend
+  tmux_test_server_run set -gu @tama_backend
 }
 
 # A `notify-send` on PATH, the way a machine with libnotify installed has one — which is
@@ -125,14 +125,14 @@ assert_notify_send_value() { # <what> <expected>
 # An agent pane in a second window, so the user is somewhere else — the ordinary case
 # for a notification. Prints the pane id.
 agent_pane_elsewhere() {
-  test_tmux new-window -t t: -d -P -F '#{pane_id}'
+  tmux_test_server_run new-window -t t: -d -P -F '#{pane_id}'
 }
 
 @test "a banner is handed to notify-send with its title, message and replace hint" {
   use_libnotify_backend
   local pane window
   pane="$(agent_pane_elsewhere)"
-  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
     --pane "$pane"
@@ -245,7 +245,7 @@ agent_pane_elsewhere() {
   use_libnotify_backend
   local pane window
   pane="$(agent_pane_elsewhere)"
-  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
@@ -261,17 +261,17 @@ agent_pane_elsewhere() {
   [ -z "$output" ]
   [ -z "$stderr" ]
 
-  test_tmux select-window -t "$window"
+  tmux_test_server_run select-window -t "$window"
   wait_until_not_flagged "$window"
 }
 
 @test "a notify-send that is not installed is silence, not a failed turn" {
   use_libnotify_backend
-  test_tmux set -g @tama_notify_send /nonexistent/notify-send
+  tmux_test_server_run set -g @tama_notify_send /nonexistent/notify-send
 
   local pane window
   pane="$(agent_pane_elsewhere)"
-  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$pane"
   assert_success
@@ -321,11 +321,11 @@ agent_pane_elsewhere() {
   # `libnotify` here would mean every notification an agent reports is a process started
   # to fail, and a user with no idea why.
   use_no_configuration
-  test_tmux set -g @tama_notify_send /nonexistent/notify-send
+  tmux_test_server_run set -g @tama_notify_send /nonexistent/notify-send
 
   local pane window
   pane="$(agent_pane_elsewhere)"
-  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$pane"
   assert_success
@@ -340,12 +340,12 @@ agent_pane_elsewhere() {
   # for it to talk to. So a Mac with no terminal-notifier is silent — never a banner sent
   # into nothing, which is a failure with nowhere to look for it.
   use_no_configuration
-  test_tmux set -g @tama_terminal_notifier /nonexistent/terminal-notifier
+  tmux_test_server_run set -g @tama_terminal_notifier /nonexistent/terminal-notifier
   notify_send_on_path
 
   local pane window
   pane="$(agent_pane_elsewhere)"
-  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$pane"
   assert_success
