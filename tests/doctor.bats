@@ -611,7 +611,7 @@ cc_settings_into() { # <path> <event…>
   done
 }
 
-@test "the libnotify backend reports whether there is a session bus to reach" {
+@test "libnotify diagnoses its session bus without macOS focus guidance" {
   healthy_server
   test_tmux set -g @tama_backend libnotify
   test_tmux set -g @tama_notify_send "$PLUGIN_ROOT/tests/fixtures/fake-notify-send"

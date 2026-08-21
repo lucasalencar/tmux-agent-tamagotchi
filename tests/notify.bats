@@ -85,7 +85,7 @@ run_click() { # <click command line>
   assert_backend_value notify argv2 'permission needed'
 }
 
-@test "the backend is told which window, pane, session and agent it is about" {
+@test "the backend is told the complete notification context" {
   local pane window
   pane="$(tama_pane_of t:0)"
   window="$(tama_window_id t:0)"

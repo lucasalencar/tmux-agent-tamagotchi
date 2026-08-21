@@ -118,7 +118,7 @@ run_click() { # <click command line>
     sh -c "$1"
 }
 
-@test "a banner is handed to terminal-notifier without activating the terminal" {
+@test "a banner hands terminal-notifier its content without activating the terminal" {
   use_macos_backend
   local pane window
   pane="$(agent_pane_elsewhere)"
