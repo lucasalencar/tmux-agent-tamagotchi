@@ -18,26 +18,26 @@ teardown() {
   [ -z "$UNRELATED_CLIENT_PID" ] || kill "$UNRELATED_CLIENT_PID" 2>/dev/null || true
   [ -z "$UNRELATED_FIFO_HOLDER_PID" ] || kill "$UNRELATED_FIFO_HOLDER_PID" 2>/dev/null || true
   tama_detach_client
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 session_id() {
-  test_tmux display-message -p -t "$1" '#{session_id}'
+  tmux_test_server_run display-message -p -t "$1" '#{session_id}'
 }
 
 session_scope() {
-  test_tmux show-options -qv -t "$1" @tama_summary_scope
+  tmux_test_server_run show-options -qv -t "$1" @tama_summary_scope
 }
 
 attach_extra_client() { # <session>
-  tama_require_isolated_test_socket || return 1
+  _tmux_test_server_require_isolated_socket || return 1
   local fifo="$BATS_TEST_TMPDIR/attach-extra.fifo" waited=0
   mkfifo "$fifo"
   sleep 300 >"$fifo" &
   EXTRA_FIFO_HOLDER_PID=$!
-  tmux -L "$TAMA_SOCKET" -C attach -t "$1" <"$fifo" >/dev/null 2>&1 &
+  tmux_test_server_run -C attach -t "$1" <"$fifo" >/dev/null 2>&1 &
   EXTRA_CLIENT_PID=$!
-  while [ "$(test_tmux list-clients -t "$1" -F '#{client_name}' | wc -l | tr -d ' ')" -lt 2 ]; do
+  while [ "$(tmux_test_server_run list-clients -t "$1" -F '#{client_name}' | wc -l | tr -d ' ')" -lt 2 ]; do
     waited=$((waited + 1))
     [ "$waited" -le 200 ] || return 1
     sleep 0.05
@@ -45,14 +45,14 @@ attach_extra_client() { # <session>
 }
 
 attach_unrelated_client() { # <session>
-  tama_require_isolated_test_socket || return 1
+  _tmux_test_server_require_isolated_socket || return 1
   local fifo="$BATS_TEST_TMPDIR/attach-unrelated.fifo" waited=0
   mkfifo "$fifo"
   sleep 300 >"$fifo" &
   UNRELATED_FIFO_HOLDER_PID=$!
-  tmux -L "$TAMA_SOCKET" -C attach -t "$1" <"$fifo" >/dev/null 2>&1 &
+  tmux_test_server_run -C attach -t "$1" <"$fifo" >/dev/null 2>&1 &
   UNRELATED_CLIENT_PID=$!
-  while [ "$(test_tmux display-message -p -t "$1" '#{session_attached}')" = '0' ]; do
+  while [ "$(tmux_test_server_run display-message -p -t "$1" '#{session_attached}')" = '0' ]; do
     waited=$((waited + 1))
     [ "$waited" -le 200 ] || return 1
     sleep 0.05
@@ -62,7 +62,7 @@ attach_unrelated_client() { # <session>
 @test "summary-scope selects and toggles scope on the explicitly targeted session" {
   local first second
   first="$(session_id t)"
-  test_tmux new-session -d -s other
+  tmux_test_server_run new-session -d -s other
   second="$(session_id other)"
 
   run "$PLUGIN_ROOT/bin/tama" summary-scope --session "$first" all
@@ -83,7 +83,7 @@ attach_unrelated_client() { # <session>
 @test "summary-scope treats an invalid stored value as current when toggling" {
   local target
   target="$(session_id t)"
-  test_tmux set-option -t "$target" @tama_summary_scope invalid
+  tmux_test_server_run set-option -t "$target" @tama_summary_scope invalid
 
   run "$PLUGIN_ROOT/bin/tama" summary-scope --session "$target" toggle
   assert_success
@@ -93,12 +93,12 @@ attach_unrelated_client() { # <session>
 @test "summary-scope refreshes every client displaying only the targeted session" {
   local target target_clients unrelated_client client
   target="$(session_id t)"
-  test_tmux new-session -d -s unrelated
+  tmux_test_server_run new-session -d -s unrelated
   tama_attach_client "$target"
   attach_extra_client "$target"
   attach_unrelated_client unrelated
-  target_clients="$(test_tmux list-clients -t "$target" -F '#{client_name}')"
-  unrelated_client="$(test_tmux list-clients -t unrelated -F '#{client_name}')"
+  target_clients="$(tmux_test_server_run list-clients -t "$target" -F '#{client_name}')"
+  unrelated_client="$(tmux_test_server_run list-clients -t unrelated -F '#{client_name}')"
 
   tama_log_tmux_calls
   run "$PLUGIN_ROOT/bin/tama" summary-scope --session "$target" all
@@ -119,8 +119,8 @@ EOF
   local target pane
   target="$(session_id t)"
   pane="$(tama_pane_of t:0)"
-  test_tmux set-option -p -t "$pane" @tama_pane_state_main running
-  test_tmux set-option -t "$target" @tama_summary_scope all
+  tmux_test_server_run set-option -p -t "$pane" @tama_pane_state_main running
+  tmux_test_server_run set-option -t "$target" @tama_summary_scope all
   tama_attach_client "$target"
   attach_extra_client "$target"
 
@@ -158,7 +158,7 @@ EOF
   local target pane
   target="$(session_id t)"
   pane="$(tama_pane_of t:0)"
-  test_tmux set-option -p -t "$pane" @tama_pane_state_main running
+  tmux_test_server_run set-option -p -t "$pane" @tama_pane_state_main running
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" summary-scope --session "$target" all
   assert_success

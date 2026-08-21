@@ -10,9 +10,9 @@ load helper
   ln -s /usr/bin/true "$shim/tmux"
   PATH="$shim:$PATH"
   export PATH
-  TAMA_SOCKET=default
+  TMUX_TEST_SOCKET=default
 
-  run --separate-stderr test_tmux display-message -p '#{session_name}'
+  run --separate-stderr tmux_test_server_run display-message -p '#{session_name}'
 
   [ "$status" -ne 0 ]
   assert_equal "$output" ''
@@ -26,9 +26,9 @@ load helper
   PATH="$shim:$PATH"
   export PATH
   export TMUX_TMPDIR="$BATS_TEST_TMPDIR"
-  TAMA_SOCKET=default
+  TMUX_TEST_SOCKET=default
 
-  run --separate-stderr tama_kill_server
+  run --separate-stderr tmux_test_server_stop
 
   [ "$status" -ne 0 ]
   assert_equal "$output" ''
@@ -36,7 +36,7 @@ load helper
 }
 
 @test "the test client helper refuses the default socket before attaching" {
-  TAMA_SOCKET=default
+  TMUX_TEST_SOCKET=default
 
   run --separate-stderr tama_attach_client t
 
@@ -55,7 +55,7 @@ load helper
 }
 
 @test "the fake tmux setup refuses the default socket" {
-  TAMA_SOCKET=default
+  TMUX_TEST_SOCKET=default
 
   run --separate-stderr tama_use_fake_tmux 'tmux 3.4'
 

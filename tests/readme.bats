@@ -39,7 +39,7 @@ setup() {
 }
 
 teardown() {
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 # Every `set -g` line inside a fenced block of the README, in order, with the leading
@@ -92,14 +92,14 @@ loaded_server() {
   readme_set_lines >"$conf"
   [ -s "$conf" ]
 
-  run test_tmux source-file "$conf"
+  run tmux_test_server_run source-file "$conf"
   assert_success
 
   # And what it told them to paste is what the entrypoint really exports, rather than a
   # plausible-looking format naming an option nothing sets.
-  assert_contains "$(test_tmux show -gv window-status-format)" '@tama_icons' 'the README'
-  assert_contains "$(test_tmux show -gv window-status-current-format)" '@tama_flag' 'the README'
-  assert_equal "$(test_tmux show -gv set-titles-string)" '#S'
+  assert_contains "$(tmux_test_server_run show -gv window-status-format)" '@tama_icons' 'the README'
+  assert_contains "$(tmux_test_server_run show -gv window-status-current-format)" '@tama_flag' 'the README'
+  assert_equal "$(tmux_test_server_run show -gv set-titles-string)" '#S'
 }
 
 @test "every tmux line doctor prints appears in the README byte-for-byte" {
@@ -162,9 +162,9 @@ loaded_server() {
     return 1
   }
 
-  test_tmux show-hooks -g | grep -qF -- "$recipe" || {
+  tmux_test_server_run show-hooks -g | grep -qF -- "$recipe" || {
     printf 'the wired after-select-window hook is not the recipe the README prints:\n%s\n' \
-      "$(test_tmux show-hooks -g | grep -F after-select-window)" >&2
+      "$(tmux_test_server_run show-hooks -g | grep -F after-select-window)" >&2
     return 1
   }
 }
@@ -178,9 +178,9 @@ loaded_server() {
   }
 
   printf '%s\n' "$recipe" >"$conf"
-  run test_tmux source-file "$conf"
+  run tmux_test_server_run source-file "$conf"
   assert_success
-  assert_contains "$(test_tmux list-keys -T prefix | grep ' G ')" \
+  assert_contains "$(tmux_test_server_run list-keys -T prefix | grep ' G ')" \
     'summary-scope --session #{q:session_id} toggle' 'the prefix + G binding'
 }
 
@@ -270,7 +270,7 @@ EOF
   local spelling
   while IFS= read -r spelling; do
     [ -n "$spelling" ] || continue
-    test_tmux set -g @tama_notifications "$spelling"
+    tmux_test_server_run set -g @tama_notifications "$spelling"
 
     run "$PLUGIN_ROOT/bin/tama" doctor
     assert_success || return 1

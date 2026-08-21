@@ -19,14 +19,14 @@ setup() {
 }
 
 teardown() {
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 healthy_server() {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
-  test_tmux set -g window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
-  test_tmux set -g window-status-current-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
+  tmux_test_server_run set -g window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
+  tmux_test_server_run set -g window-status-current-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
   tama_use_fake_backend
 }
 
@@ -94,7 +94,7 @@ cc_settings_into() { # <path> <event…>
 
   # And it did not boot one to find that out: a doctor that started a server would be
   # reporting on a server it created, and would leave the socket behind.
-  [ ! -e "$(tama_socket_dir)/$socket" ]
+  [ ! -e "$(_tmux_test_server_socket_dir)/$socket" ]
 }
 
 @test "doctor says nothing is wrong when nothing is wrong, and exits 0" {
@@ -108,8 +108,8 @@ cc_settings_into() { # <path> <event…>
 @test "doctor warns about an invalid session summary scope and uses current fallback" {
   healthy_server
   local target
-  target="$(test_tmux display-message -p -t t '#{session_id}')"
-  test_tmux set-option -t "$target" @tama_summary_scope everywhere
+  target="$(tmux_test_server_run display-message -p -t t '#{session_id}')"
+  tmux_test_server_run set-option -t "$target" @tama_summary_scope everywhere
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -121,12 +121,12 @@ cc_settings_into() { # <path> <event…>
 
 @test "doctor warns successfully about every invalid summary bucket policy and its fallback" {
   healthy_server
-  test_tmux set -g @tama_summary_show_running sometimes
-  test_tmux set -g @tama_summary_show_waiting sometimes
-  test_tmux set -g @tama_summary_show_idle sometimes
-  test_tmux set -g @tama_summary_show_background sometimes
-  test_tmux set -g @tama_summary_show_error sometimes
-  test_tmux set -g @tama_summary_show_unknown sometimes
+  tmux_test_server_run set -g @tama_summary_show_running sometimes
+  tmux_test_server_run set -g @tama_summary_show_waiting sometimes
+  tmux_test_server_run set -g @tama_summary_show_idle sometimes
+  tmux_test_server_run set -g @tama_summary_show_background sometimes
+  tmux_test_server_run set -g @tama_summary_show_error sometimes
+  tmux_test_server_run set -g @tama_summary_show_unknown sometimes
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -190,8 +190,8 @@ cc_settings_into() { # <path> <event…>
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
   tama_use_fake_backend
-  test_tmux set -g window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag_text}'
-  test_tmux set -g window-status-current-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
+  tmux_test_server_run set -g window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag_text}'
+  tmux_test_server_run set -g window-status-current-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -210,10 +210,10 @@ cc_settings_into() { # <path> <event…>
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
   tama_use_fake_backend
-  test_tmux set -g window-status-format '#I:#W'
-  test_tmux set -g window-status-current-format '#I:#W'
-  test_tmux set -t t window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
-  test_tmux set -t t window-status-current-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
+  tmux_test_server_run set -g window-status-format '#I:#W'
+  tmux_test_server_run set -g window-status-current-format '#I:#W'
+  tmux_test_server_run set -t t window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
+  tmux_test_server_run set -t t window-status-current-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -230,8 +230,8 @@ cc_settings_into() { # <path> <event…>
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
   tama_use_fake_backend
-  test_tmux set -g window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
-  test_tmux set -g window-status-current-format '#I:#W'
+  tmux_test_server_run set -g window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
+  tmux_test_server_run set -g window-status-current-format '#I:#W'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -248,8 +248,8 @@ cc_settings_into() { # <path> <event…>
   healthy_server
   local event
   for event in after-select-window after-select-pane client-focus-in client-attached; do
-    test_tmux set-hook -gu "$event" 2>/dev/null || true
-    test_tmux set-hook -ga "$event" "run-shell -b '#{q:@tama_bin} sweep --everything'"
+    tmux_test_server_run set-hook -gu "$event" 2>/dev/null || true
+    tmux_test_server_run set-hook -ga "$event" "run-shell -b '#{q:@tama_bin} sweep --everything'"
   done
 
   run "$PLUGIN_ROOT/bin/tama" doctor
@@ -260,7 +260,7 @@ cc_settings_into() { # <path> <event…>
 
 @test "hooks wired for some events and not others say which are missing" {
   healthy_server
-  test_tmux set-hook -gu client-attached 2>/dev/null || true
+  tmux_test_server_run set-hook -gu client-attached 2>/dev/null || true
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -270,7 +270,7 @@ cc_settings_into() { # <path> <event…>
 
 @test "an empty @tama_backend is a configuration and not a fault" {
   healthy_server
-  test_tmux set -g @tama_backend ''
+  tmux_test_server_run set -g @tama_backend ''
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -279,7 +279,7 @@ cc_settings_into() { # <path> <event…>
 
 @test "a backend the user named that is not there is broken" {
   healthy_server
-  test_tmux set -g @tama_backend "$BATS_TEST_TMPDIR/no-such-backend"
+  tmux_test_server_run set -g @tama_backend "$BATS_TEST_TMPDIR/no-such-backend"
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
@@ -288,7 +288,7 @@ cc_settings_into() { # <path> <event…>
 
 @test "a backend name that would reach outside backends/ is broken" {
   healthy_server
-  test_tmux set -g @tama_backend '../../etc'
+  tmux_test_server_run set -g @tama_backend '../../etc'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
@@ -297,8 +297,8 @@ cc_settings_into() { # <path> <event…>
 
 @test "naming the macos backend without its notifier is broken, where auto would not have been" {
   healthy_server
-  test_tmux set -g @tama_backend macos
-  test_tmux set -g @tama_terminal_notifier "$BATS_TEST_TMPDIR/no-such-notifier"
+  tmux_test_server_run set -g @tama_backend macos
+  tmux_test_server_run set -g @tama_terminal_notifier "$BATS_TEST_TMPDIR/no-such-notifier"
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
@@ -324,8 +324,8 @@ cc_settings_into() { # <path> <event…>
 
   run "$plugin/tamagotchi.tmux"
   assert_success
-  test_tmux set -g @tama_backend libnotify
-  test_tmux set -g @tama_notify_send "$BATS_TEST_TMPDIR/no-such-notify-send"
+  tmux_test_server_run set -g @tama_backend libnotify
+  tmux_test_server_run set -g @tama_notify_send "$BATS_TEST_TMPDIR/no-such-notify-send"
   unset DBUS_SESSION_BUS_ADDRESS
 
   run "$plugin/bin/tama" doctor
@@ -336,8 +336,8 @@ cc_settings_into() { # <path> <event…>
 
 @test "the resolved notifier is reported with the path it came from: an option" {
   healthy_server
-  test_tmux set -g @tama_backend macos
-  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  tmux_test_server_run set -g @tama_backend macos
+  tmux_test_server_run set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_output_contains "terminal-notifier: $PLUGIN_ROOT/tests/fixtures/fake-notifier"
@@ -346,7 +346,7 @@ cc_settings_into() { # <path> <event…>
 
 @test "the resolved notifier is reported with the path it came from: PATH" {
   healthy_server
-  test_tmux set -g @tama_backend macos
+  tmux_test_server_run set -g @tama_backend macos
   notifier_on_path terminal-notifier
 
   run "$PLUGIN_ROOT/bin/tama" doctor
@@ -356,7 +356,7 @@ cc_settings_into() { # <path> <event…>
 
 @test "the capabilities a backend ships are reported, and so is what each absence costs" {
   healthy_server
-  test_tmux set -g @tama_backend "$(tama_fake_backend_without focused)"
+  tmux_test_server_run set -g @tama_backend "$(tama_fake_backend_without focused)"
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -366,7 +366,7 @@ cc_settings_into() { # <path> <event…>
 
 @test "a capability replaced by the user's own command says the backend is not consulted" {
   healthy_server
-  test_tmux set -g @tama_notify_command '/bin/echo'
+  tmux_test_server_run set -g @tama_notify_command '/bin/echo'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -381,9 +381,9 @@ cc_settings_into() { # <path> <event…>
   # value verbatim put a credential in it. The program is enough to notice that the
   # backend diagnosis above is beside the point, and to notice a hijacked option.
   healthy_server
-  test_tmux set -g @tama_notify_command \
+  tmux_test_server_run set -g @tama_notify_command \
     'curl -s -F token=s3cr3t-app-token -F user=s3cr3t-user https://api.pushover.net/1/messages.json -F message'
-  test_tmux set -g @tama_dismiss_command '/usr/bin/env SLACK_TOKEN=xoxb-s3cr3t /bin/true'
+  tmux_test_server_run set -g @tama_dismiss_command '/usr/bin/env SLACK_TOKEN=xoxb-s3cr3t /bin/true'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -402,9 +402,9 @@ cc_settings_into() { # <path> <event…>
   # focused and focus still starting a process that is not there. That is a promise this
   # configuration cannot keep, and ADR-0007 calls it broken.
   healthy_server
-  test_tmux set -g @tama_backend macos
-  test_tmux set -g @tama_terminal_notifier "$BATS_TEST_TMPDIR/no-such-notifier"
-  test_tmux set -g @tama_notify_command '/bin/echo'
+  tmux_test_server_run set -g @tama_backend macos
+  tmux_test_server_run set -g @tama_terminal_notifier "$BATS_TEST_TMPDIR/no-such-notifier"
+  tmux_test_server_run set -g @tama_notify_command '/bin/echo'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
@@ -422,9 +422,9 @@ cc_settings_into() { # <path> <event…>
   # The libnotify backend ships `notify` and nothing else, so one override really does
   # cover everything it can do.
   healthy_server
-  test_tmux set -g @tama_backend libnotify
-  test_tmux set -g @tama_notify_send "$BATS_TEST_TMPDIR/no-such-notify-send"
-  test_tmux set -g @tama_notify_command '/bin/echo'
+  tmux_test_server_run set -g @tama_backend libnotify
+  tmux_test_server_run set -g @tama_notify_send "$BATS_TEST_TMPDIR/no-such-notify-send"
+  tmux_test_server_run set -g @tama_notify_command '/bin/echo'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -439,8 +439,8 @@ cc_settings_into() { # <path> <event…>
   # The other direction of the test above. Without it, a fix that simply stopped failing
   # on a missing binary would pass both.
   healthy_server
-  test_tmux set -g @tama_backend libnotify
-  test_tmux set -g @tama_notify_send "$BATS_TEST_TMPDIR/no-such-notify-send"
+  tmux_test_server_run set -g @tama_backend libnotify
+  tmux_test_server_run set -g @tama_notify_send "$BATS_TEST_TMPDIR/no-such-notify-send"
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
@@ -453,11 +453,11 @@ cc_settings_into() { # <path> <event…>
 @test "auto on a Mac with no notifier says so, and how to fix it" {
   require_darwin
   healthy_server
-  test_tmux set -gu @tama_backend
+  tmux_test_server_run set -gu @tama_backend
   # A name that is on no PATH and in neither Homebrew prefix, which is the same machine
   # state as not having installed it — and one this suite can produce on a developer's
   # Mac, where the real notifier is installed.
-  test_tmux set -g @tama_terminal_notifier 'terminal-notifier-absent'
+  tmux_test_server_run set -g @tama_terminal_notifier 'terminal-notifier-absent'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -469,8 +469,8 @@ cc_settings_into() { # <path> <event…>
 @test "auto on a Mac that does have notify-send says why it was not picked" {
   require_darwin
   healthy_server
-  test_tmux set -gu @tama_backend
-  test_tmux set -g @tama_terminal_notifier 'terminal-notifier-absent'
+  tmux_test_server_run set -gu @tama_backend
+  tmux_test_server_run set -g @tama_terminal_notifier 'terminal-notifier-absent'
   notifier_on_path notify-send
 
   run "$PLUGIN_ROOT/bin/tama" doctor
@@ -483,8 +483,8 @@ cc_settings_into() { # <path> <event…>
 @test "auto off a Mac with no notify-send says which binary it wanted and where it looked" {
   refute_darwin
   healthy_server
-  test_tmux set -gu @tama_backend
-  test_tmux set -g @tama_notify_send 'notify-send-absent'
+  tmux_test_server_run set -gu @tama_backend
+  tmux_test_server_run set -g @tama_notify_send 'notify-send-absent'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -499,11 +499,11 @@ cc_settings_into() { # <path> <event…>
   # fallback to the perfectly good binary on PATH. Both options are set, so this is the
   # same assertion on either platform.
   healthy_server
-  test_tmux set -gu @tama_backend
+  tmux_test_server_run set -gu @tama_backend
   notifier_on_path terminal-notifier
   notifier_on_path notify-send
-  test_tmux set -g @tama_terminal_notifier "$BATS_TEST_TMPDIR/nowhere/terminal-notifier"
-  test_tmux set -g @tama_notify_send "$BATS_TEST_TMPDIR/nowhere/notify-send"
+  tmux_test_server_run set -g @tama_terminal_notifier "$BATS_TEST_TMPDIR/nowhere/terminal-notifier"
+  tmux_test_server_run set -g @tama_notify_send "$BATS_TEST_TMPDIR/nowhere/notify-send"
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -516,9 +516,9 @@ cc_settings_into() { # <path> <event…>
 
 @test "a title configuration the focus check cannot match warns, and says it fails toward noise" {
   healthy_server
-  test_tmux set -g @tama_backend macos
-  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
-  test_tmux set -g set-titles off
+  tmux_test_server_run set -g @tama_backend macos
+  tmux_test_server_run set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  tmux_test_server_run set -g set-titles off
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -529,10 +529,10 @@ cc_settings_into() { # <path> <event…>
 
 @test "a set-titles-string that merely contains the session name is not enough" {
   healthy_server
-  test_tmux set -g @tama_backend macos
-  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
-  test_tmux set -g set-titles on
-  test_tmux set -g set-titles-string '#S:#I:#W'
+  tmux_test_server_run set -g @tama_backend macos
+  tmux_test_server_run set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  tmux_test_server_run set -g set-titles on
+  tmux_test_server_run set -g set-titles-string '#S:#I:#W'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -542,10 +542,10 @@ cc_settings_into() { # <path> <event…>
 
 @test "the title configuration the backend needs is accepted" {
   healthy_server
-  test_tmux set -g @tama_backend macos
-  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
-  test_tmux set -g set-titles on
-  test_tmux set -g set-titles-string '#S'
+  tmux_test_server_run set -g @tama_backend macos
+  tmux_test_server_run set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  tmux_test_server_run set -g set-titles on
+  tmux_test_server_run set -g set-titles-string '#S'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -554,7 +554,7 @@ cc_settings_into() { # <path> <event…>
 
 @test "suppression turned off is reported as the deliberate thing it is" {
   healthy_server
-  test_tmux set -g @tama_suppress_when_focused off
+  tmux_test_server_run set -g @tama_suppress_when_focused off
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -570,9 +570,9 @@ cc_settings_into() { # <path> <event…>
   local spelling
   for spelling in $TAMA_OFF_SPELLINGS; do
     healthy_server
-    test_tmux set -g @tama_notifications "$spelling"
-    test_tmux set -g @tama_suppress_when_focused "$spelling"
-    test_tmux set -g @tama_manage_hooks "$spelling"
+    tmux_test_server_run set -g @tama_notifications "$spelling"
+    tmux_test_server_run set -g @tama_suppress_when_focused "$spelling"
+    tmux_test_server_run set -g @tama_manage_hooks "$spelling"
 
     run "$PLUGIN_ROOT/bin/tama" doctor
     assert_success || return 1
@@ -586,9 +586,9 @@ cc_settings_into() { # <path> <event…>
   local spelling
   for spelling in $TAMA_ON_SPELLINGS; do
     healthy_server
-    test_tmux set -g @tama_notifications "$spelling"
-    test_tmux set -g @tama_suppress_when_focused "$spelling"
-    test_tmux set -g @tama_manage_hooks "$spelling"
+    tmux_test_server_run set -g @tama_notifications "$spelling"
+    tmux_test_server_run set -g @tama_suppress_when_focused "$spelling"
+    tmux_test_server_run set -g @tama_manage_hooks "$spelling"
 
     run "$PLUGIN_ROOT/bin/tama" doctor
     assert_success || return 1
@@ -600,8 +600,8 @@ cc_settings_into() { # <path> <event…>
 
 @test "the libnotify backend reports whether there is a session bus to reach" {
   healthy_server
-  test_tmux set -g @tama_backend libnotify
-  test_tmux set -g @tama_notify_send "$PLUGIN_ROOT/tests/fixtures/fake-notify-send"
+  tmux_test_server_run set -g @tama_backend libnotify
+  tmux_test_server_run set -g @tama_notify_send "$PLUGIN_ROOT/tests/fixtures/fake-notify-send"
   unset DBUS_SESSION_BUS_ADDRESS
 
   run "$PLUGIN_ROOT/bin/tama" doctor
@@ -782,13 +782,13 @@ cc_settings_into() { # <path> <event…>
   "$PLUGIN_ROOT/bin/tama" doctor | sed -n 's/^ *\(set -g .*\)$/\1/p' >"$conf"
   [ -s "$conf" ]
 
-  run test_tmux source-file "$conf"
+  run tmux_test_server_run source-file "$conf"
   assert_success
 
   # And what it told the user to paste is what the entrypoint really exports.
-  assert_contains "$(test_tmux show -gv window-status-format)" '@tama_icons' 'the snippet'
-  assert_contains "$(test_tmux show -gv window-status-current-format)" '@tama_flag' 'the snippet'
-  assert_equal "$(test_tmux show -gv set-titles-string)" '#S'
+  assert_contains "$(tmux_test_server_run show -gv window-status-format)" '@tama_icons' 'the snippet'
+  assert_contains "$(tmux_test_server_run show -gv window-status-current-format)" '@tama_flag' 'the snippet'
+  assert_equal "$(tmux_test_server_run show -gv set-titles-string)" '#S'
 }
 
 @test "the hook block doctor prints is the block the README documents" {
