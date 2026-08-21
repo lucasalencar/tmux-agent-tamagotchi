@@ -13,6 +13,7 @@ case " $* " in
   *' new-session '*)
     if [ -n "${TAMA_FAKE_LONG_LIVED_SERVER:-}" ]; then
       sleep 2 &
+      printf '%s' "$!" >"$TAMA_FAKE_SERVER_PID_FILE"
       printf '%s' "$!"
     else
       printf '%s' "${TAMA_FAKE_SERVER_PID:-}"
@@ -27,6 +28,7 @@ case " $* " in
     [ -z "${TAMA_FAKE_SERVER_UNREACHABLE:-}" ] || exit 1
     ;;
   *' display-message '*'#{pid}'*)
+    [ -z "${TAMA_FAKE_PID_LOOKUP_FAILURE:-}" ] || exit 1
     printf '%s' "${TAMA_FAKE_SERVER_PID:-}"
     ;;
 esac
@@ -51,10 +53,15 @@ assert_surviving_server_is_reported() {
 
 @test "a test server cannot retain the suite output streams" {
   export TAMA_FAKE_LONG_LIVED_SERVER=1
-  tama_start_server
+  export TAMA_FAKE_SERVER_PID_FILE="$BATS_TEST_TMPDIR/server.pid"
+  run --separate-stderr tama_start_server
 
-  kill -0 "$TAMA_SERVER_PID"
-  kill "$TAMA_SERVER_PID"
+  assert_success
+  local server_pid
+  IFS= read -r server_pid <"$TAMA_FAKE_SERVER_PID_FILE" || true
+  [ -n "$server_pid" ]
+  kill -0 "$server_pid"
+  kill "$server_pid"
 }
 
 @test "a failed server start reports tmux's diagnostic" {
@@ -80,12 +87,22 @@ assert_surviving_server_is_reported() {
   [ "$status" -ne 0 ]
 }
 
-@test "reserving a new socket invalidates the previous server pid" {
+@test "reserving a socket clears a stale pid with no socket ownership" {
   export TAMA_SERVER_PID=$$
 
   tama_reserve_socket another
 
   [ -z "${TAMA_SERVER_PID:-}" ]
+}
+
+@test "reserving another socket refuses to abandon active ownership" {
+  export TAMA_SOCKET=tamatest-owned
+  export TAMA_SERVER_PID=$$
+
+  tama_reserve_socket another 2>/dev/null && return 1
+
+  assert_equal "$TAMA_SOCKET" tamatest-owned
+  assert_equal "$TAMA_SERVER_PID" "$$"
 }
 
 @test "server startup remembers the pid needed for reliable teardown" {
@@ -99,6 +116,8 @@ assert_surviving_server_is_reported() {
 @test "a failed kill leaves a live server's socket in place and reports it" {
   arrange_fake_server_socket_file tamatest-survivor
   export TAMA_FAKE_KILL_FAILURE=1
+  export TAMA_FAKE_SERVER_PID=$$
+  export TAMA_SERVER_EXIT_WAIT_ATTEMPTS=1
 
   run --separate-stderr tama_kill_server
 
@@ -107,6 +126,8 @@ assert_surviving_server_is_reported() {
 
 @test "a successful kill that leaves the server alive is detected" {
   arrange_fake_server_socket_file tamatest-survivor
+  export TAMA_FAKE_SERVER_PID=$$
+  export TAMA_SERVER_EXIT_WAIT_ATTEMPTS=1
 
   run --separate-stderr tama_kill_server
 
@@ -147,22 +168,43 @@ assert_surviving_server_is_reported() {
   [ ! -e "$(tama_socket_dir)/$TAMA_SOCKET" ]
 }
 
-@test "a dead server's stale socket is removed" {
-  arrange_fake_server_socket_file tamatest-dead
-  export TAMA_FAKE_SERVER_UNREACHABLE=1
+@test "an unidentified server preserves its socket and reports uncertainty" {
+  arrange_fake_server_socket_file tamatest-unknown
+  export TAMA_FAKE_PID_LOOKUP_FAILURE=1
 
   run --separate-stderr tama_kill_server
 
-  assert_success
-  [ ! -e "$(tama_socket_dir)/$TAMA_SOCKET" ]
+  [ "$status" -ne 0 ]
+  [ -e "$(tama_socket_dir)/$TAMA_SOCKET" ]
+  assert_stderr_contains 'could not identify test tmux server'
 }
 
 @test "successful teardown clears socket and pid ownership" {
   arrange_fake_server_socket_file tamatest-dead
   export TAMA_FAKE_SERVER_UNREACHABLE=1
+  sleep 0 &
+  export TAMA_SERVER_PID=$!
+  wait "$TAMA_SERVER_PID"
 
   tama_kill_server
 
   [ -z "${TAMA_SOCKET:-}" ]
   [ -z "${TAMA_SERVER_PID:-}" ]
+}
+
+@test "a socket removal failure preserves ownership and fails teardown" {
+  arrange_fake_server_socket_file tamatest-unremoved
+  sleep 0 &
+  export TAMA_SERVER_PID=$!
+  wait "$TAMA_SERVER_PID"
+  cat >"$BATS_TEST_TMPDIR/bin/rm" <<'FAKE_RM'
+#!/bin/sh
+exit 1
+FAKE_RM
+  chmod +x "$BATS_TEST_TMPDIR/bin/rm"
+
+  tama_kill_server && return 1
+
+  assert_equal "$TAMA_SOCKET" tamatest-unremoved
+  [ -n "$TAMA_SERVER_PID" ]
 }
