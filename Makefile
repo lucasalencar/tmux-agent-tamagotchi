@@ -9,7 +9,7 @@ SHELL_FILES := tamagotchi.tmux tests/helper.bash \
 	$(shell find $(SHELL_DIRS) -path '*/node_modules' -prune -o \
 		-type f \( -perm -u+x -o -name '*.sh' \) -print | sort)
 
-.PHONY: all lint test
+.PHONY: all lint test doctor
 
 all: lint test
 
@@ -20,3 +20,11 @@ lint:
 
 test:
 	bats -r tests
+
+doctor:
+	@socket="tama-doctor-$$$$"; \
+	trap 'tmux -L "$$socket" kill-server >/dev/null 2>&1 || true' EXIT HUP INT TERM; \
+	tmux -L "$$socket" -f /dev/null new-session -d -s tama-doctor </dev/null; \
+	tmux -L "$$socket" set -g @tama_backend ''; \
+	TAMA_TMUX_ARGS="-L $$socket" ./tamagotchi.tmux; \
+	TAMA_TMUX_ARGS="-L $$socket" ./bin/tama doctor
