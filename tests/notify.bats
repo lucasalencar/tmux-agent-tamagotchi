@@ -139,6 +139,9 @@ run_click() { # <click command line>
   # The failure this plugin cannot afford: tmux says the user is on that window, and it
   # is wrong, because the terminal is minimized. The backend is the only thing that
   # knows, and its no is enough on its own.
+  # This test is about focus suppression, so leave client-attached to its coverage in
+  # gc.bats; its asynchronous on-select would race the mark asserted below.
+  test_tmux set-hook -gu client-attached
   tama_attach_client t
   export TAMA_FAKE_FOCUSED=1
 

@@ -342,6 +342,10 @@ tama_render_summary() { # <session target>
 # ordinary pipes, so it needs no pty and behaves the same on both CI platforms. The
 # fifo, and the writer held open on it, are there because a client whose stdin
 # reaches EOF detaches again immediately.
+#
+# Attaching also fires the plugin's asynchronous `client-attached` hook. This helper
+# waits for the client, not for that hook: a test that later inspects state the hook
+# can change must remove it before calling this helper, unless it covers the hook itself.
 tama_attach_client() {
   local session="$1"
   local fifo="$BATS_TEST_TMPDIR/attach-$session.fifo"
