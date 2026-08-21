@@ -105,6 +105,76 @@ cc_settings_into() { # <path> <event…>
   assert_output_contains 'no problems and no warnings'
 }
 
+@test "doctor reports that no label provider is configured" {
+  healthy_server
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_label_command is unset: window labels are not provided'
+}
+
+@test "doctor reports an executable label provider without running it" {
+  healthy_server
+  local marker="$BATS_TEST_TMPDIR/provider-ran"
+  local provider="$BATS_TEST_TMPDIR/label-provider"
+  cat >"$provider" <<PROVIDER
+#!/bin/sh
+touch "$marker"
+PROVIDER
+  chmod +x "$provider"
+  test_tmux set -g @tama_label_command "$provider"
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains "@tama_label_command names an executable file: $provider"
+  assert_output_contains 'runs synchronously inside the agent hook that asks for a label'
+  assert_output_contains 'has no timeout'
+  [ ! -e "$marker" ]
+}
+
+@test "doctor resolves the documented home-relative label provider without running it" {
+  healthy_server
+  export HOME="$BATS_TEST_TMPDIR/home"
+  local marker="$BATS_TEST_TMPDIR/provider-ran"
+  local provider="$HOME/bin/label-provider"
+  mkdir -p "${provider%/*}"
+  cat >"$provider" <<PROVIDER
+#!/bin/sh
+touch "$marker"
+PROVIDER
+  chmod +x "$provider"
+  test_tmux set -g @tama_label_command '~/bin/label-provider'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains "@tama_label_command names an executable file: $provider"
+  [ ! -e "$marker" ]
+}
+
+@test "doctor fails when the configured label provider does not exist" {
+  healthy_server
+  local provider="$BATS_TEST_TMPDIR/missing-label-provider"
+  test_tmux set -g @tama_label_command "$provider"
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_status 1
+  assert_output_contains "@tama_label_command names $provider, which does not exist"
+  assert_output_contains '1 problem'
+}
+
+@test "doctor fails when the configured label provider is not executable" {
+  healthy_server
+  local provider="$BATS_TEST_TMPDIR/label-provider"
+  printf '#!/bin/sh\n' >"$provider"
+  chmod -x "$provider"
+  test_tmux set -g @tama_label_command "$provider"
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_status 1
+  assert_output_contains "@tama_label_command names $provider, which is not executable"
+  assert_output_contains '1 problem'
+}
+
 @test "doctor warns about an invalid session summary scope and uses current fallback" {
   healthy_server
   local target

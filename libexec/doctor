@@ -420,6 +420,8 @@ doctor_notifications() {
     doctor_more 'and cost nothing. Everything below still describes what would happen.'
   fi
 
+  doctor_label_command
+
   local configured
   configured="$(tama_opt tama_backend auto)"
 
@@ -446,6 +448,36 @@ doctor_notifications() {
 
   doctor_backend_capabilities
   doctor_backend_overrides
+}
+
+doctor_label_command() {
+  local configured path
+  configured="$(tama_opt tama_label_command '')"
+  if [ -z "$configured" ]; then
+    doctor_ok '@tama_label_command is unset: window labels are not provided'
+    return 0
+  fi
+
+  path="$configured"
+  case "$path" in
+    \~/*)
+      [ -n "${HOME:-}" ] && path="$HOME/${path#\~/}"
+      ;;
+  esac
+
+  if [ ! -e "$path" ]; then
+    doctor_fail "@tama_label_command names $path, which does not exist"
+    return 0
+  fi
+
+  if [ ! -f "$path" ] || [ ! -x "$path" ]; then
+    doctor_fail "@tama_label_command names $path, which is not executable"
+    return 0
+  fi
+
+  doctor_ok "@tama_label_command names an executable file: $path"
+  doctor_more 'It runs synchronously inside the agent hook that asks for a label and'
+  doctor_more 'has no timeout. A slow provider makes the agent turn wait just as long.'
 }
 
 # `@tama_backend auto`, and the whole of why it landed where it did.
