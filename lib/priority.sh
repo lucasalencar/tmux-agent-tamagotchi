@@ -93,7 +93,7 @@ tama_priority_target_resolve() { # <target>
       ;;
   esac
   case "$target" in
-    @* | [0-9]* | +* | -* | '^' | '$' | '!' | '{'*'}')
+    @* | [0-9]* | +* | -* | '^' | '$' | '!' | '=' | '~' | '{'*'}')
       tama_window_read "$original"
       return
       ;;

@@ -139,6 +139,24 @@ teardown() {
   assert_backend_called notify
 }
 
+@test "Priority mode is derived across unlinked sessions" {
+  tama_fake_backend_env
+  tama_use_fake_backend
+  tmux_test_server_run -f /dev/null new-session -d -s other
+  local primary secondary pane
+  primary="$(tama_window_id other:0)"
+  secondary="$(tama_window_id t:0)"
+  pane="$(tama_pane_of "$secondary")"
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window "$primary"
+  assert_success
+
+  run "$PLUGIN_ROOT/bin/tama" notify Codex done --pane "$pane"
+  assert_success
+
+  assert_flagged "$secondary"
+  refute_backend_called notify
+}
+
 @test "invalid and empty Flag policies fall back to ambient at runtime" {
   tmux_test_server_run new-window -d -t t:
   local primary secondary pane configured
@@ -222,6 +240,18 @@ teardown() {
   run "$PLUGIN_ROOT/bin/tama" toggle-priority --window 't:$'
   assert_success
   assert_equal "$(tmux_test_server_run show -wqv -t t:2 @tama_window_priority)" on
+}
+
+@test "the marked-window target token is delegated to tmux" {
+  tmux_test_server_run new-window -d -t t:
+  tmux_test_server_run select-pane -m -t t:1
+  local marked
+  marked="$(tama_window_id t:1)"
+
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window '~'
+
+  assert_success
+  assert_equal "$(tmux_test_server_run show -wqv -t "$marked" @tama_window_priority)" on
 }
 
 @test "custom limits are read at runtime and linked tmux windows count once" {
