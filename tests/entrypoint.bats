@@ -170,7 +170,7 @@ teardown() {
   done
 }
 
-@test "the plugin wires the sweep to pane selection and to the terminal regaining focus" {
+@test "the plugin wires each managed navigation and lifecycle hook" {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
 
@@ -211,6 +211,8 @@ teardown() {
 @test "reloading replaces the previous attach recipe without touching user hooks" {
   tmux_test_server_run set-hook -ga client-attached "run-shell -b 'echo mine'"
   tmux_test_server_run set-hook -ga client-attached \
+    "run-shell -b 'echo mine; #{q:@tama_bin} on-select --all --window #{window_id}'"
+  tmux_test_server_run set-hook -ga client-attached \
     "run-shell -b '#{q:@tama_bin} on-select --all --window #{window_id}'"
 
   run "$PLUGIN_ROOT/tamagotchi.tmux"
@@ -219,13 +221,18 @@ teardown() {
   local hooks
   hooks="$(tmux_test_server_run show-options -g client-attached)"
   assert_contains "$hooks" 'echo mine' "the user's attach hook"
+  assert_contains "$hooks" 'echo mine; #{q:@tama_bin} on-select --all --window' \
+    "the user's wrapped attach hook"
   assert_contains "$hooks" '#{q:@tama_bin} gc --all' 'the current attach recipe'
-  case "$hooks" in
-    *'on-select --all --window'*)
+  local entry command
+  while read -r entry command; do
+    if [ "$command" = 'run-shell -b "#{q:@tama_bin} on-select --all --window #{window_id}"' ]; then
       printf 'obsolete attach recipe survived reload: %s\n' "$hooks" >&2
       return 1
-      ;;
-  esac
+    fi
+  done <<EOF
+$hooks
+EOF
 }
 
 @test "hook management can be turned off" {

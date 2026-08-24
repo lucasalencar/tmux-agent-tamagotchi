@@ -186,9 +186,8 @@ remove_hook_recipe() { # <tmux hook> <obsolete tama command>
   local entry command recipe
   recipe="$(tama_hook_recipe "$2")"
   while read -r entry command; do
-    case "$command" in
-      *"$recipe"*) tmux_run set-hook -gu "$entry" >/dev/null 2>&1 || true ;;
-    esac
+    [ "$command" = "run-shell -b \"$recipe\"" ] || continue
+    tmux_run set-hook -gu "$entry" >/dev/null 2>&1 || true
   done <<EOF
 $(tmux_run show-options -g "$1" 2>/dev/null)
 EOF
