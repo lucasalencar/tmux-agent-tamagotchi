@@ -168,6 +168,10 @@ wire_hooks() {
   # ever cleared, no sweep ever run, and nothing on screen to say why.
   tama_opt_enabled tama_manage_hooks on || return 0
 
+  # This version splits attachment acknowledgement from its server-wide sweep. Remove
+  # only the exact recipe the previous version owned, leaving every user hook intact.
+  remove_hook_recipe client-attached 'on-select --all --window #{window_id}'
+
   local hook command
   while IFS='|' read -r hook command; do
     [ -n "$hook" ] || continue
@@ -176,6 +180,18 @@ wire_hooks() {
 $TAMA_HOOKS
 EOF
   return 0
+}
+
+remove_hook_recipe() { # <tmux hook> <obsolete tama command>
+  local entry command recipe
+  recipe="$(tama_hook_recipe "$2")"
+  while read -r entry command; do
+    case "$command" in
+      *"$recipe"*) tmux_run set-hook -gu "$entry" >/dev/null 2>&1 || true ;;
+    esac
+  done <<EOF
+$(tmux_run show-options -g "$1" 2>/dev/null)
+EOF
 }
 
 wire_hook() { # <tmux hook> <tama command>

@@ -326,9 +326,10 @@ tama_render_summary() { # <session target>
 # fifo, and the writer held open on it, are there because a client whose stdin
 # reaches EOF detaches again immediately.
 #
-# Attaching also fires the plugin's asynchronous `client-attached` hook. This helper
-# waits for the client, not for that hook. Tests that inspect state the hook can change
-# use tama_attach_client_without_attach_hook unless they cover the hook itself.
+# Attaching also fires the plugin's asynchronous `client-session-changed` and
+# `client-attached` hooks. This helper waits for the client, not for those hooks. Tests
+# that inspect state they can change use tama_attach_client_without_attachment_hooks
+# unless they cover attachment behavior itself.
 tama_attach_client() {
   _tmux_test_server_require_isolated_socket || return 1
   local session="$1"
@@ -354,7 +355,7 @@ tama_attach_client() {
   done
 }
 
-tama_attach_client_without_attach_hook() {
+tama_attach_client_without_attachment_hooks() {
   tmux_test_server_run set-hook -gu client-attached
   tmux_test_server_run set-hook -gu client-session-changed
   tama_attach_client "$1"

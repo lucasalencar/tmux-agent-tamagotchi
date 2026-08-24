@@ -208,6 +208,26 @@ teardown() {
   esac
 }
 
+@test "reloading replaces the previous attach recipe without touching user hooks" {
+  tmux_test_server_run set-hook -ga client-attached "run-shell -b 'echo mine'"
+  tmux_test_server_run set-hook -ga client-attached \
+    "run-shell -b '#{q:@tama_bin} on-select --all --window #{window_id}'"
+
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+
+  local hooks
+  hooks="$(tmux_test_server_run show-options -g client-attached)"
+  assert_contains "$hooks" 'echo mine' "the user's attach hook"
+  assert_contains "$hooks" '#{q:@tama_bin} gc --all' 'the current attach recipe'
+  case "$hooks" in
+    *'on-select --all --window'*)
+      printf 'obsolete attach recipe survived reload: %s\n' "$hooks" >&2
+      return 1
+      ;;
+  esac
+}
+
 @test "hook management can be turned off" {
   tmux_test_server_run set -g @tama_manage_hooks off
 

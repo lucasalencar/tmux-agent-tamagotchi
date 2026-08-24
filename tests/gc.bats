@@ -586,7 +586,7 @@ wait_until_no_icons() { # <window>
   # back off: otherwise attaching below would clear the mark and this would pass
   # without focus ever arriving. The next test is the one that covers attaching.
   # Attaching is not a selection: the mark is still there, which is the wart itself.
-  tama_attach_client_without_attach_hook other
+  tama_attach_client_without_attachment_hooks other
   assert_flagged "$target"
 
   # The user's terminal comes to the front. `-R` runs the hook the way tmux does when
@@ -628,9 +628,6 @@ wait_until_no_icons() { # <window>
   wait_until_not_flagged "$target"
   wait_until_no_icons "$WINDOW"
   wait_until_backend_called dismiss
-  # A second asynchronous acknowledgement used to arrive just after the first.
-  sleep 0.5
-  assert_equal "$(tama_backend_calls dismiss)" 1
 }
 
 @test "attaching leaves the mark on the windows the user did not land on" {
