@@ -931,15 +931,66 @@ doctor_program() { # <command line>
 }
 
 # ---------------------------------------------------------------------------
-# The focus check
+# Focus
 #
-# ADR-0004: a banner is suppressed only when tmux says the window is current in its own
-# session with somebody attached *and* the backend says the terminal really is in front.
-# The backend half identifies the terminal window by its title, which is why the title
-# configuration is worth a warning — and worth saying which way it fails.
+# The action brings a session's terminal forward after a click. Separately, ADR-0004
+# suppresses a banner only when tmux says the window is current in its own session with
+# somebody attached *and* the backend says the terminal really is in front. Both use the
+# terminal title, which is why its configuration is worth a warning and an explanation.
 # ---------------------------------------------------------------------------
 
 doctor_focus() {
+  doctor_focus_action
+  doctor_focus_check
+}
+
+doctor_focus_action() {
+  doctor_uses_macos_focus || return 0
+  doctor_section 'the focus action'
+  doctor_focus_fallback
+  tama_opt_enabled tama_suppress_when_focused on || doctor_focus_action_configuration
+}
+
+doctor_focus_action_configuration() {
+  tama_backend_export_terminal
+  doctor_ok "terminal: $TAMA_TERMINAL_APP (@tama_terminal_app), bundle id $TAMA_TERMINAL_BUNDLE_ID"
+  doctor_more 'The focus action sends that application name to macOS automation. Neither'
+  doctor_more 'tmux nor this plugin can discover which application displays the session.'
+
+  if [ "$TAMA_DOCTOR_SERVER" = 'no' ]; then
+    doctor_more 'No server to read set-titles from; see the setup section.'
+    return 0
+  fi
+
+  local titles string
+  titles="$(tmux_run show -gv set-titles 2>/dev/null)" || titles=''
+  string="$(tmux_run show -gv set-titles-string 2>/dev/null)" || string=''
+
+  if [ "$titles" != 'on' ]; then
+    doctor_warn "set-titles is '$titles', so focus cannot reliably find the session's window"
+    doctor_focus_action_title_cost
+    return 0
+  fi
+
+  case "$string" in
+    *'#S'* | *'#{session_name}'*)
+      doctor_ok "set-titles is on and set-titles-string carries the session name"
+      ;;
+    *)
+      doctor_warn "set-titles-string is '$string', so focus cannot identify the session's window"
+      doctor_focus_action_title_cost
+      ;;
+  esac
+}
+
+doctor_focus_action_title_cost() {
+  doctor_more 'A click may therefore reach the switch-client fallback described above.'
+  doctor_more 'Fix it with:'
+  doctor_more '  set -g set-titles on'
+  doctor_more "  set -g set-titles-string '#S'"
+}
+
+doctor_focus_check() {
   doctor_section 'the focus check'
 
   if ! tama_opt_enabled tama_suppress_when_focused on; then
@@ -982,12 +1033,31 @@ doctor_focus() {
       ;;
     *)
       doctor_warn "set-titles-string is '$string', which is not the session name alone"
-      doctor_more 'The backend compares the front window title against the session name'
+      doctor_more "The backend's focus check compares the front window title against the session name"
       doctor_more "for equality, not containment — a title that merely has #S in it"
       doctor_more "will not match. Set it to '#S' exactly."
       doctor_focus_title_cost
       ;;
   esac
+}
+
+doctor_uses_macos_focus() {
+  [ "${TAMA_BACKEND_DIR:-}" = "$TAMA_PLUGIN_DIR/backends/$TAMA_BACKEND_MACOS" ] &&
+    [ -f "$TAMA_BACKEND_DIR/focus" ] &&
+    [ -x "$TAMA_BACKEND_DIR/focus" ] &&
+    [ -z "$(tama_opt tama_focus_command '')" ]
+}
+
+# The focus capability decides this only when a click happens: window titles and tmux
+# clients can both change after doctor exits, so naming the future client here would be
+# false confidence. Explain the mechanism instead, which is enough to make an apparently
+# unrelated terminal changing sessions diagnosable.
+doctor_focus_fallback() {
+  doctor_more 'When the terminal window cannot be raised for the session — because no title'
+  doctor_more 'matches or macOS automation fails — a click falls back to'
+  doctor_more '`tmux switch-client`: if one exists, it repurposes an arbitrary client attached to another session.'
+  doctor_more 'Doctor cannot predict which client a future click would choose; the choice is made'
+  doctor_more 'at click time from the clients then attached to other sessions.'
 }
 
 # Which way it fails, said out loud, because a warning that implies silence sends people
@@ -996,7 +1066,8 @@ doctor_focus_title_cost() {
   doctor_more 'What this costs is **extra banners, never missing ones**: the check can'
   doctor_more 'never recognise the window you are looking at, so it answers "not'
   doctor_more 'focused" and the banner is delivered. That is the direction ADR-0004'
-  doctor_more 'fails in on purpose. Fix it with:'
+  doctor_more 'fails in on purpose.'
+  doctor_more 'Fix it with:'
   doctor_more '  set -g set-titles on'
   doctor_more "  set -g set-titles-string '#S'"
 }
