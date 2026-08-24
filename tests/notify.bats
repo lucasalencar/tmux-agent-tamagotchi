@@ -89,7 +89,7 @@ run_click() { # <click command line>
   local pane window
   pane="$(tama_pane_of t:0)"
   window="$(tama_window_id t:0)"
-  test_tmux set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
+  tmux_test_server_run set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success

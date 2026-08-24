@@ -116,7 +116,7 @@ cc_settings_into() { # <path> <event…>
 
 @test "doctor distinguishes an explicitly empty label provider" {
   healthy_server
-  test_tmux set -g @tama_label_command ''
+  tmux_test_server_run set -g @tama_label_command ''
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -132,7 +132,7 @@ cc_settings_into() { # <path> <event…>
 touch "$marker"
 PROVIDER
   chmod +x "$provider"
-  test_tmux set -g @tama_label_command "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -156,7 +156,7 @@ PROVIDER
 touch "$marker"
 PROVIDER
   chmod +x "$provider"
-  test_tmux set -g @tama_label_command '~/bin/label-provider'
+  tmux_test_server_run set -g @tama_label_command '~/bin/label-provider'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -177,7 +177,7 @@ PROVIDER
   chmod +x "$provider"
   PATH="${provider%/*}:$PATH"
   export PATH
-  test_tmux set -g @tama_label_command 'label-provider --token secret-value'
+  tmux_test_server_run set -g @tama_label_command 'label-provider --token secret-value'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -197,7 +197,7 @@ PROVIDER
 touch "$marker"
 PROVIDER
   chmod +x "$provider"
-  test_tmux set -g @tama_label_command "'$provider' --token secret-value"
+  tmux_test_server_run set -g @tama_label_command "'$provider' --token secret-value"
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -210,7 +210,7 @@ PROVIDER
 
 @test "doctor accepts a shell builtin as a label provider" {
   healthy_server
-  test_tmux set -g @tama_label_command 'printf label'
+  tmux_test_server_run set -g @tama_label_command 'printf label'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -221,7 +221,7 @@ PROVIDER
 
 @test "doctor rejects a reserved shell word that cannot stand alone as a provider" {
   healthy_server
-  test_tmux set -g @tama_label_command 'if'
+  tmux_test_server_run set -g @tama_label_command 'if'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
@@ -232,7 +232,7 @@ PROVIDER
   sh -c 'command -v compgen >/dev/null 2>&1' &&
     skip 'this platform uses a runtime shell that also provides compgen'
   healthy_server
-  test_tmux set -g @tama_label_command 'compgen'
+  tmux_test_server_run set -g @tama_label_command 'compgen'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
@@ -241,7 +241,7 @@ PROVIDER
 
 @test "doctor fails when a bare label provider is not on PATH" {
   healthy_server
-  test_tmux set -g @tama_label_command 'tama-label-provider-that-does-not-exist'
+  tmux_test_server_run set -g @tama_label_command 'tama-label-provider-that-does-not-exist'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
@@ -250,7 +250,7 @@ PROVIDER
 
 @test "doctor does not guess through shell operators" {
   healthy_server
-  test_tmux set -g @tama_label_command 'missing-provider || printf fallback'
+  tmux_test_server_run set -g @tama_label_command 'missing-provider || printf fallback'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -259,7 +259,7 @@ PROVIDER
 
 @test "doctor does not guess through shell newlines" {
   healthy_server
-  test_tmux set -g @tama_label_command $'missing-provider\nprintf fallback'
+  tmux_test_server_run set -g @tama_label_command $'missing-provider\nprintf fallback'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -268,7 +268,7 @@ PROVIDER
 
 @test "doctor does not split control characters that the shell keeps in a word" {
   healthy_server
-  test_tmux set -g @tama_label_command $'/bin/echo\rignored'
+  tmux_test_server_run set -g @tama_label_command $'/bin/echo\rignored'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -278,7 +278,7 @@ PROVIDER
 
 @test "doctor leaves environment assignments to the shell" {
   healthy_server
-  test_tmux set -g @tama_label_command 'LABEL_STYLE=short label-provider'
+  tmux_test_server_run set -g @tama_label_command 'LABEL_STYLE=short label-provider'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -295,7 +295,7 @@ PROVIDER
 touch "$marker"
 PROVIDER
   chmod +x "$provider"
-  test_tmux set -g @tama_label_command './label-provider'
+  tmux_test_server_run set -g @tama_label_command './label-provider'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -316,7 +316,7 @@ PROVIDER
   chmod +x "$provider"
   PATH="bin:$PATH"
   export PATH
-  test_tmux set -g @tama_label_command 'label-provider'
+  tmux_test_server_run set -g @tama_label_command 'label-provider'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -332,7 +332,7 @@ PROVIDER
   chmod +x "$provider"
   PATH="${provider%/*}:relative-bin:$PATH"
   export PATH
-  test_tmux set -g @tama_label_command 'label-provider'
+  tmux_test_server_run set -g @tama_label_command 'label-provider'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -350,7 +350,7 @@ PROVIDER
   export PATH
   [ "$(sh -c 'command -v "$1"' _ label-provider)" = 'label-provider' ] ||
     skip 'this shell reports an absolute path for empty PATH entries'
-  test_tmux set -g @tama_label_command 'label-provider'
+  tmux_test_server_run set -g @tama_label_command 'label-provider'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -359,7 +359,7 @@ PROVIDER
 
 @test "doctor does not reject a home-relative provider when HOME is unavailable" {
   healthy_server
-  test_tmux set -g @tama_label_command '~/bin/label-provider'
+  tmux_test_server_run set -g @tama_label_command '~/bin/label-provider'
   unset HOME
 
   run "$PLUGIN_ROOT/bin/tama" doctor
@@ -371,7 +371,7 @@ PROVIDER
 @test "doctor fails when the configured label provider does not exist" {
   healthy_server
   local provider="$BATS_TEST_TMPDIR/missing-label-provider"
-  test_tmux set -g @tama_label_command "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
@@ -384,7 +384,7 @@ PROVIDER
   local provider="$BATS_TEST_TMPDIR/label-provider"
   printf '#!/bin/sh\n' >"$provider"
   chmod -x "$provider"
-  test_tmux set -g @tama_label_command "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
@@ -396,7 +396,7 @@ PROVIDER
   healthy_server
   local provider="$BATS_TEST_TMPDIR/label-provider"
   mkdir "$provider"
-  test_tmux set -g @tama_label_command "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
@@ -814,10 +814,10 @@ PROVIDER
 
 @test "the focus diagnosis does not claim a bundle id controls the click" {
   healthy_server
-  test_tmux set -g @tama_backend macos
-  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
-  test_tmux set -g @tama_terminal_app Ghostty
-  test_tmux set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
+  tmux_test_server_run set -g @tama_backend macos
+  tmux_test_server_run set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  tmux_test_server_run set -g @tama_terminal_app Ghostty
+  tmux_test_server_run set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -866,10 +866,10 @@ PROVIDER
 
 @test "the macOS focus diagnosis explains the fallback it cannot predict" {
   healthy_server
-  test_tmux set -g @tama_backend macos
-  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
-  test_tmux set -g set-titles on
-  test_tmux set -g set-titles-string '#S'
+  tmux_test_server_run set -g @tama_backend macos
+  tmux_test_server_run set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  tmux_test_server_run set -g set-titles on
+  tmux_test_server_run set -g set-titles-string '#S'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -885,7 +885,7 @@ PROVIDER
 @test "auto-selected macOS focus gets the fallback diagnosis" {
   require_darwin
   healthy_server
-  test_tmux set -gu @tama_backend
+  tmux_test_server_run set -gu @tama_backend
   notifier_on_path terminal-notifier
 
   run "$PLUGIN_ROOT/bin/tama" doctor
@@ -897,9 +897,9 @@ PROVIDER
 
 @test "a focus override does not inherit the macOS backend fallback diagnosis" {
   healthy_server
-  test_tmux set -g @tama_backend macos
-  test_tmux set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
-  test_tmux set -g @tama_focus_command '/bin/true'
+  tmux_test_server_run set -g @tama_backend macos
+  tmux_test_server_run set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
+  tmux_test_server_run set -g @tama_focus_command '/bin/true'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
@@ -915,8 +915,8 @@ PROVIDER
   chmod -x "$plugin/backends/macos/focus"
   run "$plugin/tamagotchi.tmux"
   assert_success
-  test_tmux set -g @tama_backend macos
-  test_tmux set -g @tama_terminal_notifier "$plugin/tests/fixtures/fake-notifier"
+  tmux_test_server_run set -g @tama_backend macos
+  tmux_test_server_run set -g @tama_terminal_notifier "$plugin/tests/fixtures/fake-notifier"
 
   run "$plugin/bin/tama" doctor
   assert_success
