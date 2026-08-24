@@ -163,8 +163,9 @@ doctor_plugin() {
   if ! tama_opt_enabled tama_manage_hooks on; then
     doctor_ok '@tama_manage_hooks is off: tmux hooks are yours to wire'
     doctor_more 'Nothing here wires after-select-window, after-select-pane,'
-    doctor_more 'client-focus-in or client-attached, so whatever clears a window mark'
-    doctor_more 'and sweeps dead agents has to be in your own configuration.'
+    doctor_more 'client-focus-in, client-session-changed or client-attached. Attention'
+    doctor_more 'acknowledgement and stale-state sweeping therefore have to be in your'
+    doctor_more 'own configuration.'
     return 0
   fi
 

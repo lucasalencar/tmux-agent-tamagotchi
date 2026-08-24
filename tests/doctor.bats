@@ -545,7 +545,7 @@ PROVIDER
   # are wired in this server" while those hooks did something else or nothing.
   healthy_server
   local event
-  for event in after-select-window after-select-pane client-focus-in client-attached; do
+  for event in after-select-window after-select-pane client-focus-in client-session-changed client-attached; do
     tmux_test_server_run set-hook -gu "$event" 2>/dev/null || true
     tmux_test_server_run set-hook -ga "$event" "run-shell -b '#{q:@tama_bin} sweep --everything'"
   done
@@ -558,11 +558,11 @@ PROVIDER
 
 @test "hooks wired for some events and not others say which are missing" {
   healthy_server
-  tmux_test_server_run set-hook -gu client-attached 2>/dev/null || true
+  tmux_test_server_run set-hook -gu client-session-changed 2>/dev/null || true
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains 'only partly wired: client-attached'
+  assert_output_contains 'only partly wired: client-session-changed'
   refute_output_contains "the plugin's tmux hooks are wired in this server"
 }
 

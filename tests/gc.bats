@@ -8,6 +8,7 @@ load helper
 # prove is what the status line stops showing, and the other half runs from the hooks
 # the entrypoint wires.
 setup() {
+  tama_fake_backend_env
   tama_start_server
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
@@ -18,6 +19,53 @@ setup() {
   # claim about what a pane is running: a pane left on the developer's own shell
   # reports whatever that shell's startup happens to be doing at the time.
   pane_running "$PANE" 'sleep 300'
+}
+
+@test "switching sessions acknowledges only the tmux window the client lands on" {
+  tama_use_fake_backend
+  tmux_test_server_run -f /dev/null new-session -d -s other 'sleep 300'
+  tmux_test_server_run new-window -d -t other: 'sleep 300'
+  local landed landed_pane elsewhere elsewhere_pane client group
+  landed="$(tama_window_id other:0)"
+  landed_pane="$(tama_pane_of other:0)"
+  elsewhere="$(tama_window_id other:1)"
+  elsewhere_pane="$(tama_pane_of other:1)"
+
+  run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$landed_pane"
+  assert_success
+  pane_running_shell "$landed_pane"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$landed_pane"
+  assert_success
+  group="$(tama_backend_value notify env.TAMA_GROUP)"
+  run "$PLUGIN_ROOT/bin/tama" state waiting Claude --pane "$elsewhere_pane"
+  assert_success
+
+  tama_attach_client t
+  client="$(tmux_test_server_run list-clients -F '#{client_name}')"
+  tmux_test_server_run switch-client -c "$client" -t other:0
+
+  wait_until_not_flagged "$landed"
+  wait_until_no_icons "$landed"
+  wait_until_backend_called dismiss
+  assert_backend_value dismiss argv1 "$group"
+  assert_flagged "$elsewhere"
+  [ -n "$(tama_icons "$elsewhere")" ]
+}
+
+@test "switching sessions with no pending notification starts no notifier" {
+  tama_use_fake_backend
+  tmux_test_server_run -f /dev/null new-session -d -s other 'sleep 300'
+  local landed client
+  landed="$(tama_window_id other:0)"
+  run "$PLUGIN_ROOT/bin/tama" flag "$landed"
+  assert_success
+
+  tama_attach_client t
+  client="$(tmux_test_server_run list-clients -F '#{client_name}')"
+  tmux_test_server_run switch-client -c "$client" -t other:0
+
+  wait_until_not_flagged "$landed"
+  refute_backend_called dismiss
 }
 
 teardown() {

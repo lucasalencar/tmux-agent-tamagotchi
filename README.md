@@ -250,6 +250,11 @@ Backend configuration, custom backends and capability overrides are covered in
 The plugin appends its hooks. A later plain `set-hook` for the same event replaces the
 plugin hook. Put custom hook assignments before the plugin or append them with `-ga`.
 
+Selecting a tmux window or switching a client to another session performs **Attention
+acknowledgement** for the tmux window that becomes current: its flag and pending notification
+are cleared, and stale state is swept only there. Returning to a terminal window through a
+client attach or focus event also acknowledges its current tmux window and sweeps the server.
+
 To manage hooks yourself:
 
 ```tmux
@@ -272,14 +277,14 @@ The plugin does not install mouse bindings.
 | --- | --- |
 | `state` | Record an agent state or subagent event. |
 | `icons` | Render the icons for one window. |
-| `flag` / `unflag` | Raise or clear a window mark. |
+| `flag` / `unflag` | Raise or clear a tmux window flag. |
 | `notify` / `dismiss` | Raise or dismiss a notification. |
 | `focus-window` | Bring a session's terminal window forward. |
 | `list` | List agent panes across the server as stable, headerless TSV. |
 | `summary` | Count unique agent panes using a session's selected scope. |
 | `summary-scope` | Select or toggle one explicitly targeted session's scope. |
 | `gc` | Clear stale pane state. |
-| `on-select` | Clear a mark, dismiss its notification and sweep its window. |
+| `on-select` | Perform Attention acknowledgement and sweep stale state. |
 | `hook` | Dispatch an event to a bundled adapter. |
 | `setup` | Configure an integration that provides a setup helper. |
 | `doctor` | Diagnose an installation. |
@@ -303,7 +308,8 @@ clicks do not inherit the hook environment.
 
 ## Operational notes
 
-- **Notifications:** grouped per window; selecting the window dismisses its banner.
+- **Notifications:** grouped per tmux window; Attention acknowledgement dismisses the pending
+  notification.
 - **macOS clicks:** may repurpose another tmux client's terminal window when the target
   session is not visible. See [`backends/README.md`](backends/README.md) and
   [#22](https://github.com/lucasalencar/tmux-agent-tamagotchi/issues/22).

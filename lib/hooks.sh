@@ -7,6 +7,7 @@
 TAMA_HOOKS='after-select-window|on-select --window #{window_id}
 after-select-pane|gc --window #{window_id}
 client-focus-in|on-select --all --window #{window_id}
+client-session-changed|on-select --window #{window_id}
 client-attached|on-select --all --window #{window_id}'
 
 # Whether that tmux hook already carries this plugin's recipe for that command.
