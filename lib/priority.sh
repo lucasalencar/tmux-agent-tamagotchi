@@ -33,9 +33,9 @@ EOF
 
 # The last tama_window_read target is eligible when mode is inactive or it has
 # Priority itself.
-tama_priority_window_is_eligible() {
+tama_priority_window_is_eligible() { # <window priority value>
   tama_priority_counts
-  [ "$TAMA_PRIORITY_WINDOW_COUNT" -eq 0 ] || [ -n "$TAMA_WINDOW_PRIORITY" ]
+  [ "$TAMA_PRIORITY_WINDOW_COUNT" -eq 0 ] || [ -n "$1" ]
 }
 
 # Reads and normalizes a valid percentage into TAMA_PRIORITY_MAX_PERCENT.
@@ -67,31 +67,39 @@ tama_flag_policy_is_valid() { # <value>
   return 1
 }
 
-tama_priority_flag_is_eligible() {
+tama_priority_flag_is_eligible() { # <window priority value>
   local policy
   policy="$(tama_opt tama_flag_policy "$TAMA_FLAG_POLICY_DEFAULT")"
   [ "$policy" = selective ] || return 0
-  tama_priority_window_is_eligible
+  tama_priority_window_is_eligible "$1"
 }
 
-# tmux silently picks one window for an ambiguous bare name or prefix. The command
-# instead requires one unique tmux window.
-tama_priority_target_is_ambiguous() { # <target>
-  local target="$1" session='' records record id name seen='' exact=0 partial=0
+# Resolves supported name targets to one immutable id before reading the window.
+# Other tmux target forms are resolved directly by tmux.
+tama_priority_target_resolve() { # <target>
+  local original="$1" target="$1" session='' exact_only='no'
+  local records record id name seen='' exact=0 partial=0 exact_id='' partial_id=''
   case "$1" in
-    @*) return 1 ;;
+    @*) tama_window_read "$1"; return ;;
     *:*)
       session="${target%%:*}"
       target="${target#*:}"
-      [ -n "$session" ] && [ -n "$target" ] || return 1
+      [ -n "$target" ] || { tama_window_read "$original"; return; }
       ;;
   esac
   case "$target" in
-    @*) return 1 ;;
+    @* | [0-9]* | +* | -*) tama_window_read "$original"; return ;;
+    =*) exact_only='yes'; target="${target#=}"
+        [ -n "$target" ] || return 1 ;;
     *[!0-9]*) ;;
-    *) return 1 ;;
+    *) tama_window_read "$original"; return ;;
   esac
   if [ -n "$session" ]; then
+    records="$(tmux_run list-windows -t "$session" -F '#{window_id} #{window_name}' \
+      2>/dev/null)" || return 1
+  elif [ "${original#:}" != "$original" ]; then
+    session="$(tmux_run display-message -p '#{session_id}' 2>/dev/null)" || return 1
+    [ -n "$session" ] || return 1
     records="$(tmux_run list-windows -t "$session" -F '#{window_id} #{window_name}' \
       2>/dev/null)" || return 1
   else
@@ -104,17 +112,31 @@ tama_priority_target_is_ambiguous() { # <target>
     seen="$seen $id"
     if [ "$name" = "$target" ]; then
       exact=$((exact + 1))
+      exact_id="$id"
+    elif [ "$exact_only" = yes ]; then
+      continue
     else
       case "$target" in
         *'*'* | *'?'* | *'['*)
           # shellcheck disable=SC2254  # the target deliberately carries a tmux glob
-          case "$name" in $target) partial=$((partial + 1)) ;; esac
+          case "$name" in $target) partial=$((partial + 1)); partial_id="$id" ;; esac
           ;;
-        *) [ "${name#"$target"}" = "$name" ] || partial=$((partial + 1)) ;;
+        *)
+          if [ "${name#"$target"}" != "$name" ]; then
+            partial=$((partial + 1))
+            partial_id="$id"
+          fi
+          ;;
       esac
     fi
   done <<EOF
 $records
 EOF
-  [ "$exact" -gt 1 ] || { [ "$exact" -eq 0 ] && [ "$partial" -gt 1 ]; }
+  if [ "$exact" -eq 1 ]; then
+    tama_window_read "$exact_id"
+  elif [ "$exact" -eq 0 ] && [ "$partial" -eq 1 ]; then
+    tama_window_read "$partial_id"
+  else
+    return 1
+  fi
 }

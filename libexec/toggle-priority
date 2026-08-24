@@ -26,7 +26,7 @@ main() {
 
   [ -n "$target" ] || die_usage 'toggle-priority needs --window <target>'
 
-  if tama_priority_target_is_ambiguous "$target" || ! tama_window_read "$target"; then
+  if ! tama_priority_target_resolve "$target"; then
     printf 'tama: no unique tmux window matches: %s\n' "$target" >&2
     return 1
   fi

@@ -106,7 +106,7 @@ tama_flag_raise_automatic() { # <target>
 }
 
 tama_automatic_flag_is_eligible() {
-  tama_priority_flag_is_eligible || return 1
+  tama_priority_flag_is_eligible "$TAMA_WINDOW_PRIORITY" || return 1
   ! tama_window_user_is_looking
 }
 

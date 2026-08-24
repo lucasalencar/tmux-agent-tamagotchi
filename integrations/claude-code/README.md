@@ -113,8 +113,8 @@ third, and `tests/readme.bats` asserts that it keeps doing so.
 A banner arrives only when you are not already looking at that window, it replaces the
 previous one for the same window rather than stacking, clicking it puts your cursor on the
 pane that spoke, and selecting the window takes it down. All of that is the plugin's job
-rather than this adapter's — see `tama --help` — and `set -g @tama_notifications off` turns
-the lot off while leaving the icons.
+rather than this adapter's — see `tama --help`. `set -g @tama_notifications off` turns
+banners off while leaving the independent Flags and icons.
 
 ## Which events interrupt you, and which only move an icon
 
@@ -200,8 +200,7 @@ healthy. It exits non-zero when something is broken and prints the setup recipes
 - You answered the permission prompt within a few seconds. `PermissionRequest` never banners;
   the `Notification` that would have is raised a little later, and answering first means it
   never happens.
-- The window mark (`*`, or whatever you put `#{E:@tama_flag}` next to) is raised by exactly
-  the same decision as the banner. A marked window with no banner means the notifier is
-  missing; no mark either means the plugin thinks you were looking.
+- The tmux window Flag (`!` by default) and banner are independent attention channels.
+  A Flag with no banner may reflect Priority policy, Notifications-off, or a missing notifier.
 
 Verified against Claude Code 2.1.228.

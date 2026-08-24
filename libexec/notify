@@ -20,7 +20,9 @@ deliver() { # <target> <agent_name> <message>
   if tama_automatic_flag_is_eligible; then
     flag='yes'
   fi
-  if tama_notify_enabled && tama_priority_window_is_eligible && ! tama_notify_suppressed; then
+  if tama_notify_enabled &&
+    tama_priority_window_is_eligible "$TAMA_WINDOW_PRIORITY" &&
+    ! tama_notify_suppressed; then
     notification='yes'
   fi
 

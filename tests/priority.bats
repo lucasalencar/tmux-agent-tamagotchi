@@ -123,6 +123,25 @@ teardown() {
     @tama_window_notification_pending)" ''
 }
 
+@test "invalid and empty Flag policies fall back to ambient at runtime" {
+  tmux_test_server_run new-window -d -t t:
+  local primary secondary pane configured
+  primary="$(tama_window_id t:0)"
+  secondary="$(tama_window_id t:1)"
+  pane="$(tama_pane_of "$secondary")"
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window "$primary"
+  assert_success
+
+  for configured in quiet ''; do
+    tmux_test_server_run set -g @tama_flag_policy "$configured"
+    run "$PLUGIN_ROOT/bin/tama" state waiting Codex --pane "$pane"
+    assert_success || return 1
+    assert_flagged "$secondary" || return 1
+    run "$PLUGIN_ROOT/bin/tama" unflag "$secondary"
+    assert_success || return 1
+  done
+}
+
 @test "Notifications-off leaves an eligible automatic Flag enabled" {
   tama_fake_backend_env
   tama_use_fake_backend
@@ -256,6 +275,16 @@ teardown() {
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:sam
   assert_status 1
   assert_equal "$stderr" 'tama: no unique tmux window matches: t:sam'
+
+  tmux_test_server_run new-window -d -t t: -n same
+  tmux_test_server_run new-window -d -t other: -n same
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" toggle-priority --window :same
+  assert_status 1
+  assert_equal "$stderr" 'tama: no unique tmux window matches: :same'
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:=same
+  assert_status 1
+  assert_equal "$stderr" 'tama: no unique tmux window matches: t:=same'
 }
 
 @test "state waiting follows selective policy without changing State visibility" {
@@ -293,6 +322,47 @@ teardown() {
   run "$PLUGIN_ROOT/bin/tama" notify Codex second --pane "$pane"
   assert_success
   assert_backend_called notify
+}
+
+@test "changing Priority neither clears nor replays existing attention" {
+  tama_fake_backend_env
+  tama_use_fake_backend
+  tmux_test_server_run new-window -d -t t:
+  local primary secondary pane
+  primary="$(tama_window_id t:0)"
+  secondary="$(tama_window_id t:1)"
+  pane="$(tama_pane_of "$secondary")"
+
+  run "$PLUGIN_ROOT/bin/tama" notify Codex before --pane "$pane"
+  assert_success
+  assert_flagged "$secondary"
+  assert_backend_called notify
+  assert_equal "$(tmux_test_server_run show -wqv -t "$secondary" \
+    @tama_window_notification_pending)" on
+
+  : >"$TAMA_TEST_LOG"
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window "$primary"
+  assert_success
+  assert_flagged "$secondary"
+  refute_backend_called notify
+  assert_equal "$(tmux_test_server_run show -wqv -t "$secondary" \
+    @tama_window_notification_pending)" on
+
+  run "$PLUGIN_ROOT/bin/tama" dismiss "$secondary"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" unflag "$secondary"
+  assert_success
+  tmux_test_server_run set -g @tama_flag_policy selective
+  : >"$TAMA_TEST_LOG"
+  run "$PLUGIN_ROOT/bin/tama" notify Codex suppressed --pane "$pane"
+  assert_success
+  refute_backend_called notify
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window "$primary"
+  assert_success
+  refute_backend_called notify
+  assert_not_flagged "$secondary"
+  assert_equal "$(tmux_test_server_run show -wqv -t "$secondary" \
+    @tama_window_notification_pending)" ''
 }
 
 @test "a Priority tmux window remains eligible for both selective attention channels" {
