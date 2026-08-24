@@ -61,13 +61,14 @@ anything onto `$PATH` or write outside its directory.
 
 ## Configure the status line
 
-The plugin exports three tmux formats:
+The plugin exports four tmux formats:
 
 | Format | Output |
 | --- | --- |
 | `#{E:@tama_icons}` | Agent state icons for the window |
 | `#{E:@tama_flag}` | Persistent attention mark |
 | `#{E:@tama_status_summary}` | Agent-state counts for the session's selected scope |
+| `#{E:@tama_choose_tree_format}` | Session, window and pane rows for `choose-tree` |
 
 Add both formats to the regular and current-window status lines:
 
@@ -77,6 +78,18 @@ set -g window-status-current-format '#I:#W#{?window_flags,#{window_flags},}#{E:@
 ```
 
 A window without an agent has no icon or additional padding.
+
+### Window selector
+
+Use the exported tree format to show canonical window names with the same agent icons and
+attention flags in tmux's `prefix` + <kbd>w</kbd> selector:
+
+```tmux
+bind-key w choose-tree -Zw -F '#{E:@tama_choose_tree_format}'
+```
+
+The selector starts with panes collapsed. Expanding a window continues to show each pane's
+running command and title. The plugin exports the format but does not install a key binding.
 
 ### Status summary
 
@@ -214,7 +227,7 @@ option map.
 | Capability overrides | `@tama_notify_command`, `@tama_dismiss_command`, `@tama_focused_command`, `@tama_focus_command` |
 | Stale state | `@tama_gc_shells` |
 | Lifecycle | `@tama_manage_hooks` |
-| Exported values | `@tama_bin`, `@tama_bin_dir`, `@tama_icons`, `@tama_status_summary`, `@tama_flag`, `@tama_pane_agent`, `@tama_pane_cwd`, `@tama_pane_label` |
+| Exported values | `@tama_bin`, `@tama_bin_dir`, `@tama_icons`, `@tama_status_summary`, `@tama_flag`, `@tama_choose_tree_format`, `@tama_pane_agent`, `@tama_pane_cwd`, `@tama_pane_label` |
 
 ### Focus detection
 

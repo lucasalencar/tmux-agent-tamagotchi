@@ -306,6 +306,31 @@ unwire_hooks() {
   assert_equal "$(tama_render_summary t)" '● 1 ◐ 0 ○ 0'
 }
 
+@test "loading exports a choose-tree format with window names and agent status" {
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+
+  local format
+  format="$(tmux_test_server_run show -gqv @tama_choose_tree_format)"
+  assert_contains "$format" '#{?pane_format,' 'the pane row'
+  assert_contains "$format" '#{?window_format,' 'the window row'
+  assert_contains "$format" '#{window_name}#{E:@tama_icons}#{E:@tama_flag}' \
+    'the decorated window name'
+  assert_contains "$format" '#{session_windows} windows' 'the session row'
+}
+
+@test "the choose-tree window decoration renders canonical names and status" {
+  tmux_test_server_run rename-window -t t:0 api
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+
+  tmux_test_server_run set -g @tama_icons ' ●'
+  tmux_test_server_run set -g @tama_flag ' *'
+
+  assert_equal "$(tmux_test_server_run display-message -p -t t:0 \
+    '#{window_name}#{E:@tama_icons}#{E:@tama_flag}')" 'api ● *'
+}
+
 @test "the exported options are reachable from a tmux format" {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
