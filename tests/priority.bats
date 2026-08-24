@@ -170,21 +170,28 @@ teardown() {
 @test "custom limits are read at runtime and linked tmux windows count once" {
   tmux_test_server_run new-window -d -t t:
   tmux_test_server_run new-window -d -t t:
-  tmux_test_server_run new-window -d -t t:
+  tmux_test_server_run -f /dev/null new-session -d -s linked -t t
   tmux_test_server_run set -g @tama_priority_max_percent 50
 
   run "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:0
   assert_success
   run "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:1
-  assert_success
-  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:2
   assert_status 1
 
   tmux_test_server_run set -g @tama_priority_max_percent 100
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:1
+  assert_success
   run "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:2
   assert_success
-  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:3
+}
+
+@test "maximum percentages with leading zeros are decimal" {
+  tmux_test_server_run set -g @tama_priority_max_percent 08
+
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:0
+
   assert_success
+  assert_equal "$(tmux_test_server_run show -wqv -t t:0 @tama_window_priority)" on
 }
 
 @test "invalid and empty maximum percentages fail open" {
@@ -229,6 +236,10 @@ teardown() {
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" toggle-priority --window same
   assert_status 1
   assert_equal "$stderr" 'tama: no unique tmux window matches: same'
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" toggle-priority --window sam
+  assert_status 1
+  assert_equal "$stderr" 'tama: no unique tmux window matches: sam'
 }
 
 @test "state waiting follows selective policy without changing State visibility" {
@@ -265,6 +276,24 @@ teardown() {
   tmux_test_server_run kill-window -t "$primary"
   run "$PLUGIN_ROOT/bin/tama" notify Codex second --pane "$pane"
   assert_success
+  assert_backend_called notify
+}
+
+@test "a Priority tmux window remains eligible for both selective attention channels" {
+  tama_fake_backend_env
+  tama_use_fake_backend
+  tmux_test_server_run set -g @tama_flag_policy selective
+  tmux_test_server_run new-window -d -t t:
+  local primary pane
+  primary="$(tama_window_id t:0)"
+  pane="$(tama_pane_of "$primary")"
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window "$primary"
+  assert_success
+
+  run "$PLUGIN_ROOT/bin/tama" notify Codex done --pane "$pane"
+  assert_success
+
+  assert_flagged "$primary"
   assert_backend_called notify
 }
 

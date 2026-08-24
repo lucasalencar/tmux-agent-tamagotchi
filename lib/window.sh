@@ -101,9 +101,13 @@ tama_flag_raise() { # <target>
 # continues to call tama_flag_raise as an explicit override.
 tama_flag_raise_automatic() { # <target>
   tama_window_read "$1" || return 0
-  tama_priority_flag_is_eligible || return 0
-  tama_window_user_is_looking && return 0
+  tama_automatic_flag_is_eligible || return 0
   tama_flag_set
+}
+
+tama_automatic_flag_is_eligible() {
+  tama_priority_flag_is_eligible || return 1
+  ! tama_window_user_is_looking
 }
 
 # Called after notification delivery has made the richer focus decision. Use the

@@ -26,7 +26,7 @@ main() {
 
   [ -n "$target" ] || die_usage 'toggle-priority needs --window <target>'
 
-  if tama_priority_bare_name_is_ambiguous "$target" || ! tama_window_read "$target"; then
+  if tama_priority_target_is_ambiguous "$target" || ! tama_window_read "$target"; then
     printf 'tama: no unique tmux window matches: %s\n' "$target" >&2
     return 1
   fi
@@ -35,10 +35,10 @@ main() {
     tmux_run set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_PRIORITY_OPTION" || return 1
   else
     tama_priority_counts
-    if tama_priority_limit &&
-      [ $((TAMA_PRIORITY_SELECTED_COUNT + 1)) -gt "$TAMA_PRIORITY_PERMITTED_COUNT" ]; then
+    if tama_priority_permitted_count &&
+      [ $((TAMA_PRIORITIZED_WINDOW_COUNT + 1)) -gt "$TAMA_PRIORITY_PERMITTED_COUNT" ]; then
       printf 'tama: cannot prioritize %s: %s of %s tmux windows would be Priority; limit is %s%% (%s permitted). If everything is priority, nothing is priority.\n' \
-        "$TAMA_WINDOW_ID" "$((TAMA_PRIORITY_SELECTED_COUNT + 1))" \
+        "$TAMA_WINDOW_ID" "$((TAMA_PRIORITIZED_WINDOW_COUNT + 1))" \
         "$TAMA_PRIORITY_WINDOW_COUNT" "$TAMA_PRIORITY_MAX_PERCENT" \
         "$TAMA_PRIORITY_PERMITTED_COUNT" >&2
       return 1

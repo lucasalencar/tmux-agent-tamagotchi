@@ -81,7 +81,7 @@ Commands:
                         Toggle Priority for one explicit tmux window.
   flag [target]         Mark a window. No-op for the current window.
   unflag [target]       Clear a window mark.
-  notify <agent> <msg>  Mark the window and send a desktop notification.
+  notify <agent> <msg>  Request eligible Flag and Notification channels.
   dismiss [target]      Dismiss a window notification.
   focus-window <sess>   Focus the terminal showing a tmux session.
   list [--session <s>]  List agent panes as stable, headerless TSV.

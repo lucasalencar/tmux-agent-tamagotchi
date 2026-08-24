@@ -60,8 +60,9 @@ work by declaring a subagent finished without reliable evidence.
 ## Flag
 
 A per-**tmux window** mark meaning *this tmux window wants your attention*, rendered next to
-the tmux window name. Raised when an unseen event requires attention: an agent pane enters
-`waiting` or `error`, or raises a **notification**. It clears when the tmux window becomes
+the tmux window name. Raised when an eligible unseen event requires in-tmux attention: an
+agent pane enters `waiting` or `error`, or a `notify` event requests the Flag channel. It
+clears when the tmux window becomes
 current through direct selection or a session change; navigation is treated as evidence that
 the attention was seen, even when caused by automation. An agent moving on to another state
 does not clear it, because the flag records that something happened while nobody was looking.

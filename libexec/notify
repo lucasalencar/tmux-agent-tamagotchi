@@ -17,7 +17,7 @@ deliver() { # <target> <agent_name> <message>
   tama_window_read "$target" || exit 0
 
   # Flag and Notification retain independent Priority and observation policies.
-  if tama_priority_flag_is_eligible && ! tama_window_user_is_looking; then
+  if tama_automatic_flag_is_eligible; then
     flag='yes'
   fi
   if tama_notify_enabled && tama_priority_window_is_eligible && ! tama_notify_suppressed; then

@@ -276,30 +276,21 @@ doctor_priority_configuration() {
   doctor_section 'Priority'
 
   local maximum policy
-  maximum="$(tama_opt tama_priority_max_percent 80)"
-  case "$maximum" in
-    *[!0-9]* | '')
-      doctor_fail "@tama_priority_max_percent is '$maximum'; expected an integer from 1 through 100"
-      doctor_more 'Priority toggles have no limit until the percentage is valid.'
-      ;;
-    *)
-      if [ "$maximum" -ge 1 ] 2>/dev/null && [ "$maximum" -le 100 ] 2>/dev/null; then
-        doctor_ok "@tama_priority_max_percent is $maximum%"
-      else
-        doctor_fail "@tama_priority_max_percent is '$maximum'; expected an integer from 1 through 100"
-        doctor_more 'Priority toggles have no limit until the percentage is valid.'
-      fi
-      ;;
-  esac
+  maximum="$(tama_opt tama_priority_max_percent "$TAMA_PRIORITY_MAX_PERCENT_DEFAULT")"
+  if tama_priority_max_percent_read; then
+    doctor_ok "@tama_priority_max_percent is $TAMA_PRIORITY_MAX_PERCENT%"
+  else
+    doctor_fail "@tama_priority_max_percent is '$maximum'; expected an integer from 1 through 100"
+    doctor_more 'Priority toggles have no limit until the percentage is valid.'
+  fi
 
-  policy="$(tama_opt tama_flag_policy ambient)"
-  case "$policy" in
-    ambient | selective) doctor_ok "@tama_flag_policy is $policy" ;;
-    *)
-      doctor_fail "@tama_flag_policy is '$policy'; expected ambient or selective"
-      doctor_more 'Automatic Flags use ambient policy until the value is valid.'
-      ;;
-  esac
+  policy="$(tama_opt tama_flag_policy "$TAMA_FLAG_POLICY_DEFAULT")"
+  if tama_flag_policy_is_valid "$policy"; then
+    doctor_ok "@tama_flag_policy is $policy"
+  else
+    doctor_fail "@tama_flag_policy is '$policy'; expected ambient or selective"
+    doctor_more 'Automatic Flags use ambient policy until the value is valid.'
+  fi
 }
 
 # The value a status line will really be drawn from, rather than the one the global
