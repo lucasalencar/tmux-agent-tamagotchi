@@ -356,6 +356,7 @@ tama_attach_client() {
 
 tama_attach_client_without_attach_hook() {
   tmux_test_server_run set-hook -gu client-attached
+  tmux_test_server_run set-hook -gu client-session-changed
   tama_attach_client "$1"
 }
 

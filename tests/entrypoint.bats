@@ -186,7 +186,7 @@ teardown() {
   assert_contains "$(tmux_test_server_run show-options -g client-session-changed)" \
     'on-select --window' 'the session-change hook'
   assert_contains "$(tmux_test_server_run show-options -g client-attached)" \
-    'on-select --all --window' 'the attach hook'
+    'gc --all' 'the attach hook'
 }
 
 @test "the wired hook survives the plugin directory moving" {

@@ -31,6 +31,7 @@ setup() {
   elsewhere="$(tama_window_id other:1)"
   elsewhere_pane="$(tama_pane_of other:1)"
 
+  tama_attach_client t
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$landed_pane"
   assert_success
   pane_running_shell "$landed_pane"
@@ -39,8 +40,8 @@ setup() {
   group="$(tama_backend_value notify env.TAMA_GROUP)"
   run "$PLUGIN_ROOT/bin/tama" state waiting Claude --pane "$elsewhere_pane"
   assert_success
+  pane_running_shell "$elsewhere_pane"
 
-  tama_attach_client t
   client="$(tmux_test_server_run list-clients -F '#{client_name}')"
   tmux_test_server_run switch-client -c "$client" -t other:0
 
@@ -55,16 +56,22 @@ setup() {
 @test "switching sessions with no pending notification starts no notifier" {
   tama_use_fake_backend
   tmux_test_server_run -f /dev/null new-session -d -s other 'sleep 300'
-  local landed client
+  local landed landed_pane client
   landed="$(tama_window_id other:0)"
+  landed_pane="$(tama_pane_of other:0)"
+
+  tama_attach_client t
+  run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$landed_pane"
+  assert_success
+  pane_running_shell "$landed_pane"
   run "$PLUGIN_ROOT/bin/tama" flag "$landed"
   assert_success
 
-  tama_attach_client t
   client="$(tmux_test_server_run list-clients -F '#{client_name}')"
   tmux_test_server_run switch-client -c "$client" -t other:0
 
   wait_until_not_flagged "$landed"
+  wait_until_no_icons "$landed"
   refute_backend_called dismiss
 }
 
@@ -575,9 +582,9 @@ wait_until_no_icons() { # <window>
   assert_success
   pane_running_shell "$PANE"
 
-  # This test is about the focus path alone, so the attach hook is taken back off:
-  # otherwise attaching below would clear the mark and this would pass without focus
-  # ever arriving. The next test is the one that covers attaching.
+  # This test is about the focus path alone, so both attachment-time hooks are taken
+  # back off: otherwise attaching below would clear the mark and this would pass
+  # without focus ever arriving. The next test is the one that covers attaching.
   # Attaching is not a selection: the mark is still there, which is the wart itself.
   tama_attach_client_without_attach_hook other
   assert_flagged "$target"
@@ -600,13 +607,14 @@ wait_until_no_icons() { # <window>
   # Nothing is simulated here: the hook the entrypoint wired is fired by tmux itself,
   # for a client that really attaches.
   tmux_test_server_run -f /dev/null new-session -d -s other 'sleep 300'
+  tama_use_fake_backend
   local target target_pane
   target="$(tama_window_id other:0)"
   target_pane="$(tama_pane_of other:0)"
   wait_for_command "$target_pane" sleep
 
   # Raised while nobody was attached, on the window that session is already on.
-  run "$PLUGIN_ROOT/bin/tama" state waiting Claude --pane "$target_pane"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$target_pane"
   assert_success
   assert_flagged "$target"
 
@@ -619,6 +627,10 @@ wait_until_no_icons() { # <window>
 
   wait_until_not_flagged "$target"
   wait_until_no_icons "$WINDOW"
+  wait_until_backend_called dismiss
+  # A second asynchronous acknowledgement used to arrive just after the first.
+  sleep 0.5
+  assert_equal "$(tama_backend_calls dismiss)" 1
 }
 
 @test "attaching leaves the mark on the windows the user did not land on" {
