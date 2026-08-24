@@ -242,6 +242,29 @@ teardown() {
   assert_equal "$(tmux_test_server_run show -wqv -t t:2 @tama_window_priority)" on
 }
 
+@test "a pane id delegates to the tmux window containing it" {
+  local window pane
+  window="$(tama_window_id t:0)"
+  pane="$(tama_pane_of "$window")"
+
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window "$pane"
+
+  assert_success
+  assert_equal "$(tmux_test_server_run show -wqv -t "$window" @tama_window_priority)" on
+}
+
+@test "literal-prefix matching takes precedence over glob matching" {
+  tmux_test_server_run set -g automatic-rename off
+  tmux_test_server_run rename-window -t t:0 'foo*bar'
+  tmux_test_server_run new-window -d -t t: -n foobar
+
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window 't:foo*'
+
+  assert_success
+  assert_equal "$(tmux_test_server_run show -wqv -t 't:foo*bar' @tama_window_priority)" on
+  assert_equal "$(tmux_test_server_run show -wqv -t t:foobar @tama_window_priority)" ''
+}
+
 @test "the marked-window target token is delegated to tmux" {
   tmux_test_server_run new-window -d -t t:
   tmux_test_server_run select-pane -m -t t:1
@@ -429,6 +452,21 @@ teardown() {
   assert_not_flagged "$secondary"
   assert_equal "$(tmux_test_server_run show -wqv -t "$secondary" \
     @tama_window_notification_pending)" ''
+}
+
+@test "navigation and State changes preserve Priority" {
+  local window pane
+  window="$(tama_window_id t:0)"
+  pane="$(tama_pane_of "$window")"
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window "$window"
+  assert_success
+
+  run "$PLUGIN_ROOT/bin/tama" state running Codex --pane "$pane"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" on-select --window "$window"
+  assert_success
+
+  assert_equal "$(tmux_test_server_run show -wqv -t "$window" @tama_window_priority)" on
 }
 
 @test "a Priority tmux window remains eligible for both selective attention channels" {

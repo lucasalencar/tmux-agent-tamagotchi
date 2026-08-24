@@ -110,8 +110,8 @@ tama_automatic_flag_is_eligible() {
   ! tama_window_user_is_looking
 }
 
-# Called after notification delivery has made the richer focus decision. Use the
-# previously read id because a caller's index may have moved.
+# Called after the caller has decided that an automatic or explicit Flag is eligible.
+# Use the previously read immutable id because a caller's index may have moved.
 tama_flag_set() {
   tmux_run set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" on \
     >/dev/null 2>&1 || true

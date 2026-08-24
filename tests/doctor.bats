@@ -1213,6 +1213,17 @@ PROVIDER
   assert_output_contains 'Automatic Flags use ambient policy until the value is valid.'
 }
 
+@test "doctor rejects explicitly empty Priority configuration" {
+  tmux_test_server_run set -g @tama_priority_max_percent ''
+  tmux_test_server_run set -g @tama_flag_policy ''
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+
+  assert_status 1
+  assert_output_contains "@tama_priority_max_percent is ''; expected an integer from 1 through 100"
+  assert_output_contains "@tama_flag_policy is ''; expected ambient or selective"
+}
+
 @test "a 100 percent Priority maximum is valid" {
   healthy_server
   tmux_test_server_run set -g @tama_priority_max_percent 100

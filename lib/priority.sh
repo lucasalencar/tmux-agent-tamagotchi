@@ -83,7 +83,8 @@ tama_priority_flag_is_eligible() { # <window priority value>
 # Other tmux target forms are resolved directly by tmux.
 tama_priority_target_resolve() { # <target>
   local original="$1" target="$1" session='' exact_only='no'
-  local records record id name seen='' exact=0 partial=0 exact_id='' partial_id=''
+  local records record id name seen='' exact=0 prefix=0 glob=0
+  local exact_id='' prefix_id='' glob_id=''
   case "$1" in
     @*) tama_window_read "$1"; return ;;
     *:*)
@@ -93,7 +94,7 @@ tama_priority_target_resolve() { # <target>
       ;;
   esac
   case "$target" in
-    @* | [0-9]* | +* | -* | '^' | '$' | '!' | '=' | '~' | '{'*'}')
+    @* | %* | [0-9]* | +* | -* | '^' | '$' | '!' | '=' | '~' | '{'*'}')
       tama_window_read "$original"
       return
       ;;
@@ -124,16 +125,14 @@ tama_priority_target_resolve() { # <target>
     elif [ "$exact_only" = yes ]; then
       continue
     else
+      if [ "${name#"$target"}" != "$name" ]; then
+        prefix=$((prefix + 1))
+        prefix_id="$id"
+      fi
       case "$target" in
         *'*'* | *'?'* | *'['*)
           # shellcheck disable=SC2254  # the target deliberately carries a tmux glob
-          case "$name" in $target) partial=$((partial + 1)); partial_id="$id" ;; esac
-          ;;
-        *)
-          if [ "${name#"$target"}" != "$name" ]; then
-            partial=$((partial + 1))
-            partial_id="$id"
-          fi
+          case "$name" in $target) glob=$((glob + 1)); glob_id="$id" ;; esac
           ;;
       esac
     fi
@@ -142,8 +141,10 @@ $records
 EOF
   if [ "$exact" -eq 1 ]; then
     tama_window_read "$exact_id"
-  elif [ "$exact" -eq 0 ] && [ "$partial" -eq 1 ]; then
-    tama_window_read "$partial_id"
+  elif [ "$exact" -eq 0 ] && [ "$prefix" -eq 1 ]; then
+    tama_window_read "$prefix_id"
+  elif [ "$exact" -eq 0 ] && [ "$prefix" -eq 0 ] && [ "$glob" -eq 1 ]; then
+    tama_window_read "$glob_id"
   else
     return 1
   fi
