@@ -68,6 +68,29 @@ does not clear it, because the flag records that something happened while nobody
 Distinct from a notification: the flag is inside tmux and persists until acknowledged; a
 notification is an OS-level banner.
 
+## Priority
+
+A binary, user-assigned classification of a **tmux window** that separates primary work from
+secondary work and governs which events may request attention. Independent of **state** and
+not itself a request for attention.
+_Avoid_: Background work
+
+## Priority marker
+
+A persistent visual indication that a **tmux window** has **priority**. It represents neither
+an agent **state** nor a request for attention.
+
+## Priority mode
+
+The attention policy in effect while at least one **tmux window** has **priority**. With no
+priorities, every tmux window remains eligible to request attention as before.
+_Avoid_: Focus mode
+
+## Attention channel
+
+A mechanism through which an event requests the user's attention. **Notification** is always
+an attention channel; **flag** can be included or excluded by configuration.
+
 ## Attention acknowledgement
 
 Treating a **tmux window**'s request for attention as handled because navigation made that
