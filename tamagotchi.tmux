@@ -46,7 +46,7 @@ if ! tama_tmux_server_resolve; then
 fi
 
 main() {
-  local version warning
+  local version warning choose_tree_format
   version="$(tama_tmux_version)"
   if ! tama_version_at_least "$version" "$TAMA_MIN_TMUX_VERSION"; then
     # display-message expands its argument as a tmux format, and a format can
@@ -119,6 +119,19 @@ main() {
   # `#[fg=red]` in it. The option is referenced, never interpolated, for the same
   # reason the icon path references `@tama_bin`.
   tmux_run set -g @tama_flag '#{?@tama_window_flag,#{E:@tama_flag_text},}'
+
+  # choose-tree offers only one format for all three row types. Keep that complete
+  # format here so users do not have to copy tmux's implementation just to decorate
+  # window rows. The nested conditional is understood by every supported tmux version.
+  choose_tree_format='#{?pane_format,#{pane_current_command} "#{pane_title}",'
+  choose_tree_format="${choose_tree_format}#{?window_format,"
+  choose_tree_format="${choose_tree_format}#{window_name}#{E:@tama_icons}#{E:@tama_flag}"
+  choose_tree_format="${choose_tree_format}#{window_flags} (#{window_panes} panes)"
+  choose_tree_format="${choose_tree_format}#{?#{==:#{window_panes},1}, \"#{pane_title}\",},"
+  choose_tree_format="${choose_tree_format}#{session_windows} windows"
+  choose_tree_format="${choose_tree_format}#{?session_grouped, (group #{session_group}: #{session_group_list}),}"
+  choose_tree_format="${choose_tree_format}#{?session_attached, (attached),}}}"
+  tmux_run set -g @tama_choose_tree_format "$choose_tree_format"
 
   # The flag text has to exist as an option, because a format cannot carry a default:
   # `#{E:@tama_flag_text}` on an option nobody set expands to nothing, and the flag

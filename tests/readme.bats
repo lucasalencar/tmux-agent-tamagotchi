@@ -184,6 +184,21 @@ loaded_server() {
     'summary-scope --session #{q:session_id} toggle' 'the prefix + G binding'
 }
 
+@test "the README's window selector binding uses the exported tree format" {
+  local recipe="bind-key w choose-tree -Zw -F '#{E:@tama_choose_tree_format}'"
+  local conf="$BATS_TEST_TMPDIR/choose-tree-binding.conf"
+  grep -qF -- "$recipe" "$README" || {
+    printf 'the README no longer carries the exported choose-tree recipe\n' >&2
+    return 1
+  }
+
+  printf '%s\n' "$recipe" >"$conf"
+  run tmux_test_server_run source-file "$conf"
+  assert_success
+  assert_contains "$(tmux_test_server_run list-keys -T prefix | grep ' w ')" \
+    '@tama_choose_tree_format' 'the prefix + w binding'
+}
+
 @test "the README does not carry a third copy of the Claude Code hook block" {
   # doctor prints that block and checks a user's settings against the same list of
   # events, and tests/doctor.bats asserts it matches the integration README's copy. A

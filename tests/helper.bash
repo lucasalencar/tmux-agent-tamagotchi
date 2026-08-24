@@ -513,16 +513,18 @@ tama_server_state() {
   tmux_test_server_run list-keys
 }
 
-# Both discovery options point at the given clone.
+# Discovery options point at the given clone and presentation formats are available.
 assert_plugin_wired() {
   local root="$1"
   assert_equal "$(tmux_test_server_run show -gqv @tama_bin)" "$root/bin/tama" || return 1
-  assert_equal "$(tmux_test_server_run show -gqv @tama_bin_dir)" "$root/bin"
+  assert_equal "$(tmux_test_server_run show -gqv @tama_bin_dir)" "$root/bin" || return 1
+  [ -n "$(tmux_test_server_run show -gqv @tama_choose_tree_format)" ]
 }
 
 assert_plugin_not_wired() {
   assert_equal "$(tmux_test_server_run show -gqv @tama_bin)" '' || return 1
-  assert_equal "$(tmux_test_server_run show -gqv @tama_bin_dir)" ''
+  assert_equal "$(tmux_test_server_run show -gqv @tama_bin_dir)" '' || return 1
+  assert_equal "$(tmux_test_server_run show -gqv @tama_choose_tree_format)" ''
 }
 
 # Loads the plugin against a tmux that reports the given version, and says
