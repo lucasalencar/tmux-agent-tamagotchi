@@ -15,7 +15,7 @@ setup() {
 
 teardown() {
   tama_detach_client
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 # A second session with two windows, so that "same index, different session" — the
@@ -23,9 +23,9 @@ teardown() {
 # session `t` holding window 0; this gives `t` a window 1 too, and `other` windows
 # 0 and 1, at matching indexes on purpose.
 arrange_two_sessions() {
-  test_tmux new-window -t t: -d
-  test_tmux -f /dev/null new-session -d -s other
-  test_tmux new-window -t other: -d
+  tmux_test_server_run new-window -t t: -d
+  tmux_test_server_run -f /dev/null new-session -d -s other
+  tmux_test_server_run new-window -t other: -d
 }
 
 @test "waiting raises the flag on a window nobody is looking at" {
@@ -106,15 +106,15 @@ arrange_two_sessions() {
   # sat in `t:1`.
   arrange_two_sessions
   tama_attach_client t
-  test_tmux select-window -t t:1
+  tmux_test_server_run select-window -t t:1
 
   local target pane
   target="$(tama_window_id other:1)"
   pane="$(tama_pane_of other:1)"
 
   # Same index as the window the user is looking at, and a different session.
-  assert_equal "$(test_tmux display-message -p -t other:1 '#{window_index}')" \
-    "$(test_tmux display-message -p -t t:1 '#{window_index}')"
+  assert_equal "$(tmux_test_server_run display-message -p -t other:1 '#{window_index}')" \
+    "$(tmux_test_server_run display-message -p -t t:1 '#{window_index}')"
 
   run "$PLUGIN_ROOT/bin/tama" state waiting --pane "$pane"
   assert_success
@@ -133,8 +133,8 @@ arrange_two_sessions() {
   target="$(tama_window_id other:0)"
   pane="$(tama_pane_of other:0)"
 
-  assert_equal "$(test_tmux display-message -p -t "$target" '#{window_active}')" '1'
-  assert_equal "$(test_tmux display-message -p -t "$target" '#{session_attached}')" '0'
+  assert_equal "$(tmux_test_server_run display-message -p -t "$target" '#{window_active}')" '1'
+  assert_equal "$(tmux_test_server_run display-message -p -t "$target" '#{session_attached}')" '0'
 
   run "$PLUGIN_ROOT/bin/tama" state waiting --pane "$pane"
   assert_success
@@ -219,7 +219,7 @@ arrange_two_sessions() {
   # by calling on-select: the user selects the window and the mark goes.
   arrange_two_sessions
   tama_attach_client t
-  test_tmux select-window -t t:0
+  tmux_test_server_run select-window -t t:0
 
   local window
   window="$(tama_window_id t:1)"
@@ -227,7 +227,7 @@ arrange_two_sessions() {
   assert_success
   assert_flagged "$window"
 
-  test_tmux select-window -t t:1
+  tmux_test_server_run select-window -t t:1
   wait_until_not_flagged "$window"
 }
 
@@ -238,7 +238,7 @@ arrange_two_sessions() {
   # some *other* real pane would clear the wrong window instead.
   arrange_two_sessions
   tama_attach_client t
-  test_tmux select-window -t t:0
+  tmux_test_server_run select-window -t t:0
 
   local selected other
   selected="$(tama_window_id t:1)"
@@ -248,7 +248,7 @@ arrange_two_sessions() {
   run "$PLUGIN_ROOT/bin/tama" flag "$other"
   assert_success
 
-  test_tmux select-window -t t:1
+  tmux_test_server_run select-window -t t:1
   wait_until_not_flagged "$selected"
   # The window nobody selected keeps its mark.
   assert_flagged "$other"
@@ -274,18 +274,18 @@ arrange_two_sessions() {
   # A flag that had been recorded against an index would be on the wrong window here,
   # or on none.
   arrange_two_sessions
-  test_tmux new-window -t t: -d
-  test_tmux set -g renumber-windows on
+  tmux_test_server_run new-window -t t: -d
+  tmux_test_server_run set -g renumber-windows on
 
   local window before
   window="$(tama_window_id t:2)"
-  before="$(test_tmux display-message -p -t "$window" '#{window_index}')"
+  before="$(tmux_test_server_run display-message -p -t "$window" '#{window_index}')"
   run "$PLUGIN_ROOT/bin/tama" flag "$window"
   assert_success
 
-  test_tmux kill-window -t t:1
+  tmux_test_server_run kill-window -t t:1
   # The window really did move, or this test proves nothing.
-  [ "$(test_tmux display-message -p -t "$window" '#{window_index}')" != "$before" ]
+  [ "$(tmux_test_server_run display-message -p -t "$window" '#{window_index}')" != "$before" ]
   assert_flagged "$window"
 }
 
@@ -296,19 +296,19 @@ arrange_two_sessions() {
   assert_success
 
   # The default, which the entrypoint seeds because a format cannot carry one.
-  assert_equal "$(test_tmux display-message -p -t "$window" '#{E:@tama_flag}')" ' *'
+  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{E:@tama_flag}')" ' *'
 
   # Read at expansion time, so a reconfiguration needs no reload — and expanded a
   # second time, so it can carry colour.
-  test_tmux set -g @tama_flag_text '#[fg=red]!'
-  assert_equal "$(test_tmux display-message -p -t "$window" '#{E:@tama_flag}')" '#[fg=red]!'
+  tmux_test_server_run set -g @tama_flag_text '#[fg=red]!'
+  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{E:@tama_flag}')" '#[fg=red]!'
 }
 
 @test "flag text the user emptied stays empty across a reload" {
-  test_tmux set -g @tama_flag_text ''
+  tmux_test_server_run set -g @tama_flag_text ''
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
-  assert_equal "$(test_tmux show -gv @tama_flag_text)" ''
+  assert_equal "$(tmux_test_server_run show -gv @tama_flag_text)" ''
 }
 
 @test "the flag commands are quiet no-ops outside tmux" {
@@ -346,10 +346,10 @@ arrange_two_sessions() {
 @test "a window that is gone is not an error" {
   local window
   window="$(tama_window_id t:0)"
-  test_tmux new-window -t t: -d
+  tmux_test_server_run new-window -t t: -d
   local doomed
   doomed="$(tama_window_id t:1)"
-  test_tmux kill-window -t "$doomed"
+  tmux_test_server_run kill-window -t "$doomed"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" flag "$doomed"
   assert_success

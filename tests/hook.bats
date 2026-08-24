@@ -30,13 +30,13 @@ setup() {
   tama_fake_backend_env
   tama_start_server
   tama_use_fake_backend
-  PANE="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
-  WINDOW="$(test_tmux display-message -p -t "$PANE" '#{window_id}')"
+  PANE="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | head -1)"
+  WINDOW="$(tmux_test_server_run display-message -p -t "$PANE" '#{window_id}')"
 }
 
 teardown() {
   tama_detach_client
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 # An event, reported from the pane the agent is running in — which is where a
@@ -210,11 +210,11 @@ payload() { # <event> [extra JSON…]
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
 
-  test_tmux new-window -d -t t:
+  tmux_test_server_run new-window -d -t t:
   local other other_pane
   other="$(tama_window_id t:1)"
   other_pane="$(tama_pane_of t:1)"
-  test_tmux select-window -t t:0
+  tmux_test_server_run select-window -t t:0
 
   TMUX_PANE="$other_pane" run "$PLUGIN_ROOT/bin/tama" hook claude-code PermissionRequest
   assert_success
@@ -554,7 +554,7 @@ PAYLOAD
   # for it.
   local statusfile="$BATS_TEST_TMPDIR/tty.status"
   local target
-  target="$(test_tmux new-window -t t: -P -F '#{pane_id}' \
+  target="$(tmux_test_server_run new-window -t t: -P -F '#{pane_id}' \
     "$PLUGIN_ROOT/bin/tama hook claude-code SubagentStart; \
      printf '%s' \$? >'$statusfile'; exec sleep 60")"
 
@@ -947,7 +947,7 @@ readme_command() { # <event>
   # The same settings.json is read on every machine the user has, including the
   # ones without this plugin and the ones whose tmux is too old for it to have
   # wired anything.
-  test_tmux set -gu @tama_bin
+  tmux_test_server_run set -gu @tama_bin
   tama_shim_tmux_on_path
 
   local command
@@ -962,7 +962,7 @@ readme_command() { # <event>
 @test "the pasted command stays quiet when the discovered adapter is broken" {
   plugin_with_stub_agent
   tama_add_stub_integration "$PLUGIN" claude-code
-  test_tmux set -g @tama_bin "$PLUGIN/bin/tama"
+  tmux_test_server_run set -g @tama_bin "$PLUGIN/bin/tama"
   tama_shim_tmux_on_path
 
   local command

@@ -9,29 +9,29 @@ setup() {
 }
 
 teardown() {
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 set_pane_value() { # <pane> <option suffix> <value>
-  test_tmux set -p -t "$1" "@tama_pane_$2" "$3"
+  tmux_test_server_run set -p -t "$1" "@tama_pane_$2" "$3"
 }
 
 record_for() { # <session target> <pane> <agent> <state> <label>
   local tab format
   tab="$(printf '\t')"
   format="#{session_name}${tab}#{session_id}${tab}#{window_index}${tab}#{window_name}${tab}#{window_id}${tab}#{pane_index}${tab}#{pane_id}${tab}$3${tab}$4${tab}$5"
-  test_tmux display-message -p -t "$1.$2" "$format"
+  tmux_test_server_run display-message -p -t "$1.$2" "$format"
 }
 
 @test "list emits fixed records for every agent pane in deterministic server order" {
-  test_tmux rename-session -t t zeta
-  test_tmux rename-window -t zeta:0 'main window'
+  tmux_test_server_run rename-session -t t zeta
+  tmux_test_server_run rename-window -t zeta:0 'main window'
   local zeta_first zeta_second zeta_two zeta_ten alpha
   zeta_first="$(tama_pane_of zeta:0)"
-  zeta_second="$(test_tmux split-window -d -P -F '#{pane_id}' -t zeta:0)"
-  zeta_two="$(test_tmux new-window -d -P -F '#{pane_id}' -t zeta:2 -n two)"
-  zeta_ten="$(test_tmux new-window -d -P -F '#{pane_id}' -t zeta:10 -n ten)"
-  test_tmux new-session -d -s alpha -n 'unicode-ç'
+  zeta_second="$(tmux_test_server_run split-window -d -P -F '#{pane_id}' -t zeta:0)"
+  zeta_two="$(tmux_test_server_run new-window -d -P -F '#{pane_id}' -t zeta:2 -n two)"
+  zeta_ten="$(tmux_test_server_run new-window -d -P -F '#{pane_id}' -t zeta:10 -n ten)"
+  tmux_test_server_run new-session -d -s alpha -n 'unicode-ç'
   alpha="$(tama_pane_of alpha:0)"
 
   set_pane_value "$zeta_first" state_main waiting
@@ -58,10 +58,10 @@ record_for() { # <session target> <pane> <agent> <state> <label>
 }
 
 @test "list filters by exact session name and id and missing sessions are empty" {
-  test_tmux rename-session -t t exact
+  tmux_test_server_run rename-session -t t exact
   local pane session_id expected
   pane="$(tama_pane_of exact:0)"
-  session_id="$(test_tmux display-message -p -t exact:0 '#{session_id}')"
+  session_id="$(tmux_test_server_run display-message -p -t exact:0 '#{session_id}')"
   set_pane_value "$pane" state_main running
   expected="$(record_for exact:0 "$pane" '' running '')"
 
@@ -78,13 +78,13 @@ record_for() { # <session target> <pane> <agent> <state> <label>
 }
 
 @test "list emits one record for each linked-window session linkage" {
-  test_tmux rename-session -t t one
+  tmux_test_server_run rename-session -t t one
   local pane window_id
   pane="$(tama_pane_of one:0)"
   window_id="$(tama_window_id one:0)"
   set_pane_value "$pane" state_main idle
-  test_tmux new-session -d -s two
-  test_tmux link-window -s "$window_id" -t two:4
+  tmux_test_server_run new-session -d -s two
+  tmux_test_server_run link-window -s "$window_id" -t two:4
 
   run "$PLUGIN_ROOT/bin/tama" list
   assert_success
@@ -104,7 +104,7 @@ record_for() { # <session target> <pane> <agent> <state> <label>
     "$PLUGIN_ROOT/tests/fixtures/tmux-escaping-control-formats" >"$wrapper"
   chmod +x "$wrapper"
   TAMA_TMUX="$wrapper"
-  TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
+  TAMA_TMUX_ARGS="-L $TMUX_TEST_SOCKET"
 
   run "$PLUGIN_ROOT/bin/tama" list
   assert_success
@@ -115,10 +115,10 @@ record_for() { # <session target> <pane> <agent> <state> <label>
   local suffix pane window_number=0
   for suffix in agent label cmd cwd subagents; do
     window_number=$((window_number + 1))
-    pane="$(test_tmux new-window -d -P -F '#{pane_id}' -t "t:$window_number")"
+    pane="$(tmux_test_server_run new-window -d -P -F '#{pane_id}' -t "t:$window_number")"
     set_pane_value "$pane" "$suffix" residue
   done
-  test_tmux set -w -t t:0 @tama_window_notification_pending residue
+  tmux_test_server_run set -w -t t:0 @tama_window_notification_pending residue
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" list
   assert_success
@@ -131,15 +131,15 @@ record_for() { # <session target> <pane> <agent> <state> <label>
   pane="$(tama_pane_of t:0)"
   set_pane_value "$pane" state_main error
   set_pane_value "$pane" cmd definitely-stale
-  before="$(test_tmux show -p -t "$pane" -v @tama_pane_state_main)"
+  before="$(tmux_test_server_run show -p -t "$pane" -v @tama_pane_state_main)"
   expected="$(record_for t:0 "$pane" '' error '')"
 
   run "$PLUGIN_ROOT/bin/tama" list
   assert_success
   assert_equal "$output" "$expected"
-  assert_equal "$(test_tmux show -p -t "$pane" -v @tama_pane_state_main)" "$before"
+  assert_equal "$(tmux_test_server_run show -p -t "$pane" -v @tama_pane_state_main)" "$before"
 
-  test_tmux set -pu -t "$pane" @tama_pane_state_main
+  tmux_test_server_run set -pu -t "$pane" @tama_pane_state_main
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" list
   assert_success
   [ -z "$output" ]
@@ -160,11 +160,11 @@ record_for() { # <session target> <pane> <agent> <state> <label>
 }
 
 @test "list discards records already collected when a later query fails" {
-  test_tmux rename-session -t t first
+  tmux_test_server_run rename-session -t t first
   local first second wrapper
   first="$(tama_pane_of first:0)"
   set_pane_value "$first" state_main running
-  test_tmux new-session -d -s second
+  tmux_test_server_run new-session -d -s second
   second="$(tama_pane_of second:0)"
   set_pane_value "$second" state_main waiting
 
@@ -175,7 +175,7 @@ record_for() { # <session target> <pane> <agent> <state> <label>
   chmod +x "$wrapper"
   export TAMA_FAIL_TARGET="$(tama_window_id second:0)"
   TAMA_TMUX="$wrapper"
-  TAMA_TMUX_ARGS="-L $TAMA_SOCKET"
+  TAMA_TMUX_ARGS="-L $TMUX_TEST_SOCKET"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" list
   assert_success

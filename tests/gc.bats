@@ -22,13 +22,13 @@ setup() {
 
 teardown() {
   tama_detach_client
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 # Puts <pane> on a known command, and waits for tmux to agree it is running it.
 # Polled rather than slept on: a process takes as long as the machine takes.
 pane_running() { # <pane> <command>
-  test_tmux respawn-pane -k -t "$1" "$2"
+  tmux_test_server_run respawn-pane -k -t "$1" "$2"
   wait_for_command "$1" "${2%% *}"
 }
 
@@ -46,7 +46,7 @@ wait_for_command() { # <pane> <expected>
 }
 
 pane_command() { # <pane>
-  test_tmux display-message -p -t "$1" '#{pane_current_command}'
+  tmux_test_server_run display-message -p -t "$1" '#{pane_current_command}'
 }
 
 # Puts <pane> back on a plain shell, the way a pane whose agent exited ends up. Which
@@ -61,7 +61,7 @@ pane_command() { # <pane>
 pane_running_shell() { # <pane>
   local before waited=0
   before="$(pane_command "$1")"
-  test_tmux respawn-pane -k -t "$1" 'sh'
+  tmux_test_server_run respawn-pane -k -t "$1" 'sh'
   while [ "$(pane_command "$1")" = "$before" ]; do
     waited=$((waited + 1))
     if [ "$waited" -gt 200 ]; then
@@ -90,7 +90,7 @@ assert_shell_in_default_allowlist() { # <pane>
 # here without anybody remembering to add it.
 assert_no_trace() { # <pane>
   local remaining
-  remaining="$(test_tmux show -p -t "$1" | grep -c '^@tama_' || true)"
+  remaining="$(tmux_test_server_run show -p -t "$1" | grep -c '^@tama_' || true)"
   assert_equal "$remaining" 0
 }
 
@@ -256,7 +256,7 @@ wait_until_no_icons() { # <window>
   # there is: an agent does not run as the user's shell.
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
-  test_tmux set -pu -t "$PANE" @tama_pane_cmd
+  tmux_test_server_run set -pu -t "$PANE" @tama_pane_cmd
 
   pane_running_shell "$PANE"
   assert_shell_in_default_allowlist "$PANE"
@@ -272,7 +272,7 @@ wait_until_no_icons() { # <window>
   # live agent's icon away is the expensive mistake.
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
-  test_tmux set -pu -t "$PANE" @tama_pane_cmd
+  tmux_test_server_run set -pu -t "$PANE" @tama_pane_cmd
 
   pane_running "$PANE" 'cat'
   run "$PLUGIN_ROOT/bin/tama" gc --window "$WINDOW"
@@ -283,7 +283,7 @@ wait_until_no_icons() { # <window>
 @test "the shell allowlist is the user's, and is read at invocation time" {
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
-  test_tmux set -pu -t "$PANE" @tama_pane_cmd
+  tmux_test_server_run set -pu -t "$PANE" @tama_pane_cmd
   pane_running "$PANE" 'cat'
 
   # Not a shell by the default list, so nothing happens…
@@ -292,7 +292,7 @@ wait_until_no_icons() { # <window>
   assert_equal "$(tama_icons "$WINDOW")" ' ●'
 
   # …and it is a shell by this user's, with no reload of anything.
-  test_tmux set -g @tama_gc_shells 'cat mysh'
+  tmux_test_server_run set -g @tama_gc_shells 'cat mysh'
   run "$PLUGIN_ROOT/bin/tama" gc --window "$WINDOW"
   assert_success
   assert_equal "$(tama_icons "$WINDOW")" ''
@@ -300,7 +300,7 @@ wait_until_no_icons() { # <window>
 
 @test "the sweep is confined to the window it was given" {
   local other other_pane
-  test_tmux new-window -t t: -d 'sleep 300'
+  tmux_test_server_run new-window -t t: -d 'sleep 300'
   other="$(tama_window_id t:1)"
   other_pane="$(tama_pane_of t:1)"
   wait_for_command "$other_pane" sleep
@@ -326,7 +326,7 @@ wait_until_no_icons() { # <window>
 @test "the whole-server sweep reaches another session" {
   # `--all` is `list-panes -a`, which is the server and not the ambient session: the
   # windows most likely to be lying are the ones the user has not visited.
-  test_tmux -f /dev/null new-session -d -s other 'sleep 300'
+  tmux_test_server_run -f /dev/null new-session -d -s other 'sleep 300'
   local other other_pane
   other="$(tama_window_id other:0)"
   other_pane="$(tama_pane_of other:0)"
@@ -348,8 +348,8 @@ wait_until_no_icons() { # <window>
   # decision per pane rather than per window.
   local dead live
   dead="$PANE"
-  test_tmux split-window -t "$WINDOW" -d 'sleep 300'
-  live="$(test_tmux list-panes -t "$WINDOW" -F '#{pane_id}' | tail -1)"
+  tmux_test_server_run split-window -t "$WINDOW" -d 'sleep 300'
+  live="$(tmux_test_server_run list-panes -t "$WINDOW" -F '#{pane_id}' | tail -1)"
   wait_for_command "$live" sleep
 
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$dead"
@@ -440,18 +440,18 @@ wait_until_no_icons() { # <window>
 @test "selecting a pane sweeps the window it happened in" {
   # Through the hook the entrypoint wired, not by calling gc: this is the claim that
   # the common case needs no manual step.
-  test_tmux split-window -t "$WINDOW" -d 'sleep 300'
+  tmux_test_server_run split-window -t "$WINDOW" -d 'sleep 300'
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$PANE"
   assert_success
   pane_running_shell "$PANE"
   assert_equal "$(tama_icons "$WINDOW")" ' ●'
 
-  test_tmux select-pane -t "$(test_tmux list-panes -t "$WINDOW" -F '#{pane_id}' | tail -1)"
+  tmux_test_server_run select-pane -t "$(tmux_test_server_run list-panes -t "$WINDOW" -F '#{pane_id}' | tail -1)"
   wait_until_no_icons "$WINDOW"
 }
 
 @test "selecting a window sweeps it as well as clearing its flag" {
-  test_tmux new-window -t t: -d 'sleep 300'
+  tmux_test_server_run new-window -t t: -d 'sleep 300'
   local target target_pane
   target="$(tama_window_id t:1)"
   target_pane="$(tama_pane_of t:1)"
@@ -463,7 +463,7 @@ wait_until_no_icons() { # <window>
   pane_running_shell "$target_pane"
 
   tama_attach_client t
-  test_tmux select-window -t t:1
+  tmux_test_server_run select-window -t t:1
   wait_until_no_icons "$target"
   assert_not_flagged "$target"
 }
@@ -480,7 +480,7 @@ wait_until_no_icons() { # <window>
 }
 
 @test "on-select --all sweeps every window, and unflags only the one it was given" {
-  test_tmux -f /dev/null new-session -d -s other 'sleep 300'
+  tmux_test_server_run -f /dev/null new-session -d -s other 'sleep 300'
   local elsewhere elsewhere_pane
   elsewhere="$(tama_window_id other:0)"
   elsewhere_pane="$(tama_pane_of other:0)"
@@ -510,7 +510,7 @@ wait_until_no_icons() { # <window>
   # session was waiting for a `select-window` that never comes: the user attaches and
   # is already on that window, so tmux fires no selection hook and the mark stays put
   # while they read it. Focus arriving is the event that says they are looking.
-  test_tmux -f /dev/null new-session -d -s other 'sleep 300'
+  tmux_test_server_run -f /dev/null new-session -d -s other 'sleep 300'
   local target target_pane
   target="$(tama_window_id other:0)"
   target_pane="$(tama_pane_of other:0)"
@@ -536,7 +536,7 @@ wait_until_no_icons() { # <window>
 
   # The user's terminal comes to the front. `-R` runs the hook the way tmux does when
   # the terminal reports focus, against the client that has it.
-  test_tmux set-hook -R client-focus-in
+  tmux_test_server_run set-hook -R client-focus-in
 
   wait_until_not_flagged "$target"
   wait_until_no_icons "$WINDOW"
@@ -551,7 +551,7 @@ wait_until_no_icons() { # <window>
   #
   # Nothing is simulated here: the hook the entrypoint wired is fired by tmux itself,
   # for a client that really attaches.
-  test_tmux -f /dev/null new-session -d -s other 'sleep 300'
+  tmux_test_server_run -f /dev/null new-session -d -s other 'sleep 300'
   local target target_pane
   target="$(tama_window_id other:0)"
   target_pane="$(tama_pane_of other:0)"
@@ -577,8 +577,8 @@ wait_until_no_icons() { # <window>
   # --all widens the sweep and only the sweep. A mark on some other window says
   # something happened there while nobody was looking, and that is still true after
   # attaching somewhere else.
-  test_tmux -f /dev/null new-session -d -s other 'sleep 300'
-  test_tmux new-window -d -t other: 'sleep 300'
+  tmux_test_server_run -f /dev/null new-session -d -s other 'sleep 300'
+  tmux_test_server_run new-window -d -t other: 'sleep 300'
   local landed landed_pane elsewhere elsewhere_pane
   landed="$(tama_window_id other:0)"
   landed_pane="$(tama_pane_of other:0)"
@@ -624,10 +624,10 @@ wait_until_no_icons() { # <window>
 }
 
 @test "a window that is gone is not an error" {
-  test_tmux new-window -t t: -d
+  tmux_test_server_run new-window -t t: -d
   local doomed
   doomed="$(tama_window_id t:1)"
-  test_tmux kill-window -t "$doomed"
+  tmux_test_server_run kill-window -t "$doomed"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" gc --window "$doomed"
   assert_success

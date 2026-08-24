@@ -15,44 +15,52 @@ teardown() {
   for pid in $CLIENT_PIDS $FIFO_PIDS; do
     kill "$pid" 2>/dev/null || true
   done
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 attach_client() { # <session> <name>
-  tama_require_isolated_test_socket || return 1
+  _tmux_test_server_require_isolated_socket || return 1
   local session="$1" name="$2" fifo="$BATS_TEST_TMPDIR/$2.fifo" waited=0 pid holder
   mkfifo "$fifo"
   sleep 300 >"$fifo" &
   holder=$!
-  tmux -L "$TAMA_SOCKET" -C -f /dev/null attach -t "$session" <"$fifo" >/dev/null 2>&1 &
+  tmux_test_server_run -C -f /dev/null attach -t "$session" <"$fifo" >/dev/null 2>&1 &
   pid=$!
   CLIENT_PIDS="$CLIENT_PIDS $pid"
   FIFO_PIDS="$FIFO_PIDS $holder"
-  while ! test_tmux list-clients -F '#{client_name} #{session_name}' | grep -q " $session\$"; do
+  while ! tmux_test_server_run list-clients -F '#{client_name} #{session_name}' | grep -q " $session\$"; do
     waited=$((waited + 1))
     [ "$waited" -le 200 ] || return 1
     sleep 0.05
   done
-  eval "$name=\$(test_tmux list-clients -F '#{client_name} #{session_name}' | awk '\$2 == \"'$session'\" { print \$1; exit }')"
+  eval "$name=\$(tmux_test_server_run list-clients -F '#{client_name} #{session_name}' | awk '\$2 == \"'$session'\" { print \$1; exit }')"
 }
 
 session_id() {
-  test_tmux display-message -p -t "$1" '#{session_id}'
+  tmux_test_server_run display-message -p -t "$1" '#{session_id}'
+}
+
+arrange_stale_agent_pane() { # <pane>
+  local pane="$1"
+  tama_arrange_sleeping_pane "$pane" || return 1
+  tmux_test_server_run set-option -g @tama_gc_shells sleep
+  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$pane"
+  tmux_test_server_run set-option -p -t "$pane" @tama_pane_cmd definitely-stale
 }
 
 @test "state changes refresh linked current summaries and unrelated all summaries once" {
   local pane linked_client linked_current_client all_client current_client
   pane="$(tama_pane_of t:0)"
-  test_tmux new-session -d -s linked
-  test_tmux link-window -s t:0 -t linked:
-  test_tmux new-session -d -s linked-current
-  test_tmux link-window -s t:0 -t linked-current:
-  test_tmux new-session -d -s all-view
-  test_tmux new-session -d -s current-view
-  test_tmux new-session -d -s detached-all
-  test_tmux set-option -t all-view @tama_summary_scope all
-  test_tmux set-option -t linked @tama_summary_scope all
-  test_tmux set-option -t detached-all @tama_summary_scope all
+  tmux_test_server_run new-session -d -s linked
+  tmux_test_server_run link-window -s t:0 -t linked:
+  tmux_test_server_run new-session -d -s linked-current
+  tmux_test_server_run link-window -s t:0 -t linked-current:
+  tmux_test_server_run new-session -d -s all-view
+  tmux_test_server_run new-session -d -s current-view
+  tmux_test_server_run new-session -d -s detached-all
+  tmux_test_server_run set-option -t all-view @tama_summary_scope all
+  tmux_test_server_run set-option -t linked @tama_summary_scope all
+  tmux_test_server_run set-option -t detached-all @tama_summary_scope all
   attach_client linked linked_client
   attach_client linked-current linked_current_client
   attach_client all-view all_client
@@ -107,18 +115,15 @@ session_id() {
 @test "gc refreshes each affected window once when clearing multiple panes" {
   local first second third first_client other_client
   first="$(tama_pane_of t:0)"
-  test_tmux split-window -d -t t:0
-  second="$(test_tmux list-panes -t t:0 -F '#{pane_id}' | tail -n 1)"
-  test_tmux new-session -d -s other
+  tmux_test_server_run split-window -d -t t:0
+  second="$(tmux_test_server_run list-panes -t t:0 -F '#{pane_id}' | tail -n 1)"
+  tmux_test_server_run new-session -d -s other
   third="$(tama_pane_of other:0)"
   attach_client t first_client
   attach_client other other_client
-  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$first"
-  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$second"
-  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$third"
-  test_tmux set-option -p -t "$first" @tama_pane_cmd definitely-stale
-  test_tmux set-option -p -t "$second" @tama_pane_cmd definitely-stale
-  test_tmux set-option -p -t "$third" @tama_pane_cmd definitely-stale
+  arrange_stale_agent_pane "$first"
+  arrange_stale_agent_pane "$second"
+  arrange_stale_agent_pane "$third"
 
   tama_log_tmux_calls
   run "$PLUGIN_ROOT/bin/tama" gc --all
@@ -133,17 +138,16 @@ session_id() {
 @test "gc refreshes linked current summaries and unrelated all summaries" {
   local pane window linked_client all_client current_client
   pane="$(tama_pane_of t:0)"
-  window="$(test_tmux display-message -p -t "$pane" '#{window_id}')"
-  test_tmux new-session -d -s linked
-  test_tmux link-window -s t:0 -t linked:
-  test_tmux new-session -d -s all-view
-  test_tmux new-session -d -s current-view
-  test_tmux set-option -t all-view @tama_summary_scope all
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
+  tmux_test_server_run new-session -d -s linked
+  tmux_test_server_run link-window -s t:0 -t linked:
+  tmux_test_server_run new-session -d -s all-view
+  tmux_test_server_run new-session -d -s current-view
+  tmux_test_server_run set-option -t all-view @tama_summary_scope all
   attach_client linked linked_client
   attach_client all-view all_client
   attach_client current-view current_client
-  "$PLUGIN_ROOT/bin/tama" state waiting --pane "$pane"
-  test_tmux set-option -p -t "$pane" @tama_pane_cmd definitely-stale
+  arrange_stale_agent_pane "$pane"
 
   tama_log_tmux_calls
   run "$PLUGIN_ROOT/bin/tama" gc --window "$window"

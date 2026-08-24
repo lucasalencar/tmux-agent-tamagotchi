@@ -9,12 +9,12 @@ load helper
 
 setup() {
   tama_start_server
-  PANE="$(test_tmux list-panes -t t -F '#{pane_id}' | head -1)"
-  WINDOW="$(test_tmux display-message -p -t "$PANE" '#{window_id}')"
+  PANE="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | head -1)"
+  WINDOW="$(tmux_test_server_run display-message -p -t "$PANE" '#{window_id}')"
 }
 
 teardown() {
-  tama_kill_server
+  tmux_test_server_stop
 }
 
 @test "reporting a state records it on the pane, with the snapshot around it" {
@@ -24,12 +24,12 @@ teardown() {
   # Resolved, because tmux reports the pane's real path and /tmp is a symlink on
   # macOS.
   agent_cwd="$(cd -P /tmp && pwd)"
-  test_tmux new-window -d -t t: -c "$agent_cwd" 'sleep 47'
+  tmux_test_server_run new-window -d -t t: -c "$agent_cwd" 'sleep 47'
   # Polled, because the pane reports the shell tmux started it with until the
   # command it was given has replaced it.
   local waited=0
   while [ -z "${agent_pane:-}" ] && [ "$waited" -lt 50 ]; do
-    agent_pane="$(test_tmux list-panes -a -F '#{pane_id} #{pane_current_command}' |
+    agent_pane="$(tmux_test_server_run list-panes -a -F '#{pane_id} #{pane_current_command}' |
       awk '$2 == "sleep" { print $1 }')"
     [ -n "$agent_pane" ] || sleep 0.1
     waited=$((waited + 1))
@@ -48,9 +48,9 @@ teardown() {
 }
 
 @test "with no --pane the state lands on the pane the hook is running in" {
-  test_tmux split-window -d -t t
+  tmux_test_server_run split-window -d -t t
   local other
-  other="$(test_tmux list-panes -t t -F '#{pane_id}' | tail -1)"
+  other="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | tail -1)"
 
   TMUX_PANE="$other" run "$PLUGIN_ROOT/bin/tama" state running
   assert_success
@@ -60,9 +60,9 @@ teardown() {
 }
 
 @test "--pane overrides the pane the hook is running in" {
-  test_tmux split-window -d -t t
+  tmux_test_server_run split-window -d -t t
   local other
-  other="$(test_tmux list-panes -t t -F '#{pane_id}' | tail -1)"
+  other="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | tail -1)"
 
   TMUX_PANE="$other" run "$PLUGIN_ROOT/bin/tama" state running --pane "$PANE"
   assert_success
@@ -192,9 +192,9 @@ teardown() {
   assert_pane_option "$PANE" subagents sub-1
 
   # And on a pane that never tracked one at all.
-  test_tmux split-window -d -t t
+  tmux_test_server_run split-window -d -t t
   local other
-  other="$(test_tmux list-panes -t t -F '#{pane_id}' | tail -1)"
+  other="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | tail -1)"
   run "$PLUGIN_ROOT/bin/tama" state subagent-stop who --pane "$other"
   assert_success
   assert_pane_option_unset "$other" subagents
@@ -263,7 +263,7 @@ teardown() {
   # learns to write but forgets to clear fails here without anybody remembering
   # to add it.
   local remaining
-  remaining="$(test_tmux show -p -t "$PANE" | grep -c '^@tama_' || true)"
+  remaining="$(tmux_test_server_run show -p -t "$PANE" | grep -c '^@tama_' || true)"
   assert_equal "$remaining" 0
 }
 
@@ -411,7 +411,7 @@ teardown() {
   [ "$(grep -cx set "$TAMA_FAKE_TMUX_LOG")" -ge 3 ]
 
   local list
-  list="$(test_tmux show -p -t "$PANE" -v @tama_pane_subagents)"
+  list="$(tmux_test_server_run show -p -t "$PANE" -v @tama_pane_subagents)"
   assert_contains "$list" sub-a 'the subagent list'
   assert_contains "$list" sub-b 'the subagent list'
 }
@@ -448,7 +448,7 @@ teardown() {
   [ -e "$cleared" ]
 
   local remaining
-  remaining="$(test_tmux show -p -t "$PANE" | grep -c '^@tama_' || true)"
+  remaining="$(tmux_test_server_run show -p -t "$PANE" | grep -c '^@tama_' || true)"
   assert_equal "$remaining" 0
 
   # And the consequence a user would have seen: the next agent in this pane
@@ -484,7 +484,7 @@ teardown() {
   [ -e "$cleared" ]
 
   local remaining
-  remaining="$(test_tmux show -p -t "$PANE" | grep -c '^@tama_' || true)"
+  remaining="$(tmux_test_server_run show -p -t "$PANE" | grep -c '^@tama_' || true)"
   assert_equal "$remaining" 0
 }
 
@@ -508,7 +508,7 @@ teardown() {
   [ -e "$cleared" ]
   [ "$(grep -cx set "$TAMA_FAKE_TMUX_LOG")" -ge 3 ]
   local remaining
-  remaining="$(test_tmux show -p -t "$PANE" | grep -c '^@tama_' || true)"
+  remaining="$(tmux_test_server_run show -p -t "$PANE" | grep -c '^@tama_' || true)"
   assert_equal "$remaining" 0
 }
 
@@ -531,7 +531,7 @@ teardown() {
   assert_success
 
   assert_pane_option "$PANE" agent 'Claude;'
-  assert_pane_option "$PANE" cwd "$(test_tmux display-message -p -t "$PANE" '#{pane_current_path}')"
+  assert_pane_option "$PANE" cwd "$(tmux_test_server_run display-message -p -t "$PANE" '#{pane_current_path}')"
 
   # And the pane still recognises itself, so the hot path stays short-circuited.
   tama_log_tmux_calls
@@ -548,6 +548,8 @@ teardown() {
   # leave the pane unable to recognise itself, and every later report would write and
   # wake every client for nothing.
   local name
+  tama_arrange_sleeping_pane "$PANE" "$BATS_TEST_TMPDIR"
+
   for name in 'Claude;;' 'Claude;;;' ';' 'Claude\;' 'Cla;ude;'; do
     run "$PLUGIN_ROOT/bin/tama" state clear --pane "$PANE"
     assert_success
