@@ -61,18 +61,25 @@ work by declaring a subagent finished without reliable evidence.
 
 A per-**tmux window** mark meaning *this tmux window wants your attention*, rendered next to
 the tmux window name. Raised when an unseen event requires attention: an agent pane enters
-`waiting` or `error`, or raises a **notification**. Only the user clears it, by bringing the
-tmux window into view — either by selecting it directly or by switching to a session where it
-is current. An agent moving on to another state does not clear it, because the flag records
-that something happened while nobody was looking. Distinct from a notification: the flag is
-inside tmux and persists until seen; a notification is an OS-level banner.
+`waiting` or `error`, or raises a **notification**. It clears when the tmux window becomes
+current through direct selection or a session change; navigation is treated as evidence that
+the attention was seen, even when caused by automation. An agent moving on to another state
+does not clear it, because the flag records that something happened while nobody was looking.
+Distinct from a notification: the flag is inside tmux and persists until acknowledged; a
+notification is an OS-level banner.
+
+## Attention acknowledgement
+
+Treating a **tmux window**'s request for attention as handled because navigation made that
+tmux window current. It clears the **flag** and dismisses the pending **notification**.
+_Avoid_: Seen, focus, notification dismissal
 
 ## Notification
 
 An OS-level banner raised when an agent needs the user. Grouped per **tmux window**, so a
-newer notification for a tmux window replaces the older one. Bringing that tmux window into
-view dismisses its pending notification. Suppressed when the user is demonstrably already
-looking at that tmux window.
+newer notification for a tmux window replaces the older one. The same navigation that clears
+the tmux window's **flag** dismisses its pending notification. Suppressed when the user is
+demonstrably already looking at that tmux window.
 
 ## Label
 
