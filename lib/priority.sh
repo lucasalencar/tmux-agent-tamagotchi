@@ -38,19 +38,24 @@ tama_priority_window_is_eligible() { # <window priority value>
   [ "$TAMA_PRIORITY_WINDOW_COUNT" -eq 0 ] || [ -n "$1" ]
 }
 
-# Reads and normalizes a valid percentage into TAMA_PRIORITY_MAX_PERCENT.
-tama_priority_max_percent_read() {
-  local configured normalized
-  configured="$(tama_opt tama_priority_max_percent "$TAMA_PRIORITY_MAX_PERCENT_DEFAULT")"
-  case "$configured" in
+# Normalizes a valid percentage into TAMA_PRIORITY_MAX_PERCENT.
+tama_priority_max_percent_normalize() { # <configured value>
+  local normalized
+  case "$1" in
     *[!0-9]* | '') return 1 ;;
   esac
-  normalized="$configured"
+  normalized="$1"
   while [ "${normalized#0}" != "$normalized" ]; do normalized="${normalized#0}"; done
   [ -n "$normalized" ] || normalized=0
   case "$normalized" in ????*) return 1 ;; esac
   [ "$normalized" -ge 1 ] && [ "$normalized" -le 100 ] || return 1
   TAMA_PRIORITY_MAX_PERCENT="$normalized"
+}
+
+tama_priority_max_percent_read() {
+  local configured
+  configured="$(tama_opt tama_priority_max_percent "$TAMA_PRIORITY_MAX_PERCENT_DEFAULT")"
+  tama_priority_max_percent_normalize "$configured"
 }
 
 tama_priority_permitted_count() {
@@ -88,7 +93,10 @@ tama_priority_target_resolve() { # <target>
       ;;
   esac
   case "$target" in
-    @* | [0-9]* | +* | -*) tama_window_read "$original"; return ;;
+    @* | [0-9]* | +* | -* | '^' | '$' | '!' | '{'*'}')
+      tama_window_read "$original"
+      return
+      ;;
     =*) exact_only='yes'; target="${target#=}"
         [ -n "$target" ] || return 1 ;;
     *[!0-9]*) ;;

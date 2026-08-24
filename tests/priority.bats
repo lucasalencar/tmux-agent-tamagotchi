@@ -11,6 +11,7 @@ setup() {
 }
 
 teardown() {
+  tama_detach_client
   tmux_test_server_stop
 }
 
@@ -123,6 +124,21 @@ teardown() {
     @tama_window_notification_pending)" ''
 }
 
+@test "selective policy preserves normal attention with zero Priority tmux windows" {
+  tama_fake_backend_env
+  tama_use_fake_backend
+  tmux_test_server_run set -g @tama_flag_policy selective
+  local window pane
+  window="$(tama_window_id t:0)"
+  pane="$(tama_pane_of "$window")"
+
+  run "$PLUGIN_ROOT/bin/tama" notify Codex done --pane "$pane"
+  assert_success
+
+  assert_flagged "$window"
+  assert_backend_called notify
+}
+
 @test "invalid and empty Flag policies fall back to ambient at runtime" {
   tmux_test_server_run new-window -d -t t:
   local primary secondary pane configured
@@ -192,6 +208,22 @@ teardown() {
   assert_equal "$(tmux_test_server_run show -wqv -t "$window" @tama_window_priority)" ''
 }
 
+@test "standard tmux start and end target tokens are delegated" {
+  tmux_test_server_run set -g automatic-rename off
+  tmux_test_server_run new-window -d -t t: -n middle
+  tmux_test_server_run new-window -d -t t: -n end
+
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window 't:^'
+  assert_success
+  assert_equal "$(tmux_test_server_run show -wqv -t t:0 @tama_window_priority)" on
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window 't:^'
+  assert_success
+
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window 't:$'
+  assert_success
+  assert_equal "$(tmux_test_server_run show -wqv -t t:2 @tama_window_priority)" on
+}
+
 @test "custom limits are read at runtime and linked tmux windows count once" {
   tmux_test_server_run new-window -d -t t:
   tmux_test_server_run new-window -d -t t:
@@ -211,12 +243,16 @@ teardown() {
 }
 
 @test "maximum percentages with leading zeros are decimal" {
+  tmux_test_server_run new-window -d -t t:
   tmux_test_server_run set -g @tama_priority_max_percent 08
 
   run "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:0
-
   assert_success
   assert_equal "$(tmux_test_server_run show -wqv -t t:0 @tama_window_priority)" on
+
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:1
+  assert_status 1
+  assert_equal "$(tmux_test_server_run show -wqv -t t:1 @tama_window_priority)" ''
 }
 
 @test "invalid and empty maximum percentages fail open" {
@@ -381,6 +417,24 @@ teardown() {
 
   assert_flagged "$primary"
   assert_backend_called notify
+}
+
+@test "Priority eligibility does not override focus and observation suppression" {
+  tama_fake_backend_env
+  tama_use_fake_backend
+  export TAMA_FAKE_FOCUSED=0
+  tama_attach_client_without_attachment_hooks t
+  local window pane
+  window="$(tama_window_id t:0)"
+  pane="$(tama_pane_of "$window")"
+  run "$PLUGIN_ROOT/bin/tama" toggle-priority --window "$window"
+  assert_success
+
+  run "$PLUGIN_ROOT/bin/tama" notify Codex done --pane "$pane"
+  assert_success
+
+  assert_not_flagged "$window"
+  refute_backend_called notify
 }
 
 @test "Priority mode leaves stable list records and status summaries unchanged" {

@@ -277,7 +277,7 @@ doctor_priority_configuration() {
 
   local maximum policy
   maximum="$(tama_opt tama_priority_max_percent "$TAMA_PRIORITY_MAX_PERCENT_DEFAULT")"
-  if tama_priority_max_percent_read; then
+  if tama_priority_max_percent_normalize "$maximum"; then
     doctor_ok "@tama_priority_max_percent is $TAMA_PRIORITY_MAX_PERCENT%"
   else
     doctor_fail "@tama_priority_max_percent is '$maximum'; expected an integer from 1 through 100"
