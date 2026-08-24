@@ -332,8 +332,8 @@ FOCUS
   require_darwin
   use_macos_backend
   # tmux's half of the AND says the user is looking: they are attached, at this window.
-  # This test is about focus suppression, so leave client-attached to its coverage in
-  # gc.bats; its asynchronous on-select would race the mark asserted below.
+  # This test is about Notification focus suppression, so leave client-attached to its
+  # coverage in gc.bats; the independent Flag still follows tmux observation.
   tama_attach_client_without_attachment_hooks t
   local window
   window="$(tama_window_id t:0)"
@@ -348,7 +348,7 @@ FOCUS
 
   wait_for_notifier
   assert_notifier_flag message 'needed'
-  assert_flagged "$window"
+  assert_not_flagged "$window"
 }
 
 @test "focus steals a client from another session when no window is showing this one" {

@@ -264,7 +264,42 @@ doctor_status_line_option() { # <option> <what it draws>
   local value
   value="$(doctor_status_line_value "$1")"
   doctor_status_line_verdict "$1" "$value" "$2"
+  if doctor_status_line_mentions "$value" '@tama_priority'; then
+    doctor_ok "$1 draws the Priority marker"
+  else
+    doctor_warn "$1 does not mention @tama_priority: no Priority marker on $2"
+  fi
   doctor_status_line_scope "$1" "$value"
+}
+
+doctor_priority_configuration() {
+  doctor_section 'Priority'
+
+  local maximum policy
+  maximum="$(tama_opt tama_priority_max_percent 80)"
+  case "$maximum" in
+    *[!0-9]* | '')
+      doctor_fail "@tama_priority_max_percent is '$maximum'; expected an integer from 1 through 100"
+      doctor_more 'Priority toggles have no limit until the percentage is valid.'
+      ;;
+    *)
+      if [ "$maximum" -ge 1 ] 2>/dev/null && [ "$maximum" -le 100 ] 2>/dev/null; then
+        doctor_ok "@tama_priority_max_percent is $maximum%"
+      else
+        doctor_fail "@tama_priority_max_percent is '$maximum'; expected an integer from 1 through 100"
+        doctor_more 'Priority toggles have no limit until the percentage is valid.'
+      fi
+      ;;
+  esac
+
+  policy="$(tama_opt tama_flag_policy ambient)"
+  case "$policy" in
+    ambient | selective) doctor_ok "@tama_flag_policy is $policy" ;;
+    *)
+      doctor_fail "@tama_flag_policy is '$policy'; expected ambient or selective"
+      doctor_more 'Automatic Flags use ambient policy until the value is valid.'
+      ;;
+  esac
 }
 
 # The value a status line will really be drawn from, rather than the one the global
@@ -1379,8 +1414,8 @@ doctor_setup() {
   doctor_more "tmux's own zoom and bell markers, without the space it pads with, since"
   doctor_more 'the icons bring their own:'
   doctor_more ''
-  doctor_more "  set -g window-status-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'"
-  doctor_more "  set -g window-status-current-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'"
+  doctor_more "  set -g window-status-format '#I:#{E:@tama_priority}#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'"
+  doctor_more "  set -g window-status-current-format '#I:#{E:@tama_priority}#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'"
   doctor_more ''
   doctor_more 'A window with no agent in it renders as just its name — the icons are'
   doctor_more 'empty because there is nothing to draw. That is correct, and it is the'
@@ -1481,6 +1516,7 @@ main() {
   doctor_plugin
   doctor_status_line
   doctor_status_summary_scope
+  doctor_priority_configuration
   doctor_notifications
   doctor_focus
   doctor_claude_code

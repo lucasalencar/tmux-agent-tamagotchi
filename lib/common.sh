@@ -223,6 +223,11 @@ _tama_require_lib "$_tama_lib_dir/window.sh"
 # shellcheck source=window.sh
 . "$_tama_lib_dir/window.sh"
 
+_tama_require_lib "$_tama_lib_dir/priority.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=priority.sh
+. "$_tama_lib_dir/priority.sh"
+
 _tama_require_lib "$_tama_lib_dir/stale.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=stale.sh

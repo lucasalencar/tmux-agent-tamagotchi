@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#
+#   tama toggle-priority --window <target>
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local target=''
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --window)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || die_usage '--window needs a window target'
+        [ -z "$target" ] || die_usage 'toggle-priority accepts --window once'
+        target="$2"
+        shift 2
+        ;;
+      -*) die_usage "unknown option: $1" ;;
+      *) die_usage "toggle-priority takes no positional arguments, got: $1" ;;
+    esac
+  done
+
+  [ -n "$target" ] || die_usage 'toggle-priority needs --window <target>'
+
+  if tama_priority_bare_name_is_ambiguous "$target" || ! tama_window_read "$target"; then
+    printf 'tama: no unique tmux window matches: %s\n' "$target" >&2
+    return 1
+  fi
+
+  if [ -n "$TAMA_WINDOW_PRIORITY" ]; then
+    tmux_run set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_PRIORITY_OPTION" || return 1
+  else
+    tama_priority_counts
+    if tama_priority_limit &&
+      [ $((TAMA_PRIORITY_SELECTED_COUNT + 1)) -gt "$TAMA_PRIORITY_PERMITTED_COUNT" ]; then
+      printf 'tama: cannot prioritize %s: %s of %s tmux windows would be Priority; limit is %s%% (%s permitted). If everything is priority, nothing is priority.\n' \
+        "$TAMA_WINDOW_ID" "$((TAMA_PRIORITY_SELECTED_COUNT + 1))" \
+        "$TAMA_PRIORITY_WINDOW_COUNT" "$TAMA_PRIORITY_MAX_PERCENT" \
+        "$TAMA_PRIORITY_PERMITTED_COUNT" >&2
+      return 1
+    fi
+    tmux_run set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_PRIORITY_OPTION" on || return 1
+  fi
+
+  tmux_run refresh-client -S >/dev/null 2>&1 || true
+}
+
+main "$@"

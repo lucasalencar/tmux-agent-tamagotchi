@@ -8,6 +8,7 @@ TAMA_WINDOW_FLAG_OPTION='@tama_window_flag'
 TAMA_WINDOW_NOTIFY_GROUP_OPTION='@tama_window_notify_group'
 # shellcheck disable=SC2034  # read by notification writers
 TAMA_WINDOW_NOTIFICATION_PENDING_OPTION='@tama_window_notification_pending'
+TAMA_WINDOW_PRIORITY_OPTION='@tama_window_priority'
 
 # Resolve activity against the target's session and write by immutable window id;
 # indexes can collide across sessions and move under `renumber-windows`.
@@ -19,6 +20,7 @@ TAMA_WINDOW_READ_FIELDS="#{window_id}
 #{pane_active}
 #{$TAMA_WINDOW_FLAG_OPTION}
 #{$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION}
+#{$TAMA_WINDOW_PRIORITY_OPTION}
 ."
 TAMA_WINDOW_READ_COUNT=9
 
@@ -36,6 +38,7 @@ tama_window_read() { # <target>
   TAMA_WINDOW_PANE_IS_ACTIVE=''
   TAMA_WINDOW_FLAG=''
   TAMA_WINDOW_NOTIFICATION_PENDING=''
+  TAMA_WINDOW_PRIORITY=''
   while IFS= read -r field; do
     lines=$((lines + 1))
     case "$lines" in
@@ -47,6 +50,7 @@ tama_window_read() { # <target>
       6) TAMA_WINDOW_PANE_IS_ACTIVE="$field" ;;
       7) TAMA_WINDOW_FLAG="$field" ;;
       8) TAMA_WINDOW_NOTIFICATION_PENDING="$field" ;;
+      9) TAMA_WINDOW_PRIORITY="$field" ;;
     esac
   done <<EOF
 $raw
@@ -89,6 +93,15 @@ tama_window_user_is_looking() {
 # an earlier flag between identical reports.
 tama_flag_raise() { # <target>
   tama_window_read "$1" || return 0
+  tama_window_user_is_looking && return 0
+  tama_flag_set
+}
+
+# Automatic requests obey Priority policy; the public flag command deliberately
+# continues to call tama_flag_raise as an explicit override.
+tama_flag_raise_automatic() { # <target>
+  tama_window_read "$1" || return 0
+  tama_priority_flag_is_eligible || return 0
   tama_window_user_is_looking && return 0
   tama_flag_set
 }

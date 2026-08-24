@@ -25,8 +25,8 @@ teardown() {
 healthy_server() {
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
-  tmux_test_server_run set -g window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
-  tmux_test_server_run set -g window-status-current-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
+  tmux_test_server_run set -g window-status-format '#I:#{E:@tama_priority}#W#{E:@tama_icons}#{E:@tama_flag}'
+  tmux_test_server_run set -g window-status-current-format '#I:#{E:@tama_priority}#W#{E:@tama_icons}#{E:@tama_flag}'
   tama_use_fake_backend
 }
 
@@ -1197,6 +1197,31 @@ PROVIDER
     "$readme" | sort -u)"
   [ -n "$printed" ]
   assert_equal "$printed" "$documented"
+}
+
+@test "invalid Priority configuration is a failing diagnostic with safe fallbacks" {
+  healthy_server
+  tmux_test_server_run set -g @tama_priority_max_percent 0
+  tmux_test_server_run set -g @tama_flag_policy quiet
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+
+  assert_status 1
+  assert_output_contains "@tama_priority_max_percent is '0'; expected an integer from 1 through 100"
+  assert_output_contains "@tama_flag_policy is 'quiet'; expected ambient or selective"
+  assert_output_contains 'Priority toggles have no limit until the percentage is valid.'
+  assert_output_contains 'Automatic Flags use ambient policy until the value is valid.'
+}
+
+@test "doctor reports a missing Priority marker in either window status format" {
+  healthy_server
+  tmux_test_server_run set -g window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+
+  assert_success
+  assert_output_contains 'window-status-format does not mention @tama_priority'
+  assert_output_contains 'window-status-current-format draws the Priority marker'
 }
 
 # --- the contract ------------------------------------------------------------------

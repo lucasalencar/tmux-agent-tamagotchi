@@ -120,12 +120,21 @@ main() {
   # reason the icon path references `@tama_bin`.
   tmux_run set -g @tama_flag '#{?@tama_window_flag,#{E:@tama_flag_text},}'
 
+  # Priority is a classification separate from the attention flag. Its default is
+  # itself a format so changing the icon preset is visible on the next redraw.
+  # Seed only when absent: an explicitly empty icon is how a user hides it.
+  if ! tmux_run show -gv @tama_priority_icon >/dev/null 2>&1; then
+    tmux_run set -g @tama_priority_icon \
+      '#{?#{==:#{@tama_icon_set},pets}, ⭐,#{?#{==:#{@tama_icon_set},ascii}, *, ★}}'
+  fi
+  tmux_run set -g @tama_priority '#{?@tama_window_priority,#{E:@tama_priority_icon},}'
+
   # choose-tree offers only one format for all three row types. Keep that complete
   # format here so users do not have to copy tmux's implementation just to decorate
   # window rows. The nested conditional is understood by every supported tmux version.
   choose_tree_format='#{?pane_format,#{pane_current_command} "#{pane_title}",'
   choose_tree_format="${choose_tree_format}#{?window_format,"
-  choose_tree_format="${choose_tree_format}#{window_name}#{E:@tama_icons}#{E:@tama_flag}"
+  choose_tree_format="${choose_tree_format}#{E:@tama_priority}#{window_name}#{E:@tama_icons}#{E:@tama_flag}"
   choose_tree_format="${choose_tree_format}#{window_flags} (#{window_panes} panes)"
   choose_tree_format="${choose_tree_format}#{?#{==:#{window_panes},1}, \"#{pane_title}\",},"
   choose_tree_format="${choose_tree_format}#{session_windows} windows"
@@ -141,7 +150,7 @@ main() {
   # lib/options.sh draws for every other option; this is the one that cannot be drawn
   # at read time, since tmux is doing the reading.
   if ! tmux_run show -gv @tama_flag_text >/dev/null 2>&1; then
-    tmux_run set -g @tama_flag_text ' *'
+    tmux_run set -g @tama_flag_text ' !'
   fi
 
   wire_hooks

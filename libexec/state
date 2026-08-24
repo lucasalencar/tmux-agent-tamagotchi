@@ -60,7 +60,7 @@ report() {
   # and `idle` are not an interruption, and it is the hot path besides: this costs a
   # round trip, which is exactly why it is not on it.
   case "$state_main" in
-    waiting | error) tama_flag_raise "$TAMA_PANE_ID" ;;
+    waiting | error) tama_flag_raise_automatic "$TAMA_PANE_ID" ;;
   esac
 }
 

@@ -101,7 +101,7 @@ boot_demo() {
   # flag needs no job to expand, unlike the icons, so display-message does see it.
   local rendered
   rendered="$(tmux_test_server_run display-message -p -t "$pane" '#{E:window-status-format}')"
-  assert_equal "$rendered" "$plain *"
+  assert_equal "$rendered" "$plain !"
 
   # And the user arriving clears it, which is the only thing that does.
   run "$PLUGIN_ROOT/bin/tama" on-select --window \

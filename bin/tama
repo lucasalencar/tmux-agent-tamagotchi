@@ -77,6 +77,8 @@ Commands:
   state subagent-reconcile [<id>…]
                         Replace delegated runs from an authoritative snapshot.
   icons <window_id>     Print pane-state icons in pane order.
+  toggle-priority --window <target>
+                        Toggle Priority for one explicit tmux window.
   flag [target]         Mark a window. No-op for the current window.
   unflag [target]       Clear a window mark.
   notify <agent> <msg>  Mark the window and send a desktop notification.
@@ -99,8 +101,8 @@ Common option:
 
 Status line:
 
-  set -g window-status-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
-  set -g window-status-current-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
+  set -g window-status-format '#I:#{E:@tama_priority}#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
+  set -g window-status-current-format '#I:#{E:@tama_priority}#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
 
 Status summary:
 
@@ -132,6 +134,9 @@ Configuration (defaults shown):
   set -g @tama_summary_separator ' '
   set -g @tama_summary_suffix ''
   set -g @tama_notifications on
+  set -g @tama_flag_policy ambient # or 'selective'
+  set -g @tama_priority_max_percent 80
+  set -g @tama_priority_icon '★'  # preset-dependent; empty hides it
   set -g @tama_backend auto        # auto, macos, libnotify, none, or absolute path
   set -g @tama_title_format '$TAMA_NOTIFY_TITLE_DEFAULT'
   set -g @tama_group_format '$TAMA_NOTIFY_GROUP_DEFAULT'
@@ -160,6 +165,7 @@ Runtime contract:
   - No \$TMUX: commands exit 0 without output.
   - Usage error: exit 2; diagnostic on stderr.
   - Operational error: exit 0 without output.
+  - A rejected/invalid toggle-priority target exits 1 with a diagnostic.
   - doctor: exit 1 when checks fail; works outside tmux.
   - setup: reports configuration failures; works outside tmux.
   - focus-window: works outside tmux.

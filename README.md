@@ -8,6 +8,7 @@ that need attention. You can work in another window without repeatedly checking 
 The plugin:
 
 - Shows one status icon per agent pane.
+- Marks user-selected tmux windows as Priority.
 - Marks windows that need attention.
 - Sends desktop notifications when an agent needs input or finishes.
 - Opens the correct tmux pane when a supported notification is clicked.
@@ -61,23 +62,60 @@ anything onto `$PATH` or write outside its directory.
 
 ## Configure the status line
 
-The plugin exports four tmux formats:
+The plugin exports five tmux formats:
 
 | Format | Output |
 | --- | --- |
+| `#{E:@tama_priority}` | Priority marker for the tmux window |
 | `#{E:@tama_icons}` | Agent state icons for the window |
 | `#{E:@tama_flag}` | Persistent attention mark |
 | `#{E:@tama_status_summary}` | Agent-state counts for the session's selected scope |
 | `#{E:@tama_choose_tree_format}` | Session, window and pane rows for `choose-tree` |
 
-Add both formats to the regular and current-window status lines:
+Add the Priority, State, and Flag formats to the regular and current-window status lines:
 
 ```tmux
-set -g window-status-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
-set -g window-status-current-format '#I:#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
+set -g window-status-format '#I:#{E:@tama_priority}#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
+set -g window-status-current-format '#I:#{E:@tama_priority}#W#{?window_flags,#{window_flags},}#{E:@tama_icons}#{E:@tama_flag}'
 ```
 
 A window without an agent has no icon or additional padding.
+
+### Priority mode
+
+Toggle Priority only with an explicit tmux window target:
+
+```sh
+"$(tmux show -gqv @tama_bin)" toggle-priority --window '@3'
+```
+
+With no Priority tmux windows, attention works as before. The first Priority activates
+Priority mode; removing the last one deactivates it. While active, Notifications are
+limited to Priority tmux windows. Automatic Flags remain ambient by default, or can be
+made selective independently:
+
+```tmux
+set -g @tama_flag_policy selective
+```
+
+The standalone `flag` command remains an explicit override. Changing Priority never
+clears or replays existing Flags or Notifications, and Priority survives navigation and
+State changes for the lifetime of the tmux window.
+
+By default, at most 80% of the server's unique tmux windows may have Priority, with at
+least one always allowed. Linked windows count once. Set `@tama_priority_max_percent`
+from 1 through 100; invalid or empty values fail open and are reported by `doctor`.
+
+This optional binding toggles the tmux window identified by the key event without the
+plugin reserving a key:
+
+```tmux
+bind-key P run-shell '#{q:@tama_bin} toggle-priority --window #{q:window_id}'
+```
+
+The default marker follows the icon preset: `★` for glyphs, `⭐` for pets, and `*` for
+ASCII. Override it with `@tama_priority_icon`, or set that option to an empty string to
+hide it. The Flag default is `!`, keeping classification and attention distinct.
 
 ### Window selector
 
@@ -220,14 +258,15 @@ option map.
 | --- | --- |
 | Icons | `@tama_icon_set`, `@tama_icon_running`, `@tama_icon_waiting`, `@tama_icon_background`, `@tama_icon_idle`, `@tama_icon_error`, `@tama_show_idle`, `@tama_show_background`, `@tama_icon_prefix`, `@tama_icon_separator`, `@tama_icon_suffix` |
 | Status summary | `@tama_summary_scope` (`current` or `all`, per session), `@tama_summary_show_running`, `@tama_summary_show_waiting`, `@tama_summary_show_idle`, `@tama_summary_show_background`, `@tama_summary_show_error`, `@tama_summary_show_unknown`, `@tama_icon_unknown`, `@tama_summary_prefix`, `@tama_summary_separator`, `@tama_summary_suffix` |
-| Window mark | `@tama_flag_text` |
+| Priority | `@tama_priority_icon`, `@tama_priority_max_percent` (1–100) |
+| Window mark | `@tama_flag_text`, `@tama_flag_policy` (`ambient` or `selective`) |
 | Notifications | `@tama_notifications`, `@tama_backend`, `@tama_title_format`, `@tama_group_format`, `@tama_label_command` |
 | Focus suppression | `@tama_suppress_when_focused` |
 | Terminal | `@tama_terminal_app`, `@tama_terminal_bundle_id`, `@tama_terminal_notifier`, `@tama_notify_send` |
 | Capability overrides | `@tama_notify_command`, `@tama_dismiss_command`, `@tama_focused_command`, `@tama_focus_command` |
 | Stale state | `@tama_gc_shells` |
 | Lifecycle | `@tama_manage_hooks` |
-| Exported values | `@tama_bin`, `@tama_bin_dir`, `@tama_icons`, `@tama_status_summary`, `@tama_flag`, `@tama_choose_tree_format`, `@tama_pane_agent`, `@tama_pane_cwd`, `@tama_pane_label` |
+| Exported values | `@tama_bin`, `@tama_bin_dir`, `@tama_priority`, `@tama_icons`, `@tama_status_summary`, `@tama_flag`, `@tama_choose_tree_format`, `@tama_pane_agent`, `@tama_pane_cwd`, `@tama_pane_label` |
 
 ### Focus detection
 
@@ -277,6 +316,7 @@ The plugin does not install mouse bindings.
 | --- | --- |
 | `state` | Record an agent state or subagent event. |
 | `icons` | Render the icons for one window. |
+| `toggle-priority` | Toggle Priority for one explicit tmux window target. |
 | `flag` / `unflag` | Raise or clear a tmux window flag. |
 | `notify` / `dismiss` | Raise or dismiss a notification. |
 | `focus-window` | Bring a session's terminal window forward. |
@@ -301,6 +341,7 @@ Hook-facing commands follow these rules:
 - Outside tmux, they exit zero without output.
 - Usage errors exit `2` with a message on stderr.
 - Operational errors exit zero without interrupting an agent turn.
+- Invalid or rejected `toggle-priority` operations exit `1` with a diagnostic.
 
 `doctor` and `setup` report failures with a non-zero status. Both `setup` and `focus-window`
 run outside tmux: setup may configure an agent before tmux starts, while desktop notification
