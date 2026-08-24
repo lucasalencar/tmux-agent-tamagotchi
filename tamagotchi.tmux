@@ -127,7 +127,8 @@ main() {
     tmux_run set -g @tama_priority_icon \
       '#{?#{==:#{@tama_icon_set},pets}, ⭐,#{?#{==:#{@tama_icon_set},ascii}, *, ★}}'
   fi
-  tmux_run set -g @tama_priority '#{?@tama_window_priority,#{E:@tama_priority_icon},}'
+  tmux_run set -g @tama_priority \
+    "#{?${TAMA_WINDOW_PRIORITY_OPTION},#{E:@tama_priority_icon},}"
 
   # choose-tree offers only one format for all three row types. Keep that complete
   # format here so users do not have to copy tmux's implementation just to decorate

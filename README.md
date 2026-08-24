@@ -102,9 +102,11 @@ The standalone `flag` command remains an explicit override. Changing Priority ne
 clears or replays existing Flags or Notifications, and Priority survives navigation and
 State changes for the lifetime of the tmux window.
 
-By default, at most 80% of the server's unique tmux windows may have Priority, with at
-least one always allowed. Linked windows count once. Set `@tama_priority_max_percent`
-from 1 through 100; invalid or empty values fail open and are reported by `doctor`.
+By default, a new assignment is blocked when it would put more than 80% of the server's
+unique tmux windows in Priority, with at least one always allowed. Linked windows count
+once. Existing assignments are never removed when windows close or the setting changes,
+and rare concurrent toggles are not serialized. Set `@tama_priority_max_percent` from 1
+through 100; invalid or empty values fail open and are reported by `doctor`.
 
 This optional binding toggles the tmux window identified by the key event without the
 plugin reserving a key:

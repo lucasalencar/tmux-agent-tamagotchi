@@ -12,8 +12,8 @@ TAMA_PRIORITY_COUNTS_READY='no'
 tama_priority_counts() {
   local records record id value previous=''
   [ "$TAMA_PRIORITY_COUNTS_READY" = no ] || return 0
+  TAMA_TOTAL_WINDOW_COUNT=0
   TAMA_PRIORITY_WINDOW_COUNT=0
-  TAMA_PRIORITIZED_WINDOW_COUNT=0
   records="$(tmux_run list-windows -a -F "#{window_id} #{${TAMA_WINDOW_PRIORITY_OPTION}}" \
     2>/dev/null | LC_ALL=C sort -u)" || records=''
 
@@ -22,8 +22,8 @@ tama_priority_counts() {
     id="${record%% *}"
     [ "$id" != "$previous" ] || continue
     value="${record#* }"
-    TAMA_PRIORITY_WINDOW_COUNT=$((TAMA_PRIORITY_WINDOW_COUNT + 1))
-    [ -z "$value" ] || TAMA_PRIORITIZED_WINDOW_COUNT=$((TAMA_PRIORITIZED_WINDOW_COUNT + 1))
+    TAMA_TOTAL_WINDOW_COUNT=$((TAMA_TOTAL_WINDOW_COUNT + 1))
+    [ -z "$value" ] || TAMA_PRIORITY_WINDOW_COUNT=$((TAMA_PRIORITY_WINDOW_COUNT + 1))
     previous="$id"
   done <<EOF
 $records
@@ -35,7 +35,7 @@ EOF
 # Priority itself.
 tama_priority_window_is_eligible() {
   tama_priority_counts
-  [ "$TAMA_PRIORITIZED_WINDOW_COUNT" -eq 0 ] || [ -n "$TAMA_WINDOW_PRIORITY" ]
+  [ "$TAMA_PRIORITY_WINDOW_COUNT" -eq 0 ] || [ -n "$TAMA_WINDOW_PRIORITY" ]
 }
 
 # Reads and normalizes a valid percentage into TAMA_PRIORITY_MAX_PERCENT.
@@ -48,15 +48,16 @@ tama_priority_max_percent_read() {
   normalized="$configured"
   while [ "${normalized#0}" != "$normalized" ]; do normalized="${normalized#0}"; done
   [ -n "$normalized" ] || normalized=0
-  case "$normalized" in ???*) return 1 ;; esac
+  case "$normalized" in ????*) return 1 ;; esac
   [ "$normalized" -ge 1 ] && [ "$normalized" -le 100 ] || return 1
   TAMA_PRIORITY_MAX_PERCENT="$normalized"
 }
 
 tama_priority_permitted_count() {
+  tama_priority_counts
   tama_priority_max_percent_read || return 1
   TAMA_PRIORITY_PERMITTED_COUNT=$((
-    TAMA_PRIORITY_WINDOW_COUNT * TAMA_PRIORITY_MAX_PERCENT / 100
+    TAMA_TOTAL_WINDOW_COUNT * TAMA_PRIORITY_MAX_PERCENT / 100
   ))
   [ "$TAMA_PRIORITY_PERMITTED_COUNT" -ge 1 ] || TAMA_PRIORITY_PERMITTED_COUNT=1
 }
@@ -76,27 +77,40 @@ tama_priority_flag_is_eligible() {
 # tmux silently picks one window for an ambiguous bare name or prefix. The command
 # instead requires one unique tmux window.
 tama_priority_target_is_ambiguous() { # <target>
-  local records record id name seen='' exact=0 partial=0
+  local target="$1" session='' records record id name seen='' exact=0 partial=0
   case "$1" in
-    @* | *:*) return 1 ;;
+    @*) return 1 ;;
+    *:*)
+      session="${target%%:*}"
+      target="${target#*:}"
+      [ -n "$session" ] && [ -n "$target" ] || return 1
+      ;;
+  esac
+  case "$target" in
+    @*) return 1 ;;
     *[!0-9]*) ;;
     *) return 1 ;;
   esac
-  records="$(tmux_run list-windows -a -F '#{window_id} #{window_name}' 2>/dev/null)" || return 1
+  if [ -n "$session" ]; then
+    records="$(tmux_run list-windows -t "$session" -F '#{window_id} #{window_name}' \
+      2>/dev/null)" || return 1
+  else
+    records="$(tmux_run list-windows -a -F '#{window_id} #{window_name}' 2>/dev/null)" || return 1
+  fi
   while IFS= read -r record; do
     id="${record%% *}"
     name="${record#* }"
     case " $seen " in *" $id "*) continue ;; esac
     seen="$seen $id"
-    if [ "$name" = "$1" ]; then
+    if [ "$name" = "$target" ]; then
       exact=$((exact + 1))
     else
-      case "$1" in
+      case "$target" in
         *'*'* | *'?'* | *'['*)
           # shellcheck disable=SC2254  # the target deliberately carries a tmux glob
-          case "$name" in $1) partial=$((partial + 1)) ;; esac
+          case "$name" in $target) partial=$((partial + 1)) ;; esac
           ;;
-        *) [ "${name#"$1"}" = "$name" ] || partial=$((partial + 1)) ;;
+        *) [ "${name#"$target"}" = "$name" ] || partial=$((partial + 1)) ;;
       esac
     fi
   done <<EOF

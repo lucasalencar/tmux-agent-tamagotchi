@@ -1213,6 +1213,16 @@ PROVIDER
   assert_output_contains 'Automatic Flags use ambient policy until the value is valid.'
 }
 
+@test "a 100 percent Priority maximum is valid" {
+  healthy_server
+  tmux_test_server_run set -g @tama_priority_max_percent 100
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+
+  assert_success
+  assert_output_contains '@tama_priority_max_percent is 100%'
+}
+
 @test "doctor reports a missing Priority marker in either window status format" {
   healthy_server
   tmux_test_server_run set -g window-status-format '#I:#W#{E:@tama_icons}#{E:@tama_flag}'

@@ -98,6 +98,8 @@ teardown() {
 
   assert_flagged "$secondary"
   refute_backend_called notify
+  assert_equal "$(tmux_test_server_run show -wqv -t "$secondary" \
+    @tama_window_notification_pending)" ''
 }
 
 @test "selective policy suppresses both channels for a secondary event" {
@@ -117,6 +119,8 @@ teardown() {
 
   assert_not_flagged "$secondary"
   refute_backend_called notify
+  assert_equal "$(tmux_test_server_run show -wqv -t "$secondary" \
+    @tama_window_notification_pending)" ''
 }
 
 @test "Notifications-off leaves an eligible automatic Flag enabled" {
@@ -134,6 +138,8 @@ teardown() {
 
   assert_flagged "$window"
   refute_backend_called notify
+  assert_equal "$(tmux_test_server_run show -wqv -t "$window" \
+    @tama_window_notification_pending)" ''
 }
 
 @test "the direct flag command bypasses selective Priority policy" {
@@ -203,10 +209,14 @@ teardown() {
     assert_success || return 1
     run "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:1
     assert_success || return 1
+    assert_equal "$(tmux_test_server_run show -wqv -t t:0 @tama_window_priority)" on
+    assert_equal "$(tmux_test_server_run show -wqv -t t:1 @tama_window_priority)" on
     run "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:0
     assert_success || return 1
     run "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:1
     assert_success || return 1
+    assert_equal "$(tmux_test_server_run show -wqv -t t:0 @tama_window_priority)" ''
+    assert_equal "$(tmux_test_server_run show -wqv -t t:1 @tama_window_priority)" ''
   done
 }
 
@@ -240,6 +250,12 @@ teardown() {
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" toggle-priority --window sam
   assert_status 1
   assert_equal "$stderr" 'tama: no unique tmux window matches: sam'
+
+  tmux_test_server_run set -g automatic-rename off
+  tmux_test_server_run new-window -d -t t: -n same-other
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" toggle-priority --window t:sam
+  assert_status 1
+  assert_equal "$stderr" 'tama: no unique tmux window matches: t:sam'
 }
 
 @test "state waiting follows selective policy without changing State visibility" {
