@@ -95,7 +95,7 @@ review their source and trust the exact definitions before expecting them to run
         "hooks": [
           {
             "type": "command",
-            "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook codex SubagentStop >/dev/null 2>&1 || :",
+            "command": "\"$(tmux show -gqv @tama_bin 2>/dev/null)\" hook codex SubagentStop 2>/dev/null || :",
             "timeout": 10
           }
         ]

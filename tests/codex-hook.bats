@@ -118,9 +118,13 @@ for event, (matcher, timeout) in expected.items():
     group = data["hooks"][event][0]
     assert group.get("matcher") == matcher
     handler = group["hooks"][0]
+    if event == "SubagentStop":
+        command = f'"$(tmux show -gqv @tama_bin 2>/dev/null)" hook codex {event} 2>/dev/null || :'
+    else:
+        command = f'"$(tmux show -gqv @tama_bin 2>/dev/null)" hook codex {event} >/dev/null 2>&1 || :'
     assert handler == {
         "type": "command",
-        "command": f'"$(tmux show -gqv @tama_bin 2>/dev/null)" hook codex {event} >/dev/null 2>&1 || :',
+        "command": command,
         "timeout": timeout,
     }
 PY
@@ -169,6 +173,28 @@ PY
   assert_success
   [ -z "$output" ]
   [ -z "$stderr" ]
+}
+
+@test "the pasted SubagentStop recipe confirms termination to Codex" {
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+  tama_shim_tmux_on_path
+
+  local start stop
+  start="$(codex_recipe_command SubagentStart)"
+  stop="$(codex_recipe_command SubagentStop)"
+
+  TMUX_PANE="$PANE" run --separate-stderr sh -c "$start" \
+    <<<"$(payload SubagentStart ',"agent_id":"child_1"')"
+  assert_success
+  assert_pane_option "$PANE" subagents child_1
+
+  TMUX_PANE="$PANE" run --separate-stderr sh -c "$stop" \
+    <<<"$(payload SubagentStop ',"agent_id":"child_1"')"
+  assert_success
+  assert_equal "$output" '{}'
+  [ -z "$stderr" ]
+  assert_pane_option_unset "$PANE" subagents
 }
 
 @test "request_user_input waits and notifies with the first question" {
@@ -508,7 +534,7 @@ PY
   done
   hook SubagentStop "$(payload SubagentStop ',"agent_id":"two ids"')"
   assert_success
-  [ -z "$output" ]
+  assert_equal "$output" '{}'
   [ -z "$stderr" ]
   assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
   refute_backend_called notify

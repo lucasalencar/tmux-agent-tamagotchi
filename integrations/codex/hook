@@ -276,6 +276,7 @@ TAMA_CODEX_EVENT="${1:-}"
 codex_read_payload
 if [ "$TAMA_CODEX_PAYLOAD_TRUNCATED" = 'yes' ]; then
   [ "$TAMA_CODEX_EVENT" = 'SessionEnd' ] && codex_session_end
+  [ "$TAMA_CODEX_EVENT" = 'SubagentStop' ] && printf '{}'
   exit 0
 fi
 case "$TAMA_CODEX_EVENT" in
@@ -317,17 +318,17 @@ case "$TAMA_CODEX_EVENT" in
       codex_state_and_notify waiting "$TAMA_CODEX_TEXT"
     fi
     ;;
-  SubagentStart | SubagentStop)
+  SubagentStart)
     if codex_text_field agent_id top; then
-      case "$TAMA_CODEX_EVENT" in
-        SubagentStart)
-          "$TAMA_BIN" state subagent-start "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true
-          ;;
-        *)
-          "$TAMA_BIN" state subagent-stop "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true
-          ;;
-      esac
+      "$TAMA_BIN" state subagent-start "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true
     fi
+    ;;
+  SubagentStop)
+    if codex_text_field agent_id top; then
+      "$TAMA_BIN" state subagent-stop "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true
+    fi
+    # Codex requires a JSON response from every successful SubagentStop hook.
+    printf '{}'
     ;;
   Stop)
     if ! codex_text_field last_assistant_message top; then
