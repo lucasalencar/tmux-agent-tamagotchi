@@ -22,7 +22,7 @@ TAMA_WINDOW_READ_FIELDS="#{window_id}
 #{$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION}
 #{$TAMA_WINDOW_PRIORITY_OPTION}
 ."
-TAMA_WINDOW_READ_COUNT=9
+TAMA_WINDOW_READ_COUNT=10
 
 # Reads a pane or window target into TAMA_WINDOW_*; rejects incomplete records.
 # shellcheck disable=SC2034
