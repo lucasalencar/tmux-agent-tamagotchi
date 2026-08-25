@@ -14,7 +14,7 @@ The plugin:
 - Opens the correct tmux pane when a supported notification is clicked.
 
 ```text
-0:editor   1:api ●   2:tests ◐ *   3:docs ⚙   4:build ✕
+0:editor   1:api ●   2:★tests ◐ !   3:docs ⚙   4:build ✕
 ```
 
 Agents report their lifecycle through command hooks or native plugin APIs. The plugin does not
@@ -173,11 +173,11 @@ bind-key G run-shell '#{q:@tama_bin} summary-scope --session #{q:session_id} tog
 
 Select an icon preset with `@tama_icon_set`:
 
-| Preset | running | waiting | background | idle | error |
-| --- | --- | --- | --- | --- | --- |
-| Default (`glyphs`) | `●` | `◐` | `⚙` | `○` | `✕` |
-| ASCII (`ascii`) | `*` | `?` | `+` | `.` | `!` |
-| Pets (`pets`) | `🐥` | `🍼` | `🥚` | `😴` | `💀` |
+| Preset | Priority | running | waiting | background | idle | error | Flag |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Default (`glyphs`) | `★` | `●` | `◐` | `⚙` | `○` | `✕` | `!` |
+| ASCII (`ascii`) | `*` | `*` | `?` | `+` | `.` | `!` | `!` |
+| Pets (`pets`) | `⭐` | `🐥` | `🍼` | `🥚` | `😴` | `💀` | `!` |
 
 For example:
 
