@@ -3,7 +3,7 @@
 #   tama notify <agent_name> <message> [--pane <pane_id>]
 #
 # Agent messages remain opaque arguments; only user-authored titles are expanded as
-# tmux formats. Suppression is decided before any state is written (ADR-0004).
+# tmux formats. Each attention channel is gated before its state is written.
 
 set -o nounset
 
@@ -12,13 +12,27 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 deliver() { # <target> <agent_name> <message>
-  local target="$1" agent="$2" message="$3"
+  local target="$1" agent="$2" message="$3" flag='no' notification='no'
 
   tama_window_read "$target" || exit 0
 
-  # Before any write: a suppressed notification must leave no trace, or the mark it
-  # raised on the way to being dropped would outlive it.
-  tama_notify_suppressed && exit 0
+  # Flag and Notification retain independent Priority and observation policies.
+  if tama_automatic_flag_is_eligible; then
+    flag='yes'
+  fi
+  if tama_notify_enabled &&
+    tama_priority_window_is_eligible "$TAMA_WINDOW_PRIORITY" &&
+    ! tama_notify_suppressed; then
+    notification='yes'
+  fi
+
+  [ "$flag" = yes ] || [ "$notification" = yes ] || exit 0
+
+  # A Flag-only event needs no notification metadata or backend work.
+  if [ "$notification" = no ]; then
+    [ "$flag" = yes ] && tama_flag_set
+    exit 0
+  fi
 
   tama_notify_label
   tama_batch_reset
@@ -36,17 +50,12 @@ deliver() { # <target> <agent_name> <message>
     # empty string would answer yes and draw an empty pair of brackets.
     tama_batch_add set -puq -t "$TAMA_WINDOW_PANE_ID" '@tama_pane_label'
   fi
-  # The mark, raised unconditionally rather than through tama_flag_raise — which
-  # would ask tmux's cheap question a second time and get the wrong answer for the
-  # one case that matters. Getting here means delivering, and delivering means the
-  # user is not looking: a terminal behind a browser is a user who is not looking,
-  # whatever tmux thinks about which window is active. Deliver and mark are the same
-  # decision, made once, above.
-  #
   # The visible mark records attention; the pending marker written below remembers the
   # banner identity separately, because `unflag` may clear one without dismissing the
   # other.
-  tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" on
+  if [ "$flag" = yes ]; then
+    tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" on
+  fi
   # No refresh: the agent, label and mark are not icon jobs; the plain flag format
   # redraws with its option write itself.
   tama_batch_flush 'no' || true
@@ -130,9 +139,6 @@ main() {
   # environment, so that a wrong hook is loud wherever it runs.
   tama_pane_value_is_storable "$agent" ||
     die_usage 'an agent name cannot contain a newline or a control separator'
-
-  # Nothing to interrupt anybody about.
-  tama_notify_enabled || exit 0
 
   # --pane overrides the pane the hook happens to run in, which wrappers lose and
   # tests never have. Having neither is one of the quiet no-ops.

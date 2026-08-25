@@ -199,6 +199,21 @@ loaded_server() {
     '@tama_choose_tree_format' 'the prefix + w binding'
 }
 
+@test "the README's Priority binding targets the key event window explicitly" {
+  local recipe="bind-key P run-shell '#{q:@tama_bin} toggle-priority --window #{q:window_id}'"
+  local conf="$BATS_TEST_TMPDIR/priority-binding.conf"
+  grep -qF -- "$recipe" "$README" || {
+    printf 'the README no longer carries the explicit Priority recipe\n' >&2
+    return 1
+  }
+
+  printf '%s\n' "$recipe" >"$conf"
+  run tmux_test_server_run source-file "$conf"
+  assert_success
+  assert_contains "$(tmux_test_server_run list-keys -T prefix | grep ' P ')" \
+    'toggle-priority --window #{q:window_id}' 'the prefix + P binding'
+}
+
 @test "the README does not carry a third copy of the Claude Code hook block" {
   # doctor prints that block and checks a user's settings against the same list of
   # events, and tests/doctor.bats asserts it matches the integration README's copy. A

@@ -80,7 +80,7 @@ tama_notify_label() {
 }
 
 # Whether the user is demonstrably already looking at the window tama_window_read
-# last read — the `AND` of ADR-0004, and the only place suppression is decided.
+# last read — the `AND` of ADR-0004, and the place focus suppression is decided.
 #
 # The cheap half is tmux's own answer, which lib/window.sh owns and the window mark
 # asks the same way. It runs first because it costs nothing: it is already in the

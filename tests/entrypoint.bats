@@ -340,7 +340,7 @@ unwire_hooks() {
   format="$(tmux_test_server_run show -gqv @tama_choose_tree_format)"
   assert_contains "$format" '#{?pane_format,' 'the pane row'
   assert_contains "$format" '#{?window_format,' 'the window row'
-  assert_contains "$format" '#{window_name}#{E:@tama_icons}#{E:@tama_flag}' \
+  assert_contains "$format" '#{E:@tama_priority}#{window_name}#{E:@tama_icons}#{E:@tama_flag}' \
     'the decorated window name'
   assert_contains "$format" '#{session_windows} windows' 'the session row'
 }

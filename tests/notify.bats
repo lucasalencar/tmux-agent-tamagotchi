@@ -159,7 +159,7 @@ run_click() { # <click command line>
   assert_flagged "$window"
 }
 
-@test "a terminal behind a browser is notified anyway, and its window marked" {
+@test "a terminal behind a browser is notified while its observed window stays unflagged" {
   # The failure this plugin cannot afford: tmux says the user is on that window, and it
   # is wrong, because the terminal is minimized. The backend is the only thing that
   # knows, and its no is enough on its own.
@@ -177,9 +177,9 @@ run_click() { # <click command line>
 
   assert_backend_called focused
   assert_backend_called notify
-  # And the mark belongs there: something did happen while nobody was looking, whatever
-  # tmux thinks about which window is active.
-  assert_flagged "$window"
+  # Flags retain their own in-tmux observation rule even though the richer desktop
+  # focus decision correctly delivers the independent Notification channel.
+  assert_not_flagged "$window"
 }
 
 @test "the expensive check is not made when the cheap one already said no" {
@@ -304,7 +304,7 @@ run_click() { # <click command line>
   done
 }
 
-@test "notifications can be turned off entirely while the icons keep working" {
+@test "notifications can be turned off while Flags and icons keep working" {
   tmux_test_server_run set -g @tama_notifications off
 
   local pane window
@@ -314,11 +314,13 @@ run_click() { # <click command line>
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
   refute_backend_called notify
-  assert_not_flagged "$window"
+  assert_flagged "$window"
 
   # The other half of the claim: everything inside tmux is untouched. The icons still
-  # move, and a state that needs the user still marks the window — going heads-down is
-  # about the OS interrupting, not about the status line going blank.
+  # move, and a state that needs the user can mark the window again — going heads-down
+  # is about the OS interrupting, not about the status line going blank.
+  run "$PLUGIN_ROOT/bin/tama" unflag "$window"
+  assert_success
   run "$PLUGIN_ROOT/bin/tama" state waiting claude-code --pane "$pane"
   assert_success
   assert_equal "$(tama_icons "$window")" ' ◐'
@@ -904,7 +906,7 @@ NOTIFIER
   assert_equal "$(cat "$TAMA_TEST_LOG.own.argv3")" 'permission needed'
 }
 
-@test "the no-op backend that ships is silent, and does not suppress anything" {
+@test "the no-op backend is silent and does not suppress the Notification channel" {
   # Where `auto` lands on a machine with no notifier. It ships no `focused`, on
   # purpose: one that exited 0 would mean "the user is looking", and every notification
   # on the machine would be dropped.
@@ -920,9 +922,11 @@ NOTIFIER
   assert_success
   [ -z "$output" ]
   [ -z "$stderr" ]
-  # Nothing was suppressed, which is the only thing observable about a backend that
-  # does nothing: the pipeline ran all the way to the end.
-  assert_flagged "$window"
+  # The pending identity proves the Notification pipeline ran to the end. The
+  # independent Flag stays suppressed because tmux says this window is observed.
+  assert_equal "$(tmux_test_server_run show -wqv -t "$window" \
+    @tama_window_notification_pending)" on
+  assert_not_flagged "$window"
 }
 
 @test "a missing backend, capability or notifier never fails an agent's turn" {

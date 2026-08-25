@@ -8,6 +8,7 @@ TAMA_WINDOW_FLAG_OPTION='@tama_window_flag'
 TAMA_WINDOW_NOTIFY_GROUP_OPTION='@tama_window_notify_group'
 # shellcheck disable=SC2034  # read by notification writers
 TAMA_WINDOW_NOTIFICATION_PENDING_OPTION='@tama_window_notification_pending'
+TAMA_WINDOW_PRIORITY_OPTION='@tama_window_priority'
 
 # Resolve activity against the target's session and write by immutable window id;
 # indexes can collide across sessions and move under `renumber-windows`.
@@ -19,8 +20,9 @@ TAMA_WINDOW_READ_FIELDS="#{window_id}
 #{pane_active}
 #{$TAMA_WINDOW_FLAG_OPTION}
 #{$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION}
+#{$TAMA_WINDOW_PRIORITY_OPTION}
 ."
-TAMA_WINDOW_READ_COUNT=9
+TAMA_WINDOW_READ_COUNT=10
 
 # Reads a pane or window target into TAMA_WINDOW_*; rejects incomplete records.
 # shellcheck disable=SC2034
@@ -36,6 +38,7 @@ tama_window_read() { # <target>
   TAMA_WINDOW_PANE_IS_ACTIVE=''
   TAMA_WINDOW_FLAG=''
   TAMA_WINDOW_NOTIFICATION_PENDING=''
+  TAMA_WINDOW_PRIORITY=''
   while IFS= read -r field; do
     lines=$((lines + 1))
     case "$lines" in
@@ -47,6 +50,7 @@ tama_window_read() { # <target>
       6) TAMA_WINDOW_PANE_IS_ACTIVE="$field" ;;
       7) TAMA_WINDOW_FLAG="$field" ;;
       8) TAMA_WINDOW_NOTIFICATION_PENDING="$field" ;;
+      9) TAMA_WINDOW_PRIORITY="$field" ;;
     esac
   done <<EOF
 $raw
@@ -93,8 +97,21 @@ tama_flag_raise() { # <target>
   tama_flag_set
 }
 
-# Called after notification delivery has made the richer focus decision. Use the
-# previously read id because a caller's index may have moved.
+# Automatic requests obey Priority policy; the public flag command deliberately
+# continues to call tama_flag_raise as an explicit override.
+tama_flag_raise_automatic() { # <target>
+  tama_window_read "$1" || return 0
+  tama_automatic_flag_is_eligible || return 0
+  tama_flag_set
+}
+
+tama_automatic_flag_is_eligible() {
+  tama_priority_flag_is_eligible "$TAMA_WINDOW_PRIORITY" || return 1
+  ! tama_window_user_is_looking
+}
+
+# Called after the caller has decided that an automatic or explicit Flag is eligible.
+# Use the previously read immutable id because a caller's index may have moved.
 tama_flag_set() {
   tmux_run set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" on \
     >/dev/null 2>&1 || true

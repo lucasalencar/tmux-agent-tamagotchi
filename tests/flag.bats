@@ -296,7 +296,7 @@ arrange_two_sessions() {
   assert_success
 
   # The default, which the entrypoint seeds because a format cannot carry one.
-  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{E:@tama_flag}')" ' *'
+  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{E:@tama_flag}')" ' !'
 
   # Read at expansion time, so a reconfiguration needs no reload — and expanded a
   # second time, so it can carry colour.

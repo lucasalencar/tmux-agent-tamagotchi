@@ -1,10 +1,14 @@
-# `doctor` is the one command that fails, and only for what it can call broken
+# `doctor` is the diagnostic command that fails, and only for what it can call broken
 
-Every other subcommand exits 0 on everything except a usage error. That policy exists
+Hook-facing subcommands exit 0 on everything except a usage error. That policy exists
 because the CLI runs inside an agent's turn: a banner that did not appear must never be
 the reason a turn dies. `doctor` is never run from a hook — it is run by a person, or by
 a script checking an installation — so the policy has nothing to protect there, and an
 exit status is the only thing a script can read.
+
+`toggle-priority` is the deliberate exception for an interactive/script-facing mutation:
+an invalid or ambiguous target and a rejected assignment exit 1 with a diagnostic so the
+caller can know that Priority did not change. Integrations never invoke this command.
 
 The hard part is not the exit status but the line between *broken* and *worth knowing*,
 because this plugin is full of configurations that look like faults and are not. A
