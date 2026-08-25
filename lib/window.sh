@@ -16,10 +16,11 @@ TAMA_WINDOW_READ_FIELDS="#{window_id}
 #{session_attached}
 #{session_name}
 #{pane_id}
+#{pane_active}
 #{$TAMA_WINDOW_FLAG_OPTION}
 #{$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION}
 ."
-TAMA_WINDOW_READ_COUNT=8
+TAMA_WINDOW_READ_COUNT=9
 
 # Reads a pane or window target into TAMA_WINDOW_*; rejects incomplete records.
 # shellcheck disable=SC2034
@@ -32,6 +33,7 @@ tama_window_read() { # <target>
   TAMA_WINDOW_SESSION_CLIENTS=''
   TAMA_WINDOW_SESSION=''
   TAMA_WINDOW_PANE_ID=''
+  TAMA_WINDOW_PANE_IS_ACTIVE=''
   TAMA_WINDOW_FLAG=''
   TAMA_WINDOW_NOTIFICATION_PENDING=''
   while IFS= read -r field; do
@@ -42,8 +44,9 @@ tama_window_read() { # <target>
       3) TAMA_WINDOW_SESSION_CLIENTS="$field" ;;
       4) TAMA_WINDOW_SESSION="$field" ;;
       5) TAMA_WINDOW_PANE_ID="$field" ;;
-      6) TAMA_WINDOW_FLAG="$field" ;;
-      7) TAMA_WINDOW_NOTIFICATION_PENDING="$field" ;;
+      6) TAMA_WINDOW_PANE_IS_ACTIVE="$field" ;;
+      7) TAMA_WINDOW_FLAG="$field" ;;
+      8) TAMA_WINDOW_NOTIFICATION_PENDING="$field" ;;
     esac
   done <<EOF
 $raw
@@ -70,10 +73,12 @@ tama_window_notification_group_read() {
   TAMA_WINDOW_NOTIFY_GROUP="$group"
 }
 
-# Focus requires an active window and an attached client. Uncertainty returns false
-# so it may cause noise but never suppresses attention (ADR-0004).
+# Focus requires the reporting pane in an active window and an attached client.
+# Uncertainty returns false so it may cause noise but never suppresses attention
+# (ADR-0004).
 tama_window_user_is_looking() {
   [ "$TAMA_WINDOW_IS_CURRENT" = '1' ] || return 1
+  [ "$TAMA_WINDOW_PANE_IS_ACTIVE" = '1' ] || return 1
   case "$TAMA_WINDOW_SESSION_CLIENTS" in
     '' | 0) return 1 ;;
   esac

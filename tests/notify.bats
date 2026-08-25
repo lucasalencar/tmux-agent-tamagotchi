@@ -138,6 +138,27 @@ run_click() { # <click command line>
   assert_not_flagged "$window"
 }
 
+@test "an agent in an inactive pane is notified even when its window is visible" {
+  tama_attach_client_without_attachment_hooks t
+  export TAMA_FAKE_FOCUSED=0
+
+  local pane window active_pane
+  pane="$(tama_pane_of t:0)"
+  window="$(tama_window_id t:0)"
+  active_pane="$(tmux_test_server_run split-window -d -P -F '#{pane_id}' -t "$window")"
+  tmux_test_server_run select-pane -t "$active_pane"
+
+  assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{window_active}')" '1'
+  assert_equal "$(tmux_test_server_run display-message -p -t "$pane" '#{pane_active}')" '0'
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+
+  refute_backend_called focused
+  assert_backend_called notify
+  assert_flagged "$window"
+}
+
 @test "a terminal behind a browser is notified anyway, and its window marked" {
   # The failure this plugin cannot afford: tmux says the user is on that window, and it
   # is wrong, because the terminal is minimized. The backend is the only thing that
