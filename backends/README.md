@@ -113,8 +113,9 @@ The macOS backend needs to know your terminal, since neither tmux nor this plugi
 tell which application is displaying a session: `@tama_terminal_app` is the process
 name it asks the desktop about and defaults to Ghostty. `@tama_terminal_bundle_id`
 remains in the capability environment for custom backends, but the backend shipped
-here does not activate an application by bundle id: its click action raises the
-existing terminal window without sending a reopen event.
+here also activates the configured application by bundle id as a fallback for desktop
+notifiers that do not reliably run their shell click action. The click action remains
+responsible for selecting and raising the exact existing terminal window.
 
 Two of its capabilities identify a terminal window by its **title**, which works
 because tmux can be told to put the session name there:
