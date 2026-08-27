@@ -79,6 +79,7 @@ Commands:
   icons <window_id>     Print pane-state icons in pane order.
   toggle-priority --window <target>
                         Toggle Priority for one explicit tmux window.
+  clear-priorities      Clear Priority from every tmux window in the server.
   flag [target]         Mark a window. No-op for the current window.
   unflag [target]       Clear a window mark.
   notify <agent> <msg>  Request eligible Flag and Notification channels.
@@ -165,7 +166,7 @@ Runtime contract:
   - No \$TMUX: commands exit 0 without output.
   - Usage error: exit 2; diagnostic on stderr.
   - Operational error: exit 0 without output.
-  - A rejected/invalid toggle-priority target exits 1 with a diagnostic.
+  - Rejected/invalid Priority mutations exit 1 with a diagnostic.
   - doctor: exit 1 when checks fail; works outside tmux.
   - setup: reports configuration failures; works outside tmux.
   - focus-window: works outside tmux.

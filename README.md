@@ -115,6 +115,25 @@ plugin reserving a key:
 bind-key P run-shell '#{q:@tama_bin} toggle-priority --window #{q:window_id}'
 ```
 
+Clear Priority from every tmux window in the current server with:
+
+```sh
+"$(tmux show -gqv @tama_bin)" clear-priorities
+```
+
+The command snapshots distinct Priority tmux windows by immutable identity, including
+tmux windows in other sessions, then attempts every removal. A linked tmux window is
+treated once. Success (including an already-empty set) is quiet; if any removal fails,
+the others are still attempted and the command exits non-zero with a diagnostic. Priority
+changes racing after the snapshot are not guaranteed to be cleared. State, Flags,
+Notifications, and unrelated tmux options are preserved.
+
+An optional adjacent binding clears the server-wide set without the plugin reserving a key:
+
+```tmux
+bind-key O run-shell '#{q:@tama_bin} clear-priorities'
+```
+
 The default marker follows the icon preset: `★` for glyphs, `⭐` for pets, and `*` for
 ASCII. Override it with `@tama_priority_icon`, or set that option to an empty string to
 hide it. The Flag default is `!`, keeping classification and attention distinct.
@@ -319,6 +338,7 @@ The plugin does not install mouse bindings.
 | `state` | Record an agent state or subagent event. |
 | `icons` | Render the icons for one window. |
 | `toggle-priority` | Toggle Priority for one explicit tmux window target. |
+| `clear-priorities` | Clear Priority from every tmux window in the server. |
 | `flag` / `unflag` | Raise or clear a tmux window flag. |
 | `notify` / `dismiss` | Raise or dismiss a notification. |
 | `focus-window` | Bring a session's terminal window forward. |
@@ -343,7 +363,7 @@ Hook-facing commands follow these rules:
 - Outside tmux, they exit zero without output.
 - Usage errors exit `2` with a message on stderr.
 - Operational errors exit zero without interrupting an agent turn.
-- Invalid or rejected `toggle-priority` operations exit `1` with a diagnostic.
+- Invalid or rejected Priority mutations exit `1` with a diagnostic.
 
 `doctor` and `setup` report failures with a non-zero status. Both `setup` and `focus-window`
 run outside tmux: setup may configure an agent before tmux starts, while desktop notification

@@ -10,6 +10,7 @@
 #                                server does — a tmux that went away between the
 #                                agent's hook firing and this running
 #   TAMA_FAKE_TMUX_FAIL_COMMAND  set to make calls containing that command fail
+#   TAMA_FAKE_TMUX_FAIL_TARGET   set to make a set-option for that target fail
 #   TAMA_FAKE_TMUX_LOG           file the calls are appended to
 #   TAMA_FAKE_TMUX_COUNTER       file counting this caller's calls, for the two below
 #   TAMA_FAKE_TMUX_WAIT_BEFORE   which of that caller's calls waits for the file …
@@ -68,6 +69,16 @@ fi
 if [ -n "${TAMA_FAKE_TMUX_FAIL_COMMAND:-}" ]; then
   for tama_arg in "$@"; do
     [ "$tama_arg" != "$TAMA_FAKE_TMUX_FAIL_COMMAND" ] || exit 1
+  done
+fi
+
+if [ -n "${TAMA_FAKE_TMUX_FAIL_TARGET:-}" ]; then
+  tama_previous=''
+  for tama_arg in "$@"; do
+    if [ "$tama_previous" = -t ] && [ "$tama_arg" = "$TAMA_FAKE_TMUX_FAIL_TARGET" ]; then
+      exit 1
+    fi
+    tama_previous="$tama_arg"
   done
 fi
 

@@ -42,6 +42,85 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
+@test "clear-priorities quietly clears every distinct Priority tmux window across the server" {
+  tmux_test_server_run set -g @tama_priority_max_percent 100
+  tmux_test_server_run new-window -d -t t: -n shared
+  tmux_test_server_run new-session -d -s other
+  tmux_test_server_run link-window -s t:shared -t other:
+  local first shared unlinked
+  first="$(tama_window_id t:0)"
+  shared="$(tama_window_id t:shared)"
+  unlinked="$(tama_window_id other:0)"
+  tmux_test_server_run set -w -t "$first" @tama_window_priority on
+  tmux_test_server_run set -w -t "$shared" @tama_window_priority custom
+  tmux_test_server_run set -w -t "$unlinked" @tama_window_priority on
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities
+
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+  assert_equal "$(tmux_test_server_run show -wqv -t "$first" @tama_window_priority)" ''
+  assert_equal "$(tmux_test_server_run show -wqv -t "$shared" @tama_window_priority)" ''
+  assert_equal "$(tmux_test_server_run show -wqv -t "$unlinked" @tama_window_priority)" ''
+}
+
+@test "clear-priorities reports a partial failure after clearing the remaining snapshot" {
+  tmux_test_server_run new-window -d -t t:
+  local failed cleared
+  failed="$(tama_window_id t:0)"
+  cleared="$(tama_window_id t:1)"
+  tmux_test_server_run set -w -t "$failed" @tama_window_priority on
+  tmux_test_server_run set -w -t "$cleared" @tama_window_priority on
+  tama_use_fake_tmux "$(tmux -V)"
+  export TAMA_FAKE_TMUX_FAIL_TARGET="$failed"
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities
+
+  assert_status 1
+  [ -z "$output" ]
+  assert_stderr_contains 'tama: could not clear Priority from 1 tmux window'
+  assert_equal "$(tmux_test_server_run show -wqv -t "$failed" @tama_window_priority)" on
+  assert_equal "$(tmux_test_server_run show -wqv -t "$cleared" @tama_window_priority)" ''
+}
+
+@test "clear-priorities preserves unrelated tmux data and is idempotent" {
+  local window pane
+  window="$(tama_window_id t:0)"
+  pane="$(tama_pane_of "$window")"
+  tmux_test_server_run set -w -t "$window" @tama_window_priority unusual
+  tmux_test_server_run set -w -t "$window" @tama_window_flag on
+  tmux_test_server_run set -w -t "$window" @tama_window_notification_pending on
+  tmux_test_server_run set -w -t "$window" @tama_window_notify_group pending-group
+  tmux_test_server_run set -w -t "$window" @sentinel keep
+  tmux_test_server_run set -p -t "$pane" @tama_pane_state_main waiting
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+  assert_equal "$(tmux_test_server_run show -wqv -t "$window" @tama_window_flag)" on
+  assert_equal "$(tmux_test_server_run show -wqv -t "$window" @tama_window_notification_pending)" on
+  assert_equal "$(tmux_test_server_run show -wqv -t "$window" @tama_window_notify_group)" pending-group
+  assert_equal "$(tmux_test_server_run show -wqv -t "$window" @sentinel)" keep
+  assert_equal "$(tmux_test_server_run show -pqv -t "$pane" @tama_pane_state_main)" waiting
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+}
+
+@test "clear-priorities rejects options and positional arguments as usage errors" {
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities --all
+  assert_status 2
+  assert_stderr_contains 'tama: clear-priorities takes no arguments, got: --all'
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities extra
+  assert_status 2
+  assert_stderr_contains 'tama: clear-priorities takes no arguments, got: extra'
+}
+
 @test "the default limit rejects a second Priority among two tmux windows" {
   tmux_test_server_run new-window -d -t t:
   local first second

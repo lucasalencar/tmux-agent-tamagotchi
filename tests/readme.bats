@@ -214,6 +214,21 @@ loaded_server() {
     'toggle-priority --window #{q:window_id}' 'the prefix + P binding'
 }
 
+@test "the README's clear Priorities binding invokes the server-wide command" {
+  local recipe="bind-key O run-shell '#{q:@tama_bin} clear-priorities'"
+  local conf="$BATS_TEST_TMPDIR/clear-priorities-binding.conf"
+  grep -qF -- "$recipe" "$README" || {
+    printf 'the README no longer carries the clear Priorities recipe\n' >&2
+    return 1
+  }
+
+  printf '%s\n' "$recipe" >"$conf"
+  run tmux_test_server_run source-file "$conf"
+  assert_success
+  assert_contains "$(tmux_test_server_run list-keys -T prefix | grep ' O ')" \
+    'clear-priorities' 'the prefix + O binding'
+}
+
 @test "the README does not carry a third copy of the Claude Code hook block" {
   # doctor prints that block and checks a user's settings against the same list of
   # events, and tests/doctor.bats asserts it matches the integration README's copy. A
