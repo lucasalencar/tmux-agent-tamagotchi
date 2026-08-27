@@ -51,8 +51,8 @@ teardown() {
   first="$(tama_window_id t:0)"
   shared="$(tama_window_id t:shared)"
   unlinked="$(tama_window_id other:0)"
-  tmux_test_server_run set -w -t "$first" @tama_window_priority on
-  tmux_test_server_run set -w -t "$shared" @tama_window_priority ' '
+  tmux_test_server_run set -w -t "$first" @tama_window_priority ' '
+  tmux_test_server_run set -w -t "$shared" @tama_window_priority $'first line\n@999 still data'
   tmux_test_server_run set -w -t "$unlinked" @tama_window_priority on
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities
@@ -74,13 +74,7 @@ teardown() {
   tmux_test_server_run set -w -t "$cleared" @tama_window_priority on
   tmux_test_server_run new-session -d -s linked
   tmux_test_server_run link-window -s "$failed" -t linked:
-  local wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
-  sed -e "s|@TMUX@|$(command -v tmux)|g" \
-    "$PLUGIN_ROOT/tests/fixtures/tmux-fail-target" >"$wrapper"
-  chmod +x "$wrapper"
-  export TAMA_TMUX="$wrapper"
-  export TAMA_TMUX_ARGS="-L $TMUX_TEST_SOCKET"
-  export TAMA_FAIL_TARGET="$failed"
+  tama_use_tmux_fail_target "$failed"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities
 

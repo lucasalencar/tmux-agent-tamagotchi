@@ -487,6 +487,16 @@ tama_log_tmux_calls() {
   tama_use_fake_tmux "$(tmux -V)"
 }
 
+tama_use_tmux_fail_target() { # <target>
+  local wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
+  sed -e "s|@TMUX@|$(command -v tmux)|g" \
+    "$PLUGIN_ROOT/tests/fixtures/tmux-fail-target" >"$wrapper"
+  chmod +x "$wrapper"
+  export TAMA_FAIL_TARGET="$1"
+  export TAMA_TMUX="$wrapper"
+  export TAMA_TMUX_ARGS="-L $TMUX_TEST_SOCKET"
+}
+
 # Whether tmux was asked to run a command. One argument per line in the log, so
 # this matches the command word itself and not a value that happens to contain it.
 assert_tmux_command() {

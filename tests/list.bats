@@ -161,21 +161,14 @@ record_for() { # <session target> <pane> <agent> <state> <label>
 
 @test "list discards records already collected when a later query fails" {
   tmux_test_server_run rename-session -t t first
-  local first second wrapper
+  local first second
   first="$(tama_pane_of first:0)"
   set_pane_value "$first" state_main running
   tmux_test_server_run new-session -d -s second
   second="$(tama_pane_of second:0)"
   set_pane_value "$second" state_main waiting
 
-  wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
-  sed \
-    -e "s|@TMUX@|$(command -v tmux)|g" \
-    "$PLUGIN_ROOT/tests/fixtures/tmux-fail-target" >"$wrapper"
-  chmod +x "$wrapper"
-  export TAMA_FAIL_TARGET="$(tama_window_id second:0)"
-  TAMA_TMUX="$wrapper"
-  TAMA_TMUX_ARGS="-L $TMUX_TEST_SOCKET"
+  tama_use_tmux_fail_target "$(tama_window_id second:0)"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" list
   assert_success

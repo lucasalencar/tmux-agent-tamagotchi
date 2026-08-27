@@ -8,8 +8,9 @@ exit status is the only thing a script can read.
 
 Interactive/script-facing Priority mutations are the deliberate exception. An invalid or
 ambiguous `toggle-priority` target and a rejected assignment exit 1 with a diagnostic so
-the caller can know that Priority did not change. An incomplete `clear-priorities` exits 1
-after attempting the full snapshot so the caller knows some assignments remain.
+the caller can know that Priority did not change. If a `clear-priorities` removal fails,
+the command exits 1 after attempting the full snapshot so the caller knows the operation
+did not complete entirely successfully.
 Integrations never invoke these commands.
 
 The hard part is not the exit status but the line between *broken* and *worth knowing*,

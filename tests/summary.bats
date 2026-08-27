@@ -197,20 +197,13 @@ session_id() {
 }
 
 @test "summary discards counts when a later inventory query fails" {
-  local first second wrapper
+  local first second
   first="$(tama_pane_of t:0)"
   set_pane_state "$first" running
   second="$(tmux_test_server_run new-window -d -P -F '#{pane_id}' -t t:1)"
   set_pane_state "$second" waiting
 
-  wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
-  sed \
-    -e "s|@TMUX@|$(command -v tmux)|g" \
-    "$PLUGIN_ROOT/tests/fixtures/tmux-fail-target" >"$wrapper"
-  chmod +x "$wrapper"
-  export TAMA_FAIL_TARGET="$(tama_window_id t:1)"
-  TAMA_TMUX="$wrapper"
-  TAMA_TMUX_ARGS="-L $TMUX_TEST_SOCKET"
+  tama_use_tmux_fail_target "$(tama_window_id t:1)"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" summary "$(session_id t)"
   assert_success
@@ -219,7 +212,7 @@ session_id() {
 }
 
 @test "all-sessions summary discards counts when a later session query fails" {
-  local first second target wrapper
+  local first second target
   target="$(session_id t)"
   first="$(tama_pane_of t:0)"
   set_pane_state "$first" running
@@ -228,14 +221,7 @@ session_id() {
   set_pane_state "$second" waiting
   tmux_test_server_run set-option -t "$target" @tama_summary_scope all
 
-  wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
-  sed \
-    -e "s|@TMUX@|$(command -v tmux)|g" \
-    "$PLUGIN_ROOT/tests/fixtures/tmux-fail-target" >"$wrapper"
-  chmod +x "$wrapper"
-  export TAMA_FAIL_TARGET="$(tama_window_id later:0)"
-  TAMA_TMUX="$wrapper"
-  TAMA_TMUX_ARGS="-L $TMUX_TEST_SOCKET"
+  tama_use_tmux_fail_target "$(tama_window_id later:0)"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" summary "$target"
   assert_success
