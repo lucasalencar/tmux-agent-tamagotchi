@@ -20,7 +20,7 @@ tama_priority_records() {
 # Reads all unique tmux windows once and exposes counts to policy and toggles.
 # list-windows -a repeats linked windows, so immutable ids are deduplicated.
 tama_priority_counts() {
-  local records record id value previous=''
+  local records record id has_priority previous=''
   [ "$TAMA_PRIORITY_COUNTS_READY" = no ] || return 0
   TAMA_TOTAL_WINDOW_COUNT=0
   TAMA_PRIORITY_WINDOW_COUNT=0
@@ -30,9 +30,9 @@ tama_priority_counts() {
     [ -n "$record" ] || continue
     id="${record%% *}"
     [ "$id" != "$previous" ] || continue
-    value="${record#* }"
+    has_priority="${record#* }"
     TAMA_TOTAL_WINDOW_COUNT=$((TAMA_TOTAL_WINDOW_COUNT + 1))
-    [ "$value" = 1 ] && TAMA_PRIORITY_WINDOW_COUNT=$((TAMA_PRIORITY_WINDOW_COUNT + 1))
+    [ "$has_priority" = 1 ] && TAMA_PRIORITY_WINDOW_COUNT=$((TAMA_PRIORITY_WINDOW_COUNT + 1))
     previous="$id"
   done <<EOF
 $records
