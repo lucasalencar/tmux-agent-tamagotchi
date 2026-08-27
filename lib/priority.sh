@@ -7,6 +7,15 @@ TAMA_PRIORITY_MAX_PERCENT_DEFAULT=80
 TAMA_FLAG_POLICY_DEFAULT=ambient
 TAMA_PRIORITY_COUNTS_READY='no'
 
+# Snapshots all unique tmux windows and their exact Priority values. Resolve a
+# failed tmux read before sorting so a missing server cannot look like an empty set.
+tama_priority_records() {
+  local records
+  records="$(tmux_run list-windows -a \
+    -F "#{window_id} #{${TAMA_WINDOW_PRIORITY_OPTION}}" 2>/dev/null)" || return 1
+  printf '%s\n' "$records" | LC_ALL=C sort -u
+}
+
 # Reads all unique tmux windows once and exposes counts to policy and toggles.
 # list-windows -a repeats linked windows, so immutable ids are deduplicated.
 tama_priority_counts() {
@@ -14,8 +23,7 @@ tama_priority_counts() {
   [ "$TAMA_PRIORITY_COUNTS_READY" = no ] || return 0
   TAMA_TOTAL_WINDOW_COUNT=0
   TAMA_PRIORITY_WINDOW_COUNT=0
-  records="$(tmux_run list-windows -a -F "#{window_id} #{${TAMA_WINDOW_PRIORITY_OPTION}}" \
-    2>/dev/null | LC_ALL=C sort -u)" || records=''
+  records="$(tama_priority_records)" || records=''
 
   while IFS= read -r record; do
     [ -n "$record" ] || continue

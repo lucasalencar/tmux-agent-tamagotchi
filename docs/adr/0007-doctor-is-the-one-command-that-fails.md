@@ -6,9 +6,11 @@ the reason a turn dies. `doctor` is never run from a hook — it is run by a per
 a script checking an installation — so the policy has nothing to protect there, and an
 exit status is the only thing a script can read.
 
-`toggle-priority` is the deliberate exception for an interactive/script-facing mutation:
-an invalid or ambiguous target and a rejected assignment exit 1 with a diagnostic so the
-caller can know that Priority did not change. Integrations never invoke this command.
+Interactive/script-facing Priority mutations are the deliberate exception. An invalid or
+ambiguous `toggle-priority` target and a rejected assignment exit 1 with a diagnostic so
+the caller can know that Priority did not change. An incomplete `clear-priorities` exits 1
+after attempting the full snapshot so the caller knows some assignments remain.
+Integrations never invoke these commands.
 
 The hard part is not the exit status but the line between *broken* and *worth knowing*,
 because this plugin is full of configurations that look like faults and are not. A

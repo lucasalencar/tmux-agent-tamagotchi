@@ -18,8 +18,8 @@
 #   * $TAMA_PLUGIN_DIR and $TAMA_BIN are exported; it must source lib/common.sh
 #     itself, since it runs as its own process
 #   * exit 2 is reserved for usage errors; hook-facing failures exit 0 silently.
-#     `doctor` fails as an installation check, and `toggle-priority` reports rejected
-#     interactive mutations with status 1; neither runs from an agent hook
+#     `doctor` fails as an installation check, and interactive Priority mutations
+#     report rejected or incomplete changes with status 1; none runs from an agent hook
 
 set -o nounset
 

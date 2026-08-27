@@ -52,7 +52,7 @@ teardown() {
   shared="$(tama_window_id t:shared)"
   unlinked="$(tama_window_id other:0)"
   tmux_test_server_run set -w -t "$first" @tama_window_priority on
-  tmux_test_server_run set -w -t "$shared" @tama_window_priority custom
+  tmux_test_server_run set -w -t "$shared" @tama_window_priority ' '
   tmux_test_server_run set -w -t "$unlinked" @tama_window_priority on
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities
@@ -60,9 +60,9 @@ teardown() {
   assert_success
   [ -z "$output" ]
   [ -z "$stderr" ]
-  assert_equal "$(tmux_test_server_run show -wqv -t "$first" @tama_window_priority)" ''
-  assert_equal "$(tmux_test_server_run show -wqv -t "$shared" @tama_window_priority)" ''
-  assert_equal "$(tmux_test_server_run show -wqv -t "$unlinked" @tama_window_priority)" ''
+  assert_window_option_unset "$first" window_priority
+  assert_window_option_unset "$shared" window_priority
+  assert_window_option_unset "$unlinked" window_priority
 }
 
 @test "clear-priorities reports a partial failure after clearing the remaining snapshot" {
@@ -72,16 +72,34 @@ teardown() {
   cleared="$(tama_window_id t:1)"
   tmux_test_server_run set -w -t "$failed" @tama_window_priority on
   tmux_test_server_run set -w -t "$cleared" @tama_window_priority on
-  tama_use_fake_tmux "$(tmux -V)"
-  export TAMA_FAKE_TMUX_FAIL_TARGET="$failed"
+  tmux_test_server_run new-session -d -s linked
+  tmux_test_server_run link-window -s "$failed" -t linked:
+  local wrapper="$BATS_TEST_TMPDIR/tmux-fail-target"
+  sed -e "s|@TMUX@|$(command -v tmux)|g" \
+    "$PLUGIN_ROOT/tests/fixtures/tmux-fail-target" >"$wrapper"
+  chmod +x "$wrapper"
+  export TAMA_TMUX="$wrapper"
+  export TAMA_TMUX_ARGS="-L $TMUX_TEST_SOCKET"
+  export TAMA_FAIL_TARGET="$failed"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities
 
   assert_status 1
   [ -z "$output" ]
-  assert_stderr_contains 'tama: could not clear Priority from 1 tmux window'
+  assert_equal "$stderr" 'tama: could not clear Priority from 1 tmux window'
   assert_equal "$(tmux_test_server_run show -wqv -t "$failed" @tama_window_priority)" on
-  assert_equal "$(tmux_test_server_run show -wqv -t "$cleared" @tama_window_priority)" ''
+  assert_window_option_unset "$cleared" window_priority
+}
+
+@test "clear-priorities fails when its server-wide snapshot cannot be read" {
+  tama_use_fake_tmux "$(tmux -V)"
+  export TAMA_FAKE_TMUX_FAIL_COMMAND=list-windows
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities
+
+  assert_status 1
+  [ -z "$output" ]
+  [ -z "$stderr" ]
 }
 
 @test "clear-priorities preserves unrelated tmux data and is idempotent" {
