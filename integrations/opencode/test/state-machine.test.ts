@@ -51,7 +51,7 @@ describe("root session activity", () => {
     ])
   })
 
-  test("a root error persists through idle until that root resumes", () => {
+  test("a root error clears when the session reports any status after resuming", () => {
     run(createLifecycleState(), [
       {
         event: { type: "session-created", sessionId: "root-a", kind: "root" },
@@ -67,11 +67,6 @@ describe("root session activity", () => {
         ],
       },
       {
-        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "idle" },
-        paneState: "error",
-        effects: [],
-      },
-      {
         event: { type: "session-status", sessionId: "child-a", kind: "delegated", status: "busy" },
         paneState: "error",
         effects: [{ type: "subagent-start", sessionId: "child-a" }],
@@ -80,6 +75,11 @@ describe("root session activity", () => {
         event: { type: "session-status", sessionId: "child-a", kind: "delegated", status: "idle" },
         paneState: "error",
         effects: [{ type: "subagent-stop", sessionId: "child-a" }],
+      },
+      {
+        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "idle" },
+        paneState: "idle",
+        effects: [{ type: "pane-state", state: "idle" }],
       },
       {
         event: { type: "session-status", sessionId: "root-a", kind: "root", status: "retry" },
@@ -105,6 +105,41 @@ describe("root session activity", () => {
 
     expect(resumed.state.paneState).toBe("running")
     expect(resumed.effects).toEqual([{ type: "pane-state", state: "running" }])
+  })
+
+  test("re-creating a session resets a stuck errored root", () => {
+    const errored = reduceLifecycle(createLifecycleState(), {
+      type: "session-error",
+      sessionId: "root-a",
+      kind: "root",
+    })
+
+    const recreated = reduceLifecycle(errored.state, {
+      type: "session-created",
+      sessionId: "root-a",
+      kind: "root",
+    })
+
+    expect(recreated.state.paneState).toBe("idle")
+    expect(recreated.effects).toEqual([{ type: "pane-state", state: "idle" }])
+  })
+
+  test("re-creating a running root does not clobber its state", () => {
+    const running = reduceLifecycle(createLifecycleState(), {
+      type: "session-status",
+      sessionId: "root-a",
+      kind: "root",
+      status: "busy",
+    })
+
+    const recreated = reduceLifecycle(running.state, {
+      type: "session-created",
+      sessionId: "root-a",
+      kind: "root",
+    })
+
+    expect(recreated.state.paneState).toBe("running")
+    expect(recreated.effects).toEqual([])
   })
 })
 

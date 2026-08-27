@@ -104,15 +104,14 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
   } else if (event.type === "terminal-assistant-message") {
     terminalAssistantMessages.set(event.sessionId, event.messageId)
   } else if (event.type === "session-created") {
-    if (!roots.has(event.sessionId)) roots.set(event.sessionId, "idle")
+    const current = roots.get(event.sessionId)
+    if (current === undefined || current === "error") roots.set(event.sessionId, "idle")
   } else if (event.type === "session-error") {
     roots.set(event.sessionId, "error")
     terminalAssistantMessages.delete(event.sessionId)
   } else {
     const current = roots.get(event.sessionId)
-    if (event.status !== "idle" || current !== "error") {
-      roots.set(event.sessionId, event.status === "idle" ? "idle" : "running")
-    }
+    roots.set(event.sessionId, event.status === "idle" ? "idle" : "running")
     if (event.status === "idle") {
       const messageId = terminalAssistantMessages.get(event.sessionId)
       if (current === "running" && messageId) {
@@ -122,10 +121,8 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
           messageId,
         }
       }
-      terminalAssistantMessages.delete(event.sessionId)
-    } else {
-      terminalAssistantMessages.delete(event.sessionId)
     }
+    terminalAssistantMessages.delete(event.sessionId)
   }
 
   const rootStates = Array.from(roots.values())
