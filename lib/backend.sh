@@ -2,8 +2,8 @@
 #
 # Backend boundary for desktop-specific behavior. A backend directory may provide
 # `notify`, `dismiss`, `focused`, and `focus` executables; missing capabilities are
-# unsupported, not errors. They run inside hooks under a five-second watchdog, so
-# implementations must still return promptly and communicate only through exit status.
+# unsupported, not errors. Resultless capabilities run in the background; `focused`
+# runs under a five-second watchdog because its status is the answer.
 
 # The bare name whose directory is inside the plugin, and the one `auto` resolves to
 # when nothing better will work here.
@@ -41,8 +41,8 @@ TAMA_LIBNOTIFY_SEND_DIRS='/usr/bin /usr/local/bin'
 TAMA_BACKEND_UNSUPPORTED=127
 
 # Long enough for a desktop command under normal load, short enough that a broken one
-# cannot make an agent turn look dead. Tests may lower it through the environment;
-# there is deliberately no user option whose invalid value could remove the bound.
+# cannot make an agent turn look dead. Tests may lower it to a whole second through the
+# environment; there is no user option or environment value that can extend the bound.
 TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT=5
 
 # Runs an external command in its own process group and tears that whole group down at
@@ -51,7 +51,10 @@ TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT=5
 tama_external_command_run() { # <command> [args…]
   (
     local command_pid watchdog_pid status timeout
-    timeout="${TAMA_EXTERNAL_COMMAND_TIMEOUT:-$TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT}"
+    case "${TAMA_EXTERNAL_COMMAND_TIMEOUT:-}" in
+      1 | 2 | 3 | 4 | 5) timeout="$TAMA_EXTERNAL_COMMAND_TIMEOUT" ;;
+      *) timeout="$TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT" ;;
+    esac
 
     set -m
     "$@" &
@@ -64,10 +67,16 @@ tama_external_command_run() { # <command> [args…]
     ) >/dev/null 2>&1 &
     watchdog_pid=$!
 
-    wait "$command_pid"
+    wait "$command_pid" 2>/dev/null
     status=$?
-    kill -- "-$watchdog_pid" 2>/dev/null || true
-    wait "$watchdog_pid" 2>/dev/null || true
+    if kill -0 -- "-$command_pid" 2>/dev/null; then
+      # The leader exited after leaving children in its group. They may still hold a
+      # command-substitution pipe open, so leave the deadline armed for the group.
+      disown "$watchdog_pid" 2>/dev/null || true
+    else
+      kill -- "-$watchdog_pid" 2>/dev/null || true
+      wait "$watchdog_pid" 2>/dev/null || true
+    fi
     return "$status"
   )
 }
@@ -197,9 +206,10 @@ tama_libnotify_send() {
   TAMA_LIBNOTIFY_SEND="$TAMA_BINARY"
 }
 
-# Runs <capability>, with the caller's arguments, and returns its exit status —
-# or TAMA_BACKEND_UNSUPPORTED when there is nothing to run. Output is discarded;
-# see the rules above.
+# Runs <capability>, with the caller's arguments. `focused` returns its bounded exit
+# status because that is its answer. The resultless capabilities are backgrounded at
+# this boundary, so their failure or refusal to return cannot hold the caller. Missing
+# capabilities return TAMA_BACKEND_UNSUPPORTED. Output is always discarded.
 #
 # `@tama_<capability>_command` replaces one capability wholesale, which is the
 # extension point for a user whose terminal or desktop needs something nobody
@@ -214,8 +224,12 @@ tama_backend_invoke() { # <capability> [args…]
   if [ -n "$override" ]; then
     # `"$@"` inside the sh program text, so the values arrive as arguments of the
     # user's command. The `_` is $0 for that shell.
-    sh -c "$override \"\$@\"" _ "$@" >/dev/null 2>&1
-    return
+    if [ "$capability" = focused ]; then
+      tama_external_command_run sh -c "$override \"\$@\"" _ "$@" >/dev/null 2>&1
+      return
+    fi
+    sh -c "$override \"\$@\"" _ "$@" >/dev/null 2>&1 &
+    return 0
   fi
 
   tama_backend_dir
@@ -228,7 +242,12 @@ tama_backend_invoke() { # <capability> [args…]
     return "$TAMA_BACKEND_UNSUPPORTED"
   fi
 
-  "$target" "$@" >/dev/null 2>&1
+  if [ "$capability" = focused ]; then
+    tama_external_command_run "$target" "$@" >/dev/null 2>&1
+    return
+  fi
+  "$target" "$@" >/dev/null 2>&1 &
+  return 0
 }
 
 # The terminal a backend is talking about, for the two capabilities that have to name

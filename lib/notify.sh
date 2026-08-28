@@ -103,7 +103,7 @@ tama_notify_suppressed() {
   tama_window_user_is_looking || return 1
 
   tama_notify_export_context
-  tama_external_command_run tama_backend_invoke focused
+  tama_backend_invoke focused
 }
 
 # The context every capability is given, in the environment rather than in argv so it
@@ -236,6 +236,6 @@ tama_notify_dismiss() {
   export TAMA_GROUP
 
   # A banner that would not go away is not worth a word out of an agent's hook, still
-  # less a failed turn. The watchdog limits how long even that ignored failure waits.
-  tama_external_command_run tama_backend_invoke dismiss "$TAMA_NOTIFY_GROUP" || true
+  # less a failed turn. The resultless capability runs in the background.
+  tama_backend_invoke dismiss "$TAMA_NOTIFY_GROUP" || true
 }

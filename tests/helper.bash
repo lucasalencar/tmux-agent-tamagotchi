@@ -174,6 +174,11 @@ wait_until_backend_called() { # <capability>
 }
 
 assert_backend_called() { # <capability>
+  local waited=0
+  while [ "$(tama_backend_calls "$1")" -eq 0 ] && [ "$waited" -lt 200 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
   if [ "$(tama_backend_calls "$1")" -eq 0 ]; then
     printf 'expected the backend to be asked to %s; calls were:\n%s\n' \
       "$1" "$(cat "$TAMA_TEST_LOG")" >&2
@@ -194,6 +199,11 @@ refute_backend_called() { # <capability>
 # capability was never called at all.
 tama_backend_value() { # <capability> <what>
   local file="$TAMA_TEST_LOG.$1.$2"
+  local waited=0
+  while [ ! -e "$file" ] && [ "$waited" -lt 200 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
   if [ ! -e "$file" ]; then
     printf 'the backend recorded no %s for %s; calls were:\n%s\n' \
       "$2" "$1" "$(cat "$TAMA_TEST_LOG")" >&2
@@ -202,13 +212,70 @@ tama_backend_value() { # <capability> <what>
   cat "$file"
 }
 
+wait_until_file_exists() { # <path>
+  local waited=0
+  while [ ! -e "$1" ] && [ "$waited" -lt 200 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  [ -e "$1" ]
+}
+
+assert_process_exits_within() { # <pid> <seconds> <description>
+  local pid="$1" limit="$2" description="$3" waited=0
+  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$((limit * 20))" ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    printf '%s was still running after %ss\n' "$description" "$limit" >&2
+    return 1
+  fi
+  wait "$pid"
+}
+
+assert_pid_disappears_within() { # <pid> <seconds> <description>
+  local pid="$1" limit="$2" description="$3" waited=0
+  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$((limit * 20))" ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+    printf '%s was still running after %ss\n' "$description" "$limit" >&2
+    return 1
+  fi
+}
+
 assert_backend_value() { # <capability> <what> <expected>
-  local actual
-  actual="$(tama_backend_value "$1" "$2")" || return 1
+  local actual waited=0
+  while [ "$waited" -lt 200 ]; do
+    actual="$(tama_backend_value "$1" "$2")" || return 1
+    [ "$actual" = "$3" ] && return 0
+    sleep 0.05
+    waited=$((waited + 1))
+  done
   if [ "$actual" != "$3" ]; then
     printf 'expected the %s of %s to be %s\n     got %s\n' "$2" "$1" "$3" "$actual" >&2
     return 1
   fi
+}
+
+assert_backend_value_starts_with() { # <capability> <what> <prefix>
+  local actual waited=0
+  while [ "$waited" -lt 200 ]; do
+    actual="$(tama_backend_value "$1" "$2")" || return 1
+    case "$actual" in
+      "$3"*) return 0 ;;
+    esac
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  printf 'expected the %s of %s to start with %s\n     got %s\n' \
+    "$2" "$1" "$3" "$actual" >&2
+  return 1
 }
 
 assert_success() {

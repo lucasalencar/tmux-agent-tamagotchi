@@ -84,7 +84,7 @@ deliver() { # <target> <agent_name> <message>
   TAMA_CLICK="$TAMA_NOTIFY_CLICK"
   export TAMA_GROUP TAMA_PANE_ID TAMA_AGENT TAMA_CLICK
 
-  tama_external_command_run tama_backend_invoke notify "$TAMA_NOTIFY_TITLE" "$message" || true
+  tama_backend_invoke notify "$TAMA_NOTIFY_TITLE" "$message" || true
 }
 
 main() {
