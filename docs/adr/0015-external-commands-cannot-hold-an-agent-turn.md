@@ -1,33 +1,30 @@
 # External commands cannot hold an agent turn
 
 Backend capabilities and the user-provided label command execute from an agent hook.
-The hook must not inherit an unbounded wait from a desktop tool or user script, and the
-ordinary notification path must not pay for failure containment it does not need.
+The hook must not inherit an unbounded wait from a desktop tool or user script.
 
-The boundary distinguishes calls by whether the caller reads their result:
+Every backend capability and the label provider runs under a built-in five-second
+watchdog, which sends `KILL` at the deadline. Keeping
+the calls synchronous preserves ordering: in particular, a slow `notify` cannot arrive
+after a later `dismiss` and leave an orphaned banner.
 
-- `notify`, `dismiss`, and `focus` are started in the background. Their exit status is
-  already discarded by contract, so this adds no watchdog process to the hot path and
-  a capability that never returns cannot hold the agent turn.
-- `focused` and the label provider remain synchronous because their status or output
-  determines behavior. They run in their own process group under a built-in five-second
-  watchdog, which sends `TERM` and follows with `KILL` after a short grace period.
-
-Process groups matter because killing only a configured shell can leave the program it
-launched holding a command-substitution pipe open. Bash job control provides groups on
-the Bash 3.2 shipped by macOS, without adding `timeout`, `gtimeout`, or `setsid` as a
-dependency.
+Process groups handle ordinary descendants cheaply. At the deadline, the watchdog also
+snapshots the process tree for children that created another group. Label output is
+captured through a private temporary file whose name is unlinked before user code runs;
+therefore even a child that detaches and is reparented cannot retain the hook's output
+pipe. Bash job control and the platform `ps` provide this without adding `timeout`,
+`gtimeout`, `setsid`, or `mktemp` as a dependency.
 
 The deadline cannot be extended through configuration or the environment. Tests may
-lower it to a positive whole number of seconds no greater than the five-second default.
+select the named one-second test deadline.
 
 ## Consequences
 
-The resultless common path returns after starting the capability and is no slower than
-the previous foreground dispatch. A custom resultless capability that hangs may remain
-as a background process; accepting that recoverable resource leak avoids imposing a
-watchdog process on every notification. Backend authors must still return promptly.
+Each external call starts a watchdog process, a measured cost of roughly one millisecond
+on the development machine. This is the essential portable cost of preserving both a
+hard bound and capability ordering; backend authors must still return promptly, and the
+shipped resultless notifiers background their platform work.
 
-A timed-out `focused` check fails toward delivery, while failures from `notify`,
-`dismiss`, and `focus` remain ignored. Immediate `focused` and label commands still
-complete before their caller continues.
+A timeout necessarily has a non-zero status, which keeps `focused` fail-open toward
+delivery. Failures from `notify`, `dismiss`, and
+`focus` remain ignored, so they cannot fail an agent turn.

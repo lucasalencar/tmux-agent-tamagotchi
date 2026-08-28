@@ -31,6 +31,24 @@ tama_notify_enabled() {
   tama_opt_enabled tama_notifications on
 }
 
+# Opens a private capture path without depending on `mktemp`. The caller opens read and
+# write descriptors and unlinks it before running user code, so a detached descendant
+# can keep only the anonymous file — never the hook's command-substitution pipe.
+# shellcheck disable=SC2034  # TAMA_NOTIFY_CAPTURE is read by the caller
+tama_notify_capture_open() {
+  local attempt=0 directory="${TMPDIR:-/tmp}"
+  TAMA_NOTIFY_CAPTURE=''
+  while [ "$attempt" -lt 10 ]; do
+    TAMA_NOTIFY_CAPTURE="$directory/tama-label-$$-$RANDOM-$attempt"
+    if (umask 077; set -o noclobber; : >"$TAMA_NOTIFY_CAPTURE") 2>/dev/null; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+  done
+  TAMA_NOTIFY_CAPTURE=''
+  return 1
+}
+
 # The group id for the window tama_window_read last read, in TAMA_NOTIFY_GROUP.
 # A pending banner keeps the group it was raised with until dismissal, so changing
 # the format cannot orphan it in the notification centre. The pending marker is
@@ -68,9 +86,16 @@ tama_notify_label() {
   # after it. A label provider is the user's own script and the window id is tmux's
   # own, but a command line built by substitution is a habit that only has to be
   # wrong once.
-  label="$(
-    tama_external_command_run sh -c "$command \"\$1\"" _ "$TAMA_WINDOW_ID" 2>/dev/null
-  )" || label=''
+  tama_notify_capture_open || return 0
+  # Separate descriptions preserve the reader's offset while the provider writes.
+  # shellcheck disable=SC2094
+  exec 8>"$TAMA_NOTIFY_CAPTURE" 9<"$TAMA_NOTIFY_CAPTURE"
+  rm -f "$TAMA_NOTIFY_CAPTURE"
+  tama_external_command_run sh -c "$command \"\$1\"" _ "$TAMA_WINDOW_ID" \
+    >&8 2>/dev/null || true
+  exec 8>&-
+  IFS= read -r label <&9 || true
+  exec 9<&-
 
   # One line. A provider that prints several has said one thing and then said more.
   label="${label%%$'\n'*}"

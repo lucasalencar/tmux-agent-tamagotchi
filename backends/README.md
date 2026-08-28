@@ -30,9 +30,9 @@ that has since been closed (ADR-0006).
 
 Three rules, and they are not style:
 
-1. **Return promptly.** `notify`, `dismiss`, and `focus` run in the background because
-   their result is ignored. `focused` runs synchronously under a built-in five-second
-   watchdog because its exit status is the answer. Neither policy is a latency budget.
+1. **Return promptly.** Capabilities run synchronously under a built-in five-second
+   watchdog. That bound is failure containment, not a latency budget; implementations
+   whose result is ignored should still background slow platform work.
 2. **Say nothing.** stdout and stderr are discarded. A capability speaks through its
    exit status and nothing else.
 3. **Exit 0 unless you mean it.** Only `focused` is asked a question.

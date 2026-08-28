@@ -2,8 +2,8 @@
 #
 # Backend boundary for desktop-specific behavior. A backend directory may provide
 # `notify`, `dismiss`, `focused`, and `focus` executables; missing capabilities are
-# unsupported, not errors. Resultless capabilities run in the background; `focused`
-# runs under a five-second watchdog because its status is the answer.
+# unsupported, not errors. They run inside hooks under a five-second watchdog, so
+# implementations must still return promptly and communicate only through exit status.
 
 # The bare name whose directory is inside the plugin, and the one `auto` resolves to
 # when nothing better will work here.
@@ -44,15 +44,40 @@ TAMA_BACKEND_UNSUPPORTED=127
 # cannot make an agent turn look dead. Tests may lower it to a whole second through the
 # environment; there is no user option or environment value that can extend the bound.
 TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT=5
+TAMA_EXTERNAL_COMMAND_TIMEOUT_TEST=1
+
+# Prints every current descendant of a process. The watchdog calls this only after the
+# deadline, where the extra `ps` is cheaper than letting a child that made its own
+# process group keep the hook's output pipe open forever.
+tama_external_command_descendants() { # <pid>
+  local descendants='' generation="$1" next='' parent pid ppid snapshot
+  snapshot="$(ps -axo pid=,ppid= 2>/dev/null)" || return 0
+  while [ -n "$generation" ]; do
+    next=''
+    while read -r pid ppid; do
+      for parent in $generation; do
+        if [ "$ppid" = "$parent" ]; then
+          descendants="$descendants $pid"
+          next="$next $pid"
+          break
+        fi
+      done
+    done <<EOF
+$snapshot
+EOF
+    generation="$next"
+  done
+  printf '%s' "$descendants"
+}
 
 # Runs an external command in its own process group and tears that whole group down at
 # the deadline. Job control is Bash's portable way to create the group on macOS 3.2,
 # where neither `timeout` nor `setsid` is part of the operating system.
 tama_external_command_run() { # <command> [args…]
   (
-    local command_pid watchdog_pid status timeout
+    local command_pid descendants status timeout watchdog_pid
     case "${TAMA_EXTERNAL_COMMAND_TIMEOUT:-}" in
-      1 | 2 | 3 | 4 | 5) timeout="$TAMA_EXTERNAL_COMMAND_TIMEOUT" ;;
+      "$TAMA_EXTERNAL_COMMAND_TIMEOUT_TEST") timeout="$TAMA_EXTERNAL_COMMAND_TIMEOUT" ;;
       *) timeout="$TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT" ;;
     esac
 
@@ -61,9 +86,13 @@ tama_external_command_run() { # <command> [args…]
     command_pid=$!
     (
       sleep "$timeout"
-      kill -TERM -- "-$command_pid" 2>/dev/null || true
-      sleep 0.1
-      kill -KILL -- "-$command_pid" 2>/dev/null || true
+      descendants="$(tama_external_command_descendants "$command_pid")"
+      if kill -0 "$command_pid" 2>/dev/null || [ -n "$descendants" ]; then
+        # Known descendants may have made their own process groups, so address both
+        # their pids and the original group.
+        # shellcheck disable=SC2086  # one numeric pid per word from ps
+        kill -KILL -- "-$command_pid" $descendants 2>/dev/null || true
+      fi
     ) >/dev/null 2>&1 &
     watchdog_pid=$!
 
@@ -206,10 +235,9 @@ tama_libnotify_send() {
   TAMA_LIBNOTIFY_SEND="$TAMA_BINARY"
 }
 
-# Runs <capability>, with the caller's arguments. `focused` returns its bounded exit
-# status because that is its answer. The resultless capabilities are backgrounded at
-# this boundary, so their failure or refusal to return cannot hold the caller. Missing
-# capabilities return TAMA_BACKEND_UNSUPPORTED. Output is always discarded.
+# Runs <capability>, with the caller's arguments, under the external-command deadline.
+# Returns its exit status, or TAMA_BACKEND_UNSUPPORTED when there is nothing to run.
+# Output is discarded; see the rules above.
 #
 # `@tama_<capability>_command` replaces one capability wholesale, which is the
 # extension point for a user whose terminal or desktop needs something nobody
@@ -224,12 +252,8 @@ tama_backend_invoke() { # <capability> [args…]
   if [ -n "$override" ]; then
     # `"$@"` inside the sh program text, so the values arrive as arguments of the
     # user's command. The `_` is $0 for that shell.
-    if [ "$capability" = focused ]; then
-      tama_external_command_run sh -c "$override \"\$@\"" _ "$@" >/dev/null 2>&1
-      return
-    fi
-    sh -c "$override \"\$@\"" _ "$@" >/dev/null 2>&1 &
-    return 0
+    tama_external_command_run sh -c "$override \"\$@\"" _ "$@" >/dev/null 2>&1
+    return
   fi
 
   tama_backend_dir
@@ -242,12 +266,7 @@ tama_backend_invoke() { # <capability> [args…]
     return "$TAMA_BACKEND_UNSUPPORTED"
   fi
 
-  if [ "$capability" = focused ]; then
-    tama_external_command_run "$target" "$@" >/dev/null 2>&1
-    return
-  fi
-  "$target" "$@" >/dev/null 2>&1 &
-  return 0
+  tama_external_command_run "$target" "$@" >/dev/null 2>&1
 }
 
 # The terminal a backend is talking about, for the two capabilities that have to name

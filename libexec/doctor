@@ -439,8 +439,7 @@ focus'
 doctor_notifications() {
   doctor_section 'notifications'
 
-  doctor_ok 'resultless capabilities run in the background'
-  doctor_more "result-bearing external commands use the built-in ${TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT}s watchdog"
+  doctor_ok "external commands use the built-in ${TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT}s watchdog"
 
   if tama_notify_enabled; then
     doctor_ok '@tama_notifications is on'

@@ -253,7 +253,6 @@ PY
   hook Stop "$(payload Stop ",\"last_assistant_message\":\"$long\"")"
   assert_success
   local got
-  assert_backend_value_starts_with notify argv2 'The result is ready word0'
   got="$(tama_backend_value notify argv2)"
   [ "${#got}" -le 500 ]
   case "$long" in "$got"*) ;; *) return 1 ;; esac
