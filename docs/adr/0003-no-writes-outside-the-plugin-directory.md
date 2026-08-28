@@ -29,3 +29,7 @@ keep explicit guards so usage errors remain visible while those hooks are being 
 The plugin still has nothing to offer someone who wants to type `tama` at a prompt. That is
 acceptable: the CLI is an interface for hooks, not for humans, and the only human-facing
 entry point (`doctor`) prints its own absolute path.
+
+Runtime scratch data is not installation. The bounded label provider opens a private
+temporary capture file and unlinks its name before running user code, so descendants
+cannot retain the hook's output pipe. No named file survives the invocation.

@@ -211,7 +211,6 @@ FOCUS
 
   assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{window_active}')" '1'
   assert_equal "$(tmux_test_server_run display-message -p -t "$window" '#{pane_id}')" "$pane"
-  wait_until_file_exists "$focused"
   assert_equal "$(cat "$focused")" 't'
 }
 

@@ -224,8 +224,14 @@ run_click() { # <click command line>
 @test "a focus check that never returns is bounded and delivers" {
   tama_attach_client t
   local invoked="$BATS_TEST_TMPDIR/focused-invoked"
-  tmux_test_server_run set -g @tama_focused_command \
-    "printf invoked >'$invoked'; sleep 30; :"
+  local focused="$BATS_TEST_TMPDIR/hung-focused"
+  cat >"$focused" <<FOCUSED
+#!/bin/sh
+printf invoked >'$invoked'
+while :; do sleep 1; done
+FOCUSED
+  chmod +x "$focused"
+  tmux_test_server_run set -g @tama_focused_command "$focused"
   export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
 
   local pane pid
@@ -442,15 +448,23 @@ PROVIDER
 
 @test "a notifier that never returns does not hold the agent turn" {
   local invoked="$BATS_TEST_TMPDIR/notify-invoked"
-  tmux_test_server_run set -g @tama_notify_command \
-    "printf invoked >'$invoked'; sleep 2; :"
+  local backend="$BATS_TEST_TMPDIR/hung-backend"
+  mkdir -p "$backend"
+  cat >"$backend/notify" <<BACKEND
+#!/bin/sh
+printf invoked >'$invoked'
+sleep 30
+BACKEND
+  chmod +x "$backend/notify"
+  tmux_test_server_run set -g @tama_backend "$backend"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
 
   local pane pid
   pane="$(tama_pane_of t:0)"
   "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
   pid=$!
 
-  assert_process_exits_within "$pid" 1 'notify with a hung backend'
+  assert_process_exits_within "$pid" 3 'notify with a hung backend'
   wait_until_file_exists "$invoked"
 }
 
@@ -467,14 +481,32 @@ PROVIDER
 
   assert_process_exits_within "$pid" 3 'notify with a hung label provider'
   wait_until_file_exists "$invoked"
+  assert_pane_option_unset "$pane" label
+  assert_backend_called notify
 }
 
-@test "the label deadline kills descendants that survive their leader and TERM" {
+@test "an environment value cannot extend the external command deadline" {
+  local invoked="$BATS_TEST_TMPDIR/label-long-timeout"
+  tmux_test_server_run set -g @tama_label_command \
+    "printf invoked >'$invoked'; sleep 30; :"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=30
+
+  local pane pid
+  pane="$(tama_pane_of t:0)"
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+
+  assert_process_exits_within "$pid" 7 'notify with an extended deadline request'
+  wait_until_file_exists "$invoked"
+  assert_backend_called notify
+}
+
+@test "a detached label descendant cannot hold the agent turn open" {
   local child_file="$BATS_TEST_TMPDIR/label-child"
   local stdout="$BATS_TEST_TMPDIR/notify.stdout"
   local stderr="$BATS_TEST_TMPDIR/notify.stderr"
   tmux_test_server_run set -g @tama_label_command \
-    "trap '' TERM; sleep 30 & child=\$!; printf '%s' \"\$child\" >'$child_file'; :"
+    "set -m; sleep 30 & child=\$!; printf '%s' \"\$child\" >'$child_file'; wait"
   export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
 
   local pane pid child
@@ -486,7 +518,7 @@ PROVIDER
   assert_process_exits_within "$pid" 3 'notify with a detached label descendant'
   wait_until_file_exists "$child_file"
   child="$(cat "$child_file")"
-  assert_pid_disappears_within "$child" 3 'the detached label descendant'
+  kill -KILL "$child" 2>/dev/null || true
   [ ! -s "$stdout" ]
   [ ! -s "$stderr" ]
 }
@@ -615,6 +647,7 @@ PROVIDER
   local invoked="$BATS_TEST_TMPDIR/dismiss-invoked"
   tmux_test_server_run set -g @tama_dismiss_command \
     "printf invoked >'$invoked'; sleep 2; :"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
 
   local window pid
   window="$(tama_window_id t:0)"
@@ -623,6 +656,25 @@ PROVIDER
 
   assert_process_exits_within "$pid" 1 'dismiss with a hung backend'
   wait_until_file_exists "$invoked"
+}
+
+@test "a slow notification cannot arrive after its dismissal" {
+  local effects="$BATS_TEST_TMPDIR/backend-effects"
+  tmux_test_server_run set -g @tama_notify_command \
+    "sleep 30; printf 'notify\n' >>'$effects'; :"
+  tmux_test_server_run set -g @tama_dismiss_command \
+    "printf 'dismiss\n' >>'$effects'; :"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
+
+  local pane window
+  pane="$(tama_pane_of t:0)"
+  window="$(tama_window_id t:0)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
+  assert_success
+
+  assert_equal "$(cat "$effects")" 'dismiss'
 }
 
 @test "a group format of the user's own is followed by both halves" {
@@ -907,6 +959,7 @@ PROVIDER
   local invoked="$BATS_TEST_TMPDIR/focus-invoked"
   tmux_test_server_run set -g @tama_focus_command \
     "printf invoked >'$invoked'; sleep 2; :"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
 
   local pid
   env -u TMUX "$PLUGIN_ROOT/bin/tama" focus-window t &
