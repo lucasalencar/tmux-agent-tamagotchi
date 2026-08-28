@@ -229,6 +229,21 @@ loaded_server() {
     'clear-priorities' 'the prefix + O binding'
 }
 
+@test "the README's session Priority binding targets the key event session by immutable id" {
+  local recipe="bind-key M-O run-shell '#{q:@tama_bin} clear-priorities --session #{q:session_id}'"
+  local conf="$BATS_TEST_TMPDIR/clear-session-priorities-binding.conf"
+  grep -qF -- "$recipe" "$README" || {
+    printf 'the README no longer carries the session-scoped clear Priorities recipe\n' >&2
+    return 1
+  }
+
+  printf '%s\n' "$recipe" >"$conf"
+  run tmux_test_server_run source-file "$conf"
+  assert_success
+  assert_contains "$(tmux_test_server_run list-keys -T prefix | grep 'M-O')" \
+    'clear-priorities --session #{q:session_id}' 'the prefix + M-O binding'
+}
+
 @test "the README does not carry a third copy of the Claude Code hook block" {
   # doctor prints that block and checks a user's settings against the same list of
   # events, and tests/doctor.bats asserts it matches the integration README's copy. A
