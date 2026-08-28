@@ -1,4 +1,4 @@
-# The plugin never writes outside its own directory
+# The plugin does not make unrequested writes outside its own directory
 
 Agent hooks are configured in files that live nowhere near the plugin, so they need an
 absolute path to the CLI. The usual answer — and what the system this replaces effectively
@@ -11,6 +11,10 @@ is. They invoke the discovered path directly and normalize a missing tmux server
 unloaded plugin, or a hook failure to silent success. Nothing is installed, nothing is
 shadowed, and the recipe works identically under TPM, a manual clone, a submodule, or a
 symlinked worktree.
+
+This restriction is about writes the plugin chooses on the user's behalf. It does not
+prohibit writing diagnostic output to a destination the user explicitly configured: that
+destination is an authorization to write there, not an installation side effect.
 
 ## Consequences
 

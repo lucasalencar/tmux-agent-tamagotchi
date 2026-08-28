@@ -7,11 +7,12 @@ A purpose-built POSIX awk recognizer provided that proof but introduced roughly 
 lines of parser implementation for one predicate.
 
 The Claude Code integration therefore requires `jq` and expresses the predicate as a jq query.
-This is an integration dependency, not a core dependency: the stable CLI still accepts plain
-arguments and never reads provider payloads (ADR-0001), while Codex, OpenCode and hand-wired
-integrations continue to work without jq. TPM and the plugin do not install system packages;
-the integration documentation gives platform package-manager commands, and `tama doctor`
-checks jq only when it finds Claude Code hooks wired.
+This is an integration dependency, not an unconditional core dependency: the stable CLI still
+accepts plain arguments and never reads provider payloads (ADR-0001), while Codex, OpenCode and
+hand-wired integrations continue to work without jq unless logging is explicitly enabled as
+described by ADR-0015. TPM and the plugin do not install system packages; the integration
+documentation gives platform package-manager commands, and `tama doctor` checks jq when a
+configured capability requires it.
 
 ## Consequences
 

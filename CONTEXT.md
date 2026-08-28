@@ -130,3 +130,10 @@ of it.
 State left on a pane that has returned to a known shell prompt after its agent exited
 without clearing it. A pane running any other command is not stale, because a live agent
 may have given that command control of the pane.
+
+## Log
+
+An opt-in, machine-readable record of the plugin's externally visible lifecycle: received
+commands, resulting decisions, attempted effects, and their outcomes. It excludes raw agent
+content and internal operations that do not explain user-visible behavior.
+_Avoid_: Diagnostic trace, command log
