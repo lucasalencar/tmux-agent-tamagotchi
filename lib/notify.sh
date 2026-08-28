@@ -31,21 +31,25 @@ tama_notify_enabled() {
   tama_opt_enabled tama_notifications on
 }
 
-# Opens a private capture path without depending on `mktemp`. The caller opens read and
-# write descriptors and unlinks it before running user code, so a detached descendant
-# can keep only the anonymous file — never the hook's command-substitution pipe.
-# shellcheck disable=SC2034  # TAMA_NOTIFY_CAPTURE is read by the caller
+# Opens a private capture directory without depending on `mktemp`. The caller opens
+# read and write descriptors and removes both names before running user code, so a
+# detached descendant can keep only the anonymous file — never the hook's pipe.
+# shellcheck disable=SC2034  # capture globals are read by the caller
 tama_notify_capture_open() {
   local attempt=0 directory="${TMPDIR:-/tmp}"
   TAMA_NOTIFY_CAPTURE=''
+  TAMA_NOTIFY_CAPTURE_DIR=''
   while [ "$attempt" -lt 10 ]; do
-    TAMA_NOTIFY_CAPTURE="$directory/tama-label-$$-$RANDOM-$attempt"
-    if (umask 077; set -o noclobber; : >"$TAMA_NOTIFY_CAPTURE") 2>/dev/null; then
+    TAMA_NOTIFY_CAPTURE_DIR="$directory/tama-label-$$-$RANDOM-$attempt"
+    if (umask 077; mkdir "$TAMA_NOTIFY_CAPTURE_DIR") 2>/dev/null; then
+      TAMA_NOTIFY_CAPTURE="$TAMA_NOTIFY_CAPTURE_DIR/output"
+      (umask 077; : >"$TAMA_NOTIFY_CAPTURE") || return 1
       return 0
     fi
     attempt=$((attempt + 1))
   done
   TAMA_NOTIFY_CAPTURE=''
+  TAMA_NOTIFY_CAPTURE_DIR=''
   return 1
 }
 
@@ -77,7 +81,7 @@ tama_notify_title() { # <pane_id>
 # A configured provider receives the window id; only its first storable line is used.
 # shellcheck disable=SC2034  # TAMA_NOTIFY_LABEL is read by the caller
 tama_notify_label() {
-  local command label
+  local command label status
   TAMA_NOTIFY_LABEL=''
   command="$(tama_opt tama_label_command '')"
   [ -n "$command" ] || return 0
@@ -91,10 +95,18 @@ tama_notify_label() {
   # shellcheck disable=SC2094
   exec 8>"$TAMA_NOTIFY_CAPTURE" 9<"$TAMA_NOTIFY_CAPTURE"
   rm -f "$TAMA_NOTIFY_CAPTURE"
-  tama_external_command_run sh -c "$command \"\$1\"" _ "$TAMA_WINDOW_ID" \
-    >&8 2>/dev/null || true
+  rmdir "$TAMA_NOTIFY_CAPTURE_DIR" 2>/dev/null || true
+  # A label is one short line. Bound the backing file as well as time so a provider
+  # cannot consume unbounded disk or memory before it reaches a newline.
+  (ulimit -f 2; tama_external_command_run sh -c "$command \"\$1\"" _ \
+    "$TAMA_WINDOW_ID") >&8 2>/dev/null
+  status=$?
   exec 8>&-
-  IFS= read -r label <&9 || true
+  if [ "$status" -eq 0 ]; then
+    IFS= read -r label <&9 || true
+  else
+    label=''
+  fi
   exec 9<&-
 
   # One line. A provider that prints several has said one thing and then said more.
@@ -261,6 +273,7 @@ tama_notify_dismiss() {
   export TAMA_GROUP
 
   # A banner that would not go away is not worth a word out of an agent's hook, still
-  # less a failed turn. The resultless capability runs in the background.
+  # less a failed turn. The synchronous call is bounded by the watchdog; a backend
+  # may hand work to the desktop only after that work is safely accepted.
   tama_backend_invoke dismiss "$TAMA_NOTIFY_GROUP" || true
 }

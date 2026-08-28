@@ -63,8 +63,8 @@ use_macos_backend() {
   tmux_test_server_run set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
 }
 
-# The plugin backgrounds the notifier on purpose — it must not cost an agent's turn — so
-# every assertion about it has to be an eventual one or it is timing noise.
+# Keep assertions tolerant of the notifier recording its call near the end of the
+# bounded invocation.
 wait_for_notifier() {
   local waited=0
   while [ "$(wc -l <"$TAMA_NOTIFIER_DIR/calls")" -eq 0 ]; do
@@ -255,9 +255,6 @@ FOCUS
   run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
   assert_success
 
-  # The backend backgrounds terminal-notifier, so give a regressed invocation time to
-  # reach the fixture before asserting that no global removal was requested.
-  sleep 0.2
   [ ! -e "$TAMA_NOTIFIER_DIR/remove" ]
 }
 

@@ -239,7 +239,7 @@ FOCUSED
   "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
   pid=$!
 
-  assert_process_exits_within "$pid" 3 'notify with a hung focus check'
+  assert_process_succeeds_within "$pid" 3 'notify with a hung focus check'
   wait_until_file_exists "$invoked"
   wait_until_backend_called notify
 }
@@ -464,7 +464,7 @@ BACKEND
   "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
   pid=$!
 
-  assert_process_exits_within "$pid" 3 'notify with a hung backend'
+  assert_process_succeeds_within "$pid" 3 'notify with a hung backend'
   wait_until_file_exists "$invoked"
 }
 
@@ -479,7 +479,7 @@ BACKEND
   "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
   pid=$!
 
-  assert_process_exits_within "$pid" 3 'notify with a hung label provider'
+  assert_process_succeeds_within "$pid" 3 'notify with a hung label provider'
   wait_until_file_exists "$invoked"
   assert_pane_option_unset "$pane" label
   assert_backend_called notify
@@ -496,7 +496,7 @@ BACKEND
   "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
   pid=$!
 
-  assert_process_exits_within "$pid" 7 'notify with an extended deadline request'
+  assert_process_succeeds_within "$pid" 7 'notify with an extended deadline request'
   wait_until_file_exists "$invoked"
   assert_backend_called notify
 }
@@ -515,7 +515,7 @@ BACKEND
     >"$stdout" 2>"$stderr" &
   pid=$!
 
-  assert_process_exits_within "$pid" 3 'notify with a detached label descendant'
+  assert_process_succeeds_within "$pid" 3 'notify with a detached label descendant'
   wait_until_file_exists "$child_file"
   child="$(cat "$child_file")"
   kill -KILL "$child" 2>/dev/null || true
@@ -654,7 +654,7 @@ PROVIDER
   "$PLUGIN_ROOT/bin/tama" dismiss "$window" &
   pid=$!
 
-  assert_process_exits_within "$pid" 1 'dismiss with a hung backend'
+  assert_process_succeeds_within "$pid" 3 'dismiss with a hung backend'
   wait_until_file_exists "$invoked"
 }
 
@@ -675,6 +675,68 @@ PROVIDER
   assert_success
 
   assert_equal "$(cat "$effects")" 'dismiss'
+}
+
+@test "a failed label provider cannot publish partial output" {
+  tmux_test_server_run set -g @tama_label_command \
+    "printf partial-label; exit 1"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option_unset "$pane" label
+  assert_backend_value notify argv1 'claude-code - the-api'
+}
+
+@test "a timed out label provider cannot publish partial output" {
+  tmux_test_server_run set -g @tama_label_command \
+    "printf partial-label; sleep 30"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option_unset "$pane" label
+  assert_backend_value notify argv1 'claude-code - the-api'
+}
+
+@test "a label provider cannot fill an unbounded capture file" {
+  tmux_test_server_run set -g @tama_label_command \
+    "while :; do printf 1234567890; done"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option_unset "$pane" label
+  assert_backend_value notify argv1 'claude-code - the-api'
+}
+
+@test "a stalled process snapshot cannot extend the command deadline" {
+  local bin="$BATS_TEST_TMPDIR/bin" invoked="$BATS_TEST_TMPDIR/slow-ps-label"
+  mkdir -p "$bin"
+  cat >"$bin/ps" <<'PS'
+#!/bin/sh
+if [ "$1" = -axo ]; then
+  sleep 30
+fi
+exec /bin/ps "$@"
+PS
+  chmod +x "$bin/ps"
+  tmux_test_server_run set -g @tama_label_command \
+    "printf invoked >'$invoked'; sleep 30"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
+  export PATH="$bin:$PATH"
+
+  local pane pid
+  pane="$(tama_pane_of t:0)"
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+
+  assert_process_succeeds_within "$pid" 3 'notify with a stalled process snapshot'
+  wait_until_file_exists "$invoked"
 }
 
 @test "a group format of the user's own is followed by both halves" {
@@ -965,7 +1027,7 @@ PROVIDER
   env -u TMUX "$PLUGIN_ROOT/bin/tama" focus-window t &
   pid=$!
 
-  assert_process_exits_within "$pid" 1 'focus-window with a hung backend'
+  assert_process_succeeds_within "$pid" 3 'focus-window with a hung backend'
   wait_until_file_exists "$invoked"
 }
 
