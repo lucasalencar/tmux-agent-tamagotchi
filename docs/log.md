@@ -41,6 +41,8 @@ The event families are `integration.received`, `integration.classified`, `hook.s
 include relevant `state_before` and `state_after` groups. Physical line order is the authoritative
 arrival order. Timestamps correlate with other systems but do not impose a total order on
 concurrent processes; correlation and parent-operation IDs describe causal relationships.
+OpenCode gives a native lifecycle event and every effect reduced from it one correlation,
+including skipped classifications for unknown or malformed events.
 
 The allowlist includes operation names, outcomes, reasons, supported state values, counts,
 booleans, integration/backend capability names, process IDs, and tmux IDs. It excludes provider

@@ -187,6 +187,20 @@ Plugin directory: $TAMA_PLUGIN_DIR
 EOF
 }
 
+tama_run_with_log_results() { # <command-file> [args...]
+  local command_file="$1" logged_results=''
+  shift
+  TAMA_LOG_RESULT_FD=3
+  export TAMA_LOG_RESULT_FD
+  # fd 3 is captured for the private outcome protocol while fd 1 remains the
+  # command's real stdout. This keeps hook-safe status separate without another
+  # filesystem write or an interruptible temporary artifact.
+  logged_results="$("$command_file" "$@" 3>&1 1>&4)" 4>&1
+  TAMA_LOGGED_COMMAND_STATUS=$?
+  tama_log_outcome_from_results "$logged_results"
+  TAMA_LOGGED_COMMAND_OUTCOME="$TAMA_LOG_OUTCOME"
+}
+
 main() {
   [ "$#" -gt 0 ] || die_usage 'no subcommand given'
 
@@ -238,10 +252,22 @@ main() {
     *) require_tmux ;;
   esac
 
-  case "$subcommand" in
-    doctor | setup | icons | summary | list) exec "$command_file" "$@" ;;
-  esac
+  case "$subcommand" in doctor | setup) exec "$command_file" "$@" ;; esac
   [ -n "${TAMA_LOG_FILE:-}" ] || exec "$command_file" "$@"
+
+  case "$subcommand" in
+    icons | summary | list)
+      tama_log_command_prepare
+      tama_run_with_log_results "$command_file" "$@"
+      if [ "$TAMA_LOGGED_COMMAND_STATUS" -ne 0 ] ||
+        [ "$TAMA_LOGGED_COMMAND_OUTCOME" = failed ]; then
+        tama_log_write command.started "$subcommand"
+        tama_log_command_complete "$subcommand" "$TAMA_LOGGED_COMMAND_STATUS" \
+          "$TAMA_LOGGED_COMMAND_OUTCOME"
+      fi
+      return "$TAMA_LOGGED_COMMAND_STATUS"
+      ;;
+  esac
 
   tama_log_command_start "$subcommand"
   if [ -n "${TAMA_LOG_INTEGRATION:-}" ] && [ -n "${TAMA_LOG_INTEGRATION_EVENT:-}" ]; then
@@ -250,25 +276,10 @@ main() {
     tama_log_integration integration.classified "$TAMA_LOG_INTEGRATION" \
       "$TAMA_LOG_INTEGRATION_EVENT" applied
   fi
-  local result_file=''
-  result_file="$(mktemp /tmp/tama-log-result.XXXXXX 2>/dev/null)" || result_file=''
-  TAMA_LOG_RESULT_FILE="$result_file"
-  export TAMA_LOG_RESULT_FILE
-  "$command_file" "$@"
-  local status=$?
-  local logged_outcome='' result
-  if [ -n "$result_file" ]; then
-    while IFS= read -r result; do
-      case "$result" in
-        failed) logged_outcome=failed; break ;;
-        applied) [ "$logged_outcome" = failed ] || logged_outcome=applied ;;
-        skipped) [ -n "$logged_outcome" ] || logged_outcome=skipped ;;
-      esac
-    done <"$result_file"
-    rm -f -- "$result_file"
-  fi
-  tama_log_command_complete "$subcommand" "$status" "$logged_outcome"
-  return "$status"
+  tama_run_with_log_results "$command_file" "$@"
+  tama_log_command_complete "$subcommand" "$TAMA_LOGGED_COMMAND_STATUS" \
+    "$TAMA_LOGGED_COMMAND_OUTCOME"
+  return "$TAMA_LOGGED_COMMAND_STATUS"
 }
 
 main "$@"

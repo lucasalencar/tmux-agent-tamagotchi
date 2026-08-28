@@ -55,8 +55,10 @@ tama_stale_sweep_server() {
 #
 # Never fails: every caller is a hook or a key binding, where a non-zero exit is
 # noise in the server log and nothing a user can act on.
+# shellcheck disable=SC2034 # TAMA_STALE_SWEEP_STATUS is read by command owners.
 _tama_stale_sweep() { # <list-panes …>
   local raw line pane window_id flags current found=0 changed_windows=''
+  TAMA_STALE_SWEEP_STATUS=skipped
 
   # A window or a pane that has gone between the event and this running is nothing
   # to do, not an error.
@@ -106,6 +108,7 @@ EOF
   [ "$found" = 1 ] || return 0
   # An icon going away is a change the user sees, so this is worth the redraw.
   tama_batch_flush 'no' || true
+  TAMA_STALE_SWEEP_STATUS="$TAMA_BATCH_WRITE_STATUS"
   while IFS= read -r window_id; do
     [ -n "$window_id" ] || continue
     tama_summary_refresh_window "$window_id"

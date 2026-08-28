@@ -3,8 +3,12 @@
 
 set -o nounset
 
-# shellcheck source=lib/log.sh
-. "$TAMA_PLUGIN_DIR/lib/log.sh"
+if [ -n "${TAMA_LOG_FILE:-}" ]; then
+  # shellcheck source=lib/log.sh
+  . "$TAMA_PLUGIN_DIR/lib/log.sh"
+else
+  tama_log_integration() { :; }
+fi
 
 [ -n "${TAMA_BIN:-}" ] || exit 0
 
@@ -328,15 +332,19 @@ case "$TAMA_CODEX_EVENT" in
     fi
     ;;
   SubagentStart)
-    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
     if codex_text_field agent_id top; then
+      tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
       "$TAMA_BIN" state subagent-start "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true
+    else
+      tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" skipped malformed_event
     fi
     ;;
   SubagentStop)
-    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
     if codex_text_field agent_id top; then
+      tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
       "$TAMA_BIN" state subagent-stop "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true
+    else
+      tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" skipped malformed_event
     fi
     # Codex requires a JSON response from every successful SubagentStop hook.
     printf '{}'

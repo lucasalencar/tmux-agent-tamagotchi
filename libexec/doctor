@@ -208,15 +208,15 @@ doctor_log() {
       doctor_fail "the configured Log is not writable: $path"
       return 0
     fi
-    mode="$(stat -f '%Lp' "$path" 2>/dev/null || stat -c '%a' "$path" 2>/dev/null || true)"
+    mode="$(stat -L -f '%Lp' "$path" 2>/dev/null || stat -L -c '%a' "$path" 2>/dev/null || true)"
     case "$mode" in
       *[1-7][0-7] | *[0-7][1-7])
         doctor_warn "the existing Log permissions are broad ($mode): $path"
         doctor_more 'Existing permissions are preserved; narrow them explicitly if needed.'
         ;;
     esac
-  elif [ ! -w "$parent" ]; then
-    doctor_fail "the Log parent directory is not writable: $parent"
+  elif [ ! -w "$parent" ] || [ ! -x "$parent" ]; then
+    doctor_fail "the Log parent directory is not writable and searchable: $parent"
     return 0
   fi
   doctor_ok "logging is usable at $path"
