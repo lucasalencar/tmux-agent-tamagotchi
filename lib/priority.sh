@@ -30,7 +30,7 @@ tama_priority_counts() {
   [ "$TAMA_PRIORITY_COUNTS_READY" = no ] || return 0
   TAMA_TOTAL_WINDOW_COUNT=0
   TAMA_PRIORITY_WINDOW_COUNT=0
-  records="$(tama_priority_records)" || records=''
+  records="$(tama_priority_records '')" || records=''
 
   while IFS= read -r record; do
     [ -n "$record" ] || continue
