@@ -3,7 +3,7 @@
 
 set -o nounset
 
-# shellcheck source=../../lib/log.sh
+# shellcheck source=lib/log.sh
 . "$TAMA_PLUGIN_DIR/lib/log.sh"
 
 [ -n "${TAMA_BIN:-}" ] || exit 0

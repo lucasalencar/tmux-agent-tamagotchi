@@ -175,7 +175,7 @@ tama_libnotify_send() {
 # arguments are appended as arguments rather than pasted into it — a notification
 # message is arbitrary text and must never be read as shell.
 tama_backend_invoke() { # <capability> [args…]
-  local capability="$1" override target status outcome reason='' effect_id started_at
+  local capability="$1" override target status outcome effect_id started_at
   shift
 
   effect_id="e-$$-${RANDOM:-0}"
