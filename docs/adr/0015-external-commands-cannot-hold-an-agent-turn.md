@@ -8,14 +8,13 @@ watchdog, which sends `KILL` at the deadline. Keeping
 the calls synchronous preserves ordering: in particular, a slow `notify` cannot arrive
 after a later `dismiss` and leave an orphaned banner.
 
-Process groups handle ordinary descendants cheaply and are killed before any auxiliary
-inspection can extend the deadline. The watchdog then makes a best-effort process-tree
-snapshot for children still attributable to the command after creating another group.
-Label output is
+Process groups handle ordinary descendants cheaply. A capability that backgrounds work
+has that group killed as soon as its leader returns, avoiding both leaked work and a
+delayed signal aimed at a recycled process-group id. Label output is
 captured through a private temporary file whose name is unlinked before user code runs;
 therefore even a child that detaches and is reparented cannot retain the hook's output
-pipe. Bash job control and the platform `ps` provide this without adding `timeout`,
-`gtimeout`, `setsid`, or `mktemp` as a dependency.
+pipe. Bash job control provides this without adding `timeout`, `gtimeout`, `setsid`, or
+`mktemp` as a dependency.
 
 The deadline cannot be extended through configuration or the environment. Tests may
 select the named one-second test deadline.

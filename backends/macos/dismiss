@@ -33,7 +33,7 @@ main() {
 
   tama_macos_notifier || exit 0
 
-  "$TAMA_MACOS_NOTIFIER" -remove "$group" >/dev/null 2>&1 &
+  "$TAMA_MACOS_NOTIFIER" -remove "$group" >/dev/null 2>&1
 }
 
 main "$@"
