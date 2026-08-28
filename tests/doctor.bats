@@ -140,9 +140,17 @@ PROVIDER
   assert_output_contains "executable file: $provider"
   assert_output_contains "@tama_label_command runs $provider
        It runs synchronously inside the agent hook that asks for a label"
-  assert_output_contains 'has no timeout'
+  assert_output_contains 'It is bounded by the same built-in 5s watchdog.'
   assert_output_contains 'no problems and no warnings'
   [ ! -e "$marker" ]
+}
+
+@test "doctor reports that external commands are bounded without an optional dependency" {
+  healthy_server
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'external commands are bounded by the built-in 5s watchdog'
 }
 
 @test "doctor resolves the documented home-relative label provider without running it" {
@@ -202,7 +210,7 @@ PROVIDER
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains '@tama_label_command is set, but its executable cannot be checked without evaluating shell syntax'
-  assert_output_contains 'has no timeout'
+  assert_output_contains 'It is bounded by the same built-in 5s watchdog.'
   refute_output_contains '--token'
   refute_output_contains 'secret-value'
   [ ! -e "$marker" ]
@@ -283,7 +291,7 @@ PROVIDER
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains '@tama_label_command is set, but its executable cannot be checked without evaluating shell syntax'
-  assert_output_contains 'has no timeout'
+  assert_output_contains 'It is bounded by the same built-in 5s watchdog.'
 }
 
 @test "doctor leaves relative provider paths to the hook working directory" {
@@ -300,7 +308,7 @@ PROVIDER
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains '@tama_label_command runs ./label-provider, whose relative path depends on the hook working directory'
-  assert_output_contains 'has no timeout'
+  assert_output_contains 'It is bounded by the same built-in 5s watchdog.'
   [ ! -e "$marker" ]
 }
 
@@ -365,7 +373,7 @@ PROVIDER
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains '@tama_label_command runs ~/bin/label-provider, but this shell has no HOME to resolve it'
-  assert_output_contains 'has no timeout'
+  assert_output_contains 'It is bounded by the same built-in 5s watchdog.'
 }
 
 @test "doctor fails when the configured label provider does not exist" {

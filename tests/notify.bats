@@ -221,6 +221,31 @@ run_click() { # <click command line>
   assert_backend_called notify
 }
 
+@test "a focus check that never returns is bounded and delivers" {
+  tama_attach_client t
+  tmux_test_server_run set -g @tama_focused_command 'sleep 30; :'
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=0.1
+
+  local pane pid waited=0
+  pane="$(tama_pane_of t:0)"
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+
+  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    printf 'notify was still waiting on its focus check after 1s\n' >&2
+    return 1
+  fi
+
+  wait "$pid"
+  wait_until_backend_called notify
+}
+
 @test "suppression can be turned off, and then nothing is asked or dropped" {
   tmux_test_server_run set -g @tama_suppress_when_focused off
   tama_attach_client t
@@ -423,6 +448,52 @@ PROVIDER
   assert_backend_value notify argv1 'claude-code - the-api'
 }
 
+@test "a notifier that never returns does not hold the agent turn" {
+  tmux_test_server_run set -g @tama_notify_command 'sleep 30; :'
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=0.1
+
+  local pane pid waited=0
+  pane="$(tama_pane_of t:0)"
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+
+  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    printf 'notify was still waiting on its backend after 1s\n' >&2
+    return 1
+  fi
+
+  wait "$pid"
+}
+
+@test "a label provider that never returns does not hold the agent turn" {
+  tmux_test_server_run set -g @tama_label_command 'sleep 30; :'
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=0.1
+
+  local pane pid waited=0
+  pane="$(tama_pane_of t:0)"
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+
+  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    printf 'notify was still waiting on its label provider after 1s\n' >&2
+    return 1
+  fi
+
+  wait "$pid"
+}
+
 @test "a label the plugin cannot store is no label" {
   # A value with a control character in it comes back from a tmux option changed or
   # escaped depending on the version and the locale, so the title would be nonsense
@@ -541,6 +612,29 @@ PROVIDER
   assert_backend_called dismiss
   assert_backend_value dismiss argv1 "$group"
   assert_backend_value dismiss env.TAMA_GROUP "$group"
+}
+
+@test "a dismiss capability that never returns does not hold the caller" {
+  tmux_test_server_run set -g @tama_dismiss_command 'sleep 30; :'
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=0.1
+
+  local window pid waited=0
+  window="$(tama_window_id t:0)"
+  "$PLUGIN_ROOT/bin/tama" dismiss "$window" &
+  pid=$!
+
+  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    printf 'dismiss was still waiting on its backend after 1s\n' >&2
+    return 1
+  fi
+
+  wait "$pid"
 }
 
 @test "a group format of the user's own is followed by both halves" {
@@ -819,6 +913,28 @@ PROVIDER
   assert_backend_called focus
   assert_backend_value focus argv1 t
   assert_backend_value focus env.TAMA_SESSION t
+}
+
+@test "a focus capability that never returns does not hold the caller" {
+  tmux_test_server_run set -g @tama_focus_command 'sleep 30; :'
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=0.1
+
+  local pid waited=0
+  env -u TMUX "$PLUGIN_ROOT/bin/tama" focus-window t &
+  pid=$!
+
+  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    printf 'focus-window was still waiting on its backend after 1s\n' >&2
+    return 1
+  fi
+
+  wait "$pid"
 }
 
 @test "a session name a shell would act on survives the click" {

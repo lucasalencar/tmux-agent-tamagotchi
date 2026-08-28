@@ -10,7 +10,7 @@
 # beyond making it runnable — see the `PATH` note below.
 #
 # Backgrounded, deliberately. This runs inside an agent's hook, on the turn the user is
-# waiting for, and there is no timeout to save them: `terminal-notifier` talks to the
+# waiting for. The core watchdog is the last resort: `terminal-notifier` talks to the
 # notification server and has been seen to take the better part of a second the first
 # time it runs after a login. The banner is worth nothing if it costs the turn, and
 # nothing here has an answer anybody waits for — the exit status of `notify` is

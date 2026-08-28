@@ -99,15 +99,7 @@ deliver() { # <target> <agent_name> <message>
   TAMA_CLICK="$TAMA_NOTIFY_CLICK"
   export TAMA_GROUP TAMA_PANE_ID TAMA_AGENT TAMA_CLICK
 
-  tama_backend_invoke notify "$TAMA_NOTIFY_TITLE" "$message" || backend_status=$?
-  if [ "$backend_status" -ne 0 ]; then
-    if [ "$backend_status" -eq "$TAMA_BACKEND_UNSUPPORTED" ] && [ "$flag" = yes ]; then
-      : # The requested Flag was still applied.
-    else
-      outcome=failed
-    fi
-  fi
-  tama_log_command_result "$outcome"
+  tama_external_command_run tama_backend_invoke notify "$TAMA_NOTIFY_TITLE" "$message" || true
 }
 
 main() {
