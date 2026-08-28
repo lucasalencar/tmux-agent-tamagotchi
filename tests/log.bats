@@ -139,6 +139,18 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
+@test "concurrent appenders leave every physical line as complete JSON" {
+  local log="$BATS_TEST_TMPDIR/concurrent.jsonl" index
+
+  for index in 1 2 3 4 5 6; do
+    TAMA_LOG_FILE="$log" "$PLUGIN_ROOT/bin/tama" state running --pane "$PANE" &
+  done
+  wait
+
+  [ "$(wc -l <"$log" | tr -d ' ')" -ge 12 ]
+  jq -e . "$log" >/dev/null
+}
+
 @test "an unknown integration event is recorded as skipped without its payload" {
   local log="$BATS_TEST_TMPDIR/unknown.jsonl"
 
