@@ -65,6 +65,29 @@ teardown() {
   assert_window_option_unset "$unlinked" window_priority
 }
 
+@test "clear-priorities limits removal to distinct tmux windows in an explicit session" {
+  tmux_test_server_run new-window -d -t t: -n shared
+  tmux_test_server_run new-session -d -s other
+  tmux_test_server_run link-window -s t:shared -t other:
+  local first shared unrelated session
+  first="$(tama_window_id t:0)"
+  shared="$(tama_window_id t:shared)"
+  unrelated="$(tama_window_id other:0)"
+  session="$(tmux_test_server_run display-message -p -t t: '#{session_id}')"
+  tmux_test_server_run set -w -t "$first" @tama_window_priority on
+  tmux_test_server_run set -w -t "$shared" @tama_window_priority on
+  tmux_test_server_run set -w -t "$unrelated" @tama_window_priority on
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities --session "$session"
+
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+  assert_window_option_unset "$first" window_priority
+  assert_window_option_unset "$shared" window_priority
+  assert_equal "$(tmux_test_server_run show -wqv -t "$unrelated" @tama_window_priority)" on
+}
+
 @test "clear-priorities reports a partial failure after clearing the remaining snapshot" {
   tmux_test_server_run new-window -d -t t:
   local failed cleared
@@ -94,6 +117,14 @@ teardown() {
   assert_status 1
   [ -z "$output" ]
   [ -z "$stderr" ]
+}
+
+@test "clear-priorities diagnoses a missing immutable session target" {
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities --session '$999'
+
+  assert_status 1
+  [ -z "$output" ]
+  assert_equal "$stderr" "tama: cannot clear Priority: session \$999 is unavailable"
 }
 
 @test "clear-priorities preserves unrelated tmux data and is idempotent" {
@@ -126,11 +157,23 @@ teardown() {
 @test "clear-priorities rejects options and positional arguments as usage errors" {
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities --all
   assert_status 2
-  assert_stderr_contains 'tama: clear-priorities takes no arguments, got: --all'
+  assert_stderr_contains 'tama: unknown option: --all'
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities extra
   assert_status 2
-  assert_stderr_contains 'tama: clear-priorities takes no arguments, got: extra'
+  assert_stderr_contains 'tama: clear-priorities takes no positional arguments, got: extra'
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities --session
+  assert_status 2
+  assert_stderr_contains 'tama: --session needs a session id'
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities --session t
+  assert_status 2
+  assert_stderr_contains 'tama: --session needs an immutable session id'
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities --session '$0' --session '$1'
+  assert_status 2
+  assert_stderr_contains 'tama: clear-priorities accepts --session once'
 }
 
 @test "the default limit rejects a second Priority among two tmux windows" {

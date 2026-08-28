@@ -79,7 +79,8 @@ Commands:
   icons <window_id>     Print pane-state icons in pane order.
   toggle-priority --window <target>
                         Toggle Priority for one explicit tmux window.
-  clear-priorities      Clear Priority from every tmux window in the server.
+  clear-priorities [--session <session_id>]
+                        Clear Priority server-wide or in one explicit session.
   flag [target]         Mark a window. No-op for the current window.
   unflag [target]       Clear a window mark.
   notify <agent> <msg>  Request eligible Flag and Notification channels.
