@@ -223,26 +223,18 @@ run_click() { # <click command line>
 
 @test "a focus check that never returns is bounded and delivers" {
   tama_attach_client t
-  tmux_test_server_run set -g @tama_focused_command 'sleep 30; :'
-  export TAMA_EXTERNAL_COMMAND_TIMEOUT=0.1
+  local invoked="$BATS_TEST_TMPDIR/focused-invoked"
+  tmux_test_server_run set -g @tama_focused_command \
+    "printf invoked >'$invoked'; sleep 30; :"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
 
-  local pane pid waited=0
+  local pane pid
   pane="$(tama_pane_of t:0)"
   "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
   pid=$!
 
-  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
-    sleep 0.05
-    waited=$((waited + 1))
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-    printf 'notify was still waiting on its focus check after 1s\n' >&2
-    return 1
-  fi
-
-  wait "$pid"
+  assert_process_exits_within "$pid" 3 'notify with a hung focus check'
+  wait_until_file_exists "$invoked"
   wait_until_backend_called notify
 }
 
@@ -449,49 +441,54 @@ PROVIDER
 }
 
 @test "a notifier that never returns does not hold the agent turn" {
-  tmux_test_server_run set -g @tama_notify_command 'sleep 30; :'
-  export TAMA_EXTERNAL_COMMAND_TIMEOUT=0.1
+  local invoked="$BATS_TEST_TMPDIR/notify-invoked"
+  tmux_test_server_run set -g @tama_notify_command \
+    "printf invoked >'$invoked'; sleep 2; :"
 
-  local pane pid waited=0
+  local pane pid
   pane="$(tama_pane_of t:0)"
   "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
   pid=$!
 
-  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
-    sleep 0.05
-    waited=$((waited + 1))
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-    printf 'notify was still waiting on its backend after 1s\n' >&2
-    return 1
-  fi
-
-  wait "$pid"
+  assert_process_exits_within "$pid" 1 'notify with a hung backend'
+  wait_until_file_exists "$invoked"
 }
 
 @test "a label provider that never returns does not hold the agent turn" {
-  tmux_test_server_run set -g @tama_label_command 'sleep 30; :'
-  export TAMA_EXTERNAL_COMMAND_TIMEOUT=0.1
+  local invoked="$BATS_TEST_TMPDIR/label-invoked"
+  tmux_test_server_run set -g @tama_label_command \
+    "printf invoked >'$invoked'; sleep 30; :"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
 
-  local pane pid waited=0
+  local pane pid
   pane="$(tama_pane_of t:0)"
   "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
   pid=$!
 
-  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
-    sleep 0.05
-    waited=$((waited + 1))
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-    printf 'notify was still waiting on its label provider after 1s\n' >&2
-    return 1
-  fi
+  assert_process_exits_within "$pid" 3 'notify with a hung label provider'
+  wait_until_file_exists "$invoked"
+}
 
-  wait "$pid"
+@test "the label deadline kills descendants that survive their leader and TERM" {
+  local child_file="$BATS_TEST_TMPDIR/label-child"
+  local stdout="$BATS_TEST_TMPDIR/notify.stdout"
+  local stderr="$BATS_TEST_TMPDIR/notify.stderr"
+  tmux_test_server_run set -g @tama_label_command \
+    "trap '' TERM; sleep 30 & child=\$!; printf '%s' \"\$child\" >'$child_file'; :"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
+
+  local pane pid child
+  pane="$(tama_pane_of t:0)"
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" \
+    >"$stdout" 2>"$stderr" &
+  pid=$!
+
+  assert_process_exits_within "$pid" 3 'notify with a detached label descendant'
+  wait_until_file_exists "$child_file"
+  child="$(cat "$child_file")"
+  assert_pid_disappears_within "$child" 3 'the detached label descendant'
+  [ ! -s "$stdout" ]
+  [ ! -s "$stderr" ]
 }
 
 @test "a label the plugin cannot store is no label" {
@@ -615,26 +612,17 @@ PROVIDER
 }
 
 @test "a dismiss capability that never returns does not hold the caller" {
-  tmux_test_server_run set -g @tama_dismiss_command 'sleep 30; :'
-  export TAMA_EXTERNAL_COMMAND_TIMEOUT=0.1
+  local invoked="$BATS_TEST_TMPDIR/dismiss-invoked"
+  tmux_test_server_run set -g @tama_dismiss_command \
+    "printf invoked >'$invoked'; sleep 2; :"
 
-  local window pid waited=0
+  local window pid
   window="$(tama_window_id t:0)"
   "$PLUGIN_ROOT/bin/tama" dismiss "$window" &
   pid=$!
 
-  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
-    sleep 0.05
-    waited=$((waited + 1))
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-    printf 'dismiss was still waiting on its backend after 1s\n' >&2
-    return 1
-  fi
-
-  wait "$pid"
+  assert_process_exits_within "$pid" 1 'dismiss with a hung backend'
+  wait_until_file_exists "$invoked"
 }
 
 @test "a group format of the user's own is followed by both halves" {
@@ -916,25 +904,16 @@ PROVIDER
 }
 
 @test "a focus capability that never returns does not hold the caller" {
-  tmux_test_server_run set -g @tama_focus_command 'sleep 30; :'
-  export TAMA_EXTERNAL_COMMAND_TIMEOUT=0.1
+  local invoked="$BATS_TEST_TMPDIR/focus-invoked"
+  tmux_test_server_run set -g @tama_focus_command \
+    "printf invoked >'$invoked'; sleep 2; :"
 
-  local pid waited=0
+  local pid
   env -u TMUX "$PLUGIN_ROOT/bin/tama" focus-window t &
   pid=$!
 
-  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
-    sleep 0.05
-    waited=$((waited + 1))
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-    printf 'focus-window was still waiting on its backend after 1s\n' >&2
-    return 1
-  fi
-
-  wait "$pid"
+  assert_process_exits_within "$pid" 1 'focus-window with a hung backend'
+  wait_until_file_exists "$invoked"
 }
 
 @test "a session name a shell would act on survives the click" {
@@ -1016,6 +995,7 @@ NOTIFIER
   assert_success
 
   refute_backend_called notify
+  wait_until_file_exists "$TAMA_TEST_LOG.own.argc"
   # The user's own flag first, then the two the contract promises.
   assert_equal "$(cat "$TAMA_TEST_LOG.own.argc")" '3'
   assert_equal "$(cat "$TAMA_TEST_LOG.own.argv1")" '--loud'

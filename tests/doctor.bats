@@ -145,12 +145,13 @@ PROVIDER
   [ ! -e "$marker" ]
 }
 
-@test "doctor reports that external commands are bounded without an optional dependency" {
+@test "doctor reports how external commands are kept off the hook path" {
   healthy_server
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains 'external commands are bounded by the built-in 5s watchdog'
+  assert_output_contains 'resultless capabilities run in the background'
+  assert_output_contains 'result-bearing external commands use the built-in 5s watchdog'
 }
 
 @test "doctor resolves the documented home-relative label provider without running it" {
