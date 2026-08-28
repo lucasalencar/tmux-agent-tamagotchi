@@ -289,23 +289,15 @@ case "$TAMA_CODEX_EVENT" in
     # Only the common top-level agent_id signals delegation. Nested tool input
     # may legitimately use the same field name without belonging to a subagent.
     if codex_text_field agent_id top; then
+      tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" skipped delegated_event
       exit 0
     fi
     ;;
 esac
 
 case "$TAMA_CODEX_EVENT" in
-  SessionStart | UserPromptSubmit | PostToolUse | PreToolUse | PermissionRequest | \
-    SubagentStart | SubagentStop | Stop | SessionEnd | PreCompact | PostCompact)
-    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
-    ;;
-  *)
-    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" skipped unknown_event
-    ;;
-esac
-
-case "$TAMA_CODEX_EVENT" in
   SessionStart)
+    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
     if codex_token_field source; then
       case "$TAMA_CODEX_FIELD" in
         startup | resume | clear) codex_state idle ;;
@@ -314,15 +306,18 @@ case "$TAMA_CODEX_EVENT" in
     fi
     ;;
   UserPromptSubmit | PostToolUse)
+    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
     codex_state running
     ;;
   PreToolUse)
+    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
     if codex_token_field tool_name && [ "$TAMA_CODEX_FIELD" = 'request_user_input' ]; then
       codex_text_field question first-question || TAMA_CODEX_TEXT='Codex has a question'
       codex_state_and_notify waiting "$TAMA_CODEX_TEXT"
     fi
     ;;
   PermissionRequest)
+    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
     if codex_auto_review_is_configured; then
       codex_state running
     else
@@ -333,11 +328,13 @@ case "$TAMA_CODEX_EVENT" in
     fi
     ;;
   SubagentStart)
+    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
     if codex_text_field agent_id top; then
       "$TAMA_BIN" state subagent-start "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true
     fi
     ;;
   SubagentStop)
+    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
     if codex_text_field agent_id top; then
       "$TAMA_BIN" state subagent-stop "$TAMA_CODEX_TEXT" >/dev/null 2>&1 || true
     fi
@@ -345,15 +342,22 @@ case "$TAMA_CODEX_EVENT" in
     printf '{}'
     ;;
   Stop)
+    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
     if ! codex_text_field last_assistant_message top; then
       TAMA_CODEX_TEXT='Codex finished its turn'
     fi
     codex_state_and_notify idle "$TAMA_CODEX_TEXT"
     ;;
   SessionEnd)
+    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
     codex_session_end
     ;;
-  PreCompact | PostCompact | *)
+  PreCompact | PostCompact)
+    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" skipped event_not_actionable
+    :
+    ;;
+  *)
+    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" skipped unknown_event
     :
     ;;
 esac

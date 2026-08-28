@@ -35,8 +35,9 @@ fractional RFC 3339 `timestamp`, numeric fractional `unix_time`, `event`, `pid`,
 add `outcome` (`applied`, `skipped`, or `failed`) and `duration_ms`; stable `reason` values explain
 skips and failures.
 
-The event families are `integration.received`, `integration.classified`, `command.started`,
-`command.completed`, `decision.made`, `effect.started`, and `effect.completed`. State decisions
+The event families are `integration.received`, `integration.classified`, `hook.started`,
+`hook.completed`, `command.started`, `command.completed`, `decision.made`, `effect.started`, and
+`effect.completed`. Successful status icons, summaries, and listings are omitted. State decisions
 include relevant `state_before` and `state_after` groups. Physical line order is the authoritative
 arrival order. Timestamps correlate with other systems but do not impose a total order on
 concurrent processes; correlation and parent-operation IDs describe causal relationships.

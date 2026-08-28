@@ -27,6 +27,15 @@ teardown() {
   assert_pane_option "$PANE" state_main running
 }
 
+@test "successful status rendering stays out of an enabled Log" {
+  local log="$BATS_TEST_TMPDIR/render.jsonl"
+
+  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" icons '@999'
+
+  assert_success
+  [ ! -e "$log" ]
+}
+
 @test "an enabled Log records command start and completion as valid JSONL" {
   local log="$BATS_TEST_TMPDIR/tama.jsonl"
 
@@ -78,6 +87,19 @@ teardown() {
   jq -e -s 'length >= 2 and all(.[]; type == "object")' "$target"
 }
 
+@test "an existing writable Log does not require a writable parent directory" {
+  local directory="$BATS_TEST_TMPDIR/read-only-parent" log="$BATS_TEST_TMPDIR/read-only-parent/tama.jsonl"
+  mkdir "$directory"
+  : >"$log"
+  chmod 0500 "$directory"
+
+  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" state running --pane "$PANE"
+
+  chmod 0700 "$directory"
+  assert_success
+  [ -s "$log" ]
+}
+
 @test "invalid destinations stay silent and never change command behavior" {
   local relative='relative.jsonl' missing="$BATS_TEST_TMPDIR/missing/log.jsonl"
   local directory="$BATS_TEST_TMPDIR/directory"
@@ -112,7 +134,48 @@ teardown() {
 
   assert_success
   assert_output_contains "$log"
+  assert_output_contains 'logging is usable'
   assert_equal "$(wc -l <"$log" | tr -d ' ')" 1
+}
+
+@test "doctor rejects a relative Log and broken jq without writing" {
+  local shim="$BATS_TEST_TMPDIR/broken-bin" log="$BATS_TEST_TMPDIR/broken.jsonl"
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+
+  TAMA_LOG_FILE=relative.jsonl run "$PLUGIN_ROOT/bin/tama" doctor
+  [ "$status" -eq 1 ]
+  assert_output_contains 'must be an absolute path'
+
+  mkdir "$shim"
+  printf '#!/bin/sh\nexit 1\n' >"$shim/jq"
+  chmod +x "$shim/jq"
+  PATH="$shim:$PATH" TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" doctor
+  [ "$status" -eq 1 ]
+  assert_output_contains 'jq is not available and working'
+  [ ! -e "$log" ]
+}
+
+@test "a FIFO is rejected without blocking or changing state" {
+  local fifo="$BATS_TEST_TMPDIR/log.fifo"
+  mkfifo "$fifo"
+
+  TAMA_LOG_FILE="$fifo" run "$PLUGIN_ROOT/bin/tama" state running --pane "$PANE"
+
+  assert_success
+  assert_pane_option "$PANE" state_main running
+}
+
+@test "failed commands preserve status and record failure" {
+  local plugin="$BATS_TEST_TMPDIR/plugin" log="$BATS_TEST_TMPDIR/failed-command.jsonl"
+  tama_copy_plugin "$plugin"
+  tama_add_stub_subcommand "$plugin"
+
+  TAMA_STUB_EXIT=7 TAMA_LOG_FILE="$log" run "$plugin/bin/tama" stub
+
+  assert_status 7
+  jq -e -s 'any(.[]; .event == "command.completed" and
+    .command == "stub" and .outcome == "failed")' "$log"
 }
 
 @test "a Codex event is correlated through integration classification and its command" {
@@ -127,13 +190,14 @@ teardown() {
   jq -e -s '
     any(.[]; .event == "hook.started" and .integration == "codex") and
     any(.[]; .event == "hook.completed" and .integration == "codex" and
-      .outcome == "applied") and
+      .outcome == "applied" and (.duration_ms | type) == "number") and
     any(.[]; .event == "integration.received" and .integration == "codex" and
       .integration_event == "SessionStart") and
     any(.[]; .event == "integration.classified" and .outcome == "applied") and
     any(.[]; .event == "command.started" and .command == "state" and
       has("parent_operation_id")) and
-    ([.[].correlation_id] | unique | length) == 1
+    ([.[].correlation_id] | unique | length) == 1 and
+    all(.[]; (.parent_operation_id // "") != .operation_id)
   ' "$log"
   run grep -F 'secret-session' "$log"
   [ "$status" -ne 0 ]
@@ -148,7 +212,26 @@ teardown() {
   wait
 
   [ "$(wc -l <"$log" | tr -d ' ')" -ge 12 ]
-  jq -e . "$log" >/dev/null
+  while IFS= read -r line; do
+    jq -e 'type == "object"' <<<"$line" >/dev/null || return 1
+  done <"$log"
+}
+
+@test "large unknown event names cannot interleave concurrent JSONL records" {
+  local log="$BATS_TEST_TMPDIR/large-concurrent.jsonl" event index
+  event="$(printf 'x%.0s' {1..10000})"
+
+  for index in 1 2 3 4; do
+    TMUX_PANE="$PANE" TAMA_LOG_FILE="$log" \
+      "$PLUGIN_ROOT/bin/tama" hook codex "$event" <<<'{}' &
+  done
+  wait
+
+  while IFS= read -r line; do
+    jq -e 'type == "object"' <<<"$line" >/dev/null || return 1
+  done <"$log"
+  run grep -F "$event" "$log"
+  [ "$status" -ne 0 ]
 }
 
 @test "an unknown integration event is recorded as skipped without its payload" {
@@ -165,6 +248,45 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
+@test "delegated Codex and unknown Claude Code events explain why they were skipped" {
+  local log="$BATS_TEST_TMPDIR/classification.jsonl"
+
+  TMUX_PANE="$PANE" TAMA_LOG_FILE="$log" run \
+    "$PLUGIN_ROOT/bin/tama" hook codex PostToolUse \
+    <<<'{"agent_id":"opaque-child","hook_event_name":"PostToolUse"}'
+  assert_success
+  TMUX_PANE="$PANE" TAMA_LOG_FILE="$log" run \
+    "$PLUGIN_ROOT/bin/tama" hook claude-code FutureEvent <<<'{"message":"private"}'
+  assert_success
+
+  jq -e -s '
+    any(.[]; .event == "integration.classified" and .integration == "codex" and
+      .outcome == "skipped" and .reason == "delegated_event") and
+    any(.[]; .event == "integration.classified" and .integration == "claude-code" and
+      .outcome == "skipped" and .reason == "unknown_event")
+  ' "$log"
+  run grep -E 'opaque-child|private' "$log"
+  [ "$status" -ne 0 ]
+}
+
+@test "native OpenCode effects are classified without recording opaque values" {
+  local log="$BATS_TEST_TMPDIR/opencode.jsonl"
+
+  TAMA_LOG_FILE="$log" TAMA_LOG_INTEGRATION=opencode \
+    TAMA_LOG_INTEGRATION_EVENT=subagent-start run \
+    "$PLUGIN_ROOT/bin/tama" state subagent-start opaque-child --pane "$PANE"
+
+  assert_success
+  jq -e -s '
+    any(.[]; .event == "integration.received" and .integration == "opencode" and
+      .integration_event == "subagent-start") and
+    any(.[]; .event == "integration.classified" and .integration == "opencode" and
+      .outcome == "applied")
+  ' "$log"
+  run grep -F opaque-child "$log"
+  [ "$status" -ne 0 ]
+}
+
 @test "state decisions record before and after, including redundant reports" {
   local log="$BATS_TEST_TMPDIR/state.jsonl"
 
@@ -178,8 +300,96 @@ teardown() {
       .outcome == "applied" and .state_before.main == "" and
       .state_after.main == "running") and
     any(.[]; .event == "decision.made" and .operation == "report_state" and
-      .outcome == "skipped" and .reason == "pane_state_unchanged" and
+      .outcome == "skipped" and .reason == "pane_record_unchanged" and
       .state_before.main == "running" and .state_after.main == "running")
+  ' "$log"
+}
+
+@test "a failed state write is recorded as failed without claiming the intended state" {
+  local log="$BATS_TEST_TMPDIR/state-failed.jsonl"
+  tama_log_tmux_calls
+  export TAMA_FAKE_TMUX_FAIL_COMMAND=set
+
+  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" state running --pane "$PANE"
+
+  assert_success
+  assert_pane_option_unset "$PANE" state_main
+  jq -e -s 'any(.[];
+    .event == "decision.made" and .operation == "report_state" and
+    .outcome == "failed" and .state_before.main == "" and
+    .state_after.main == "") and
+    any(.[]; .event == "command.completed" and .command == "state" and
+      .outcome == "failed")' "$log"
+}
+
+@test "subagent bookkeeping records counts and attempts without opaque ids" {
+  local log="$BATS_TEST_TMPDIR/subagents.jsonl"
+
+  TAMA_LOG_FILE="$log" run \
+    "$PLUGIN_ROOT/bin/tama" state subagent-start opaque-child --pane "$PANE"
+  assert_success
+  TAMA_LOG_FILE="$log" run \
+    "$PLUGIN_ROOT/bin/tama" state subagent-start opaque-child --pane "$PANE"
+  assert_success
+
+  jq -e -s '
+    any(.[]; .event == "decision.made" and .operation == "update_subagents" and
+      .attempt == 1 and .outcome == "applied" and
+      .state_before.subagent_count == 0 and .state_after.subagent_count == 1) and
+    any(.[]; .event == "decision.made" and .operation == "update_subagents" and
+      .attempt == 1 and .outcome == "skipped" and
+      .reason == "subagent_state_unchanged")
+  ' "$log"
+  run grep -F opaque-child "$log"
+  [ "$status" -ne 0 ]
+}
+
+@test "a subagent conflict records the retry attempt and eventual result" {
+  local log="$BATS_TEST_TMPDIR/subagent-race.jsonl"
+  tama_log_tmux_calls
+  local wrote_a="$BATS_TEST_TMPDIR/a-wrote" wrote_b="$BATS_TEST_TMPDIR/b-wrote"
+
+  TAMA_LOG_FILE="$log" TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-a" \
+    TAMA_FAKE_TMUX_WAIT_BEFORE=2 TAMA_FAKE_TMUX_WAIT_FOR="$wrote_b" \
+    TAMA_FAKE_TMUX_TOUCH_AFTER=2 TAMA_FAKE_TMUX_TOUCH="$wrote_a" \
+    "$PLUGIN_ROOT/bin/tama" state subagent-start sub-a --pane "$PANE" &
+  TAMA_LOG_FILE="$log" TAMA_FAKE_TMUX_COUNTER="$BATS_TEST_TMPDIR/calls-b" \
+    TAMA_FAKE_TMUX_TOUCH_AFTER=2 TAMA_FAKE_TMUX_TOUCH="$wrote_b" \
+    TAMA_FAKE_TMUX_WAIT_BEFORE=3 TAMA_FAKE_TMUX_WAIT_FOR="$wrote_a" \
+    "$PLUGIN_ROOT/bin/tama" state subagent-start sub-b --pane "$PANE" &
+  wait
+
+  [ -e "$wrote_a" ]
+  [ -e "$wrote_b" ]
+  jq -e -s '
+    any(.[]; .operation == "update_subagents" and .outcome == "skipped" and
+      .reason == "write_conflict" and .attempt == 1) and
+    any(.[]; .operation == "update_subagents" and .outcome == "applied" and
+      .attempt == 2)
+  ' "$log"
+}
+
+@test "reconciliation and clear record their state transitions" {
+  local log="$BATS_TEST_TMPDIR/state-mutations.jsonl"
+
+  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" state idle --pane "$PANE"
+  assert_success
+  TAMA_LOG_FILE="$log" run \
+    "$PLUGIN_ROOT/bin/tama" state subagent-start child --pane "$PANE"
+  assert_success
+  TAMA_LOG_FILE="$log" run \
+    "$PLUGIN_ROOT/bin/tama" state subagent-reconcile --pane "$PANE"
+  assert_success
+  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" state clear --pane "$PANE"
+  assert_success
+
+  jq -e -s '
+    any(.[]; .event == "decision.made" and .operation == "reconcile_subagents" and
+      .outcome == "applied" and .state_before.subagent_count == 1 and
+      .state_after.subagent_count == 0) and
+    any(.[]; .event == "decision.made" and .operation == "clear_state" and
+      .outcome == "applied" and .state_before.main == "idle" and
+      .state_after.main == "")
   ' "$log"
 }
 
@@ -202,4 +412,26 @@ teardown() {
   ' "$log"
   run grep -F 'sensitive notification text' "$log"
   [ "$status" -ne 0 ]
+}
+
+@test "unsupported and failing backend effects have distinct outcomes" {
+  local log="$BATS_TEST_TMPDIR/backend-outcomes.jsonl" without
+  without="$(tama_fake_backend_without notify)"
+  tmux_test_server_run set -g @tama_backend "$without"
+
+  TMUX_PANE="$PANE" TAMA_LOG_FILE="$log" run \
+    "$PLUGIN_ROOT/bin/tama" notify -- Agent message
+  assert_success
+
+  tmux_test_server_run set -g @tama_notify_command false
+  TMUX_PANE="$PANE" TAMA_LOG_FILE="$log" run \
+    "$PLUGIN_ROOT/bin/tama" notify -- Agent message
+  assert_success
+
+  jq -e -s '
+    any(.[]; .event == "effect.completed" and .operation == "notify_backend" and
+      .outcome == "skipped" and .reason == "capability_unsupported") and
+    any(.[]; .event == "effect.completed" and .operation == "notify_backend" and
+      .outcome == "failed")
+  ' "$log"
 }

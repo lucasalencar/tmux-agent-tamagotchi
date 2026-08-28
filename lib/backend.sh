@@ -174,8 +174,21 @@ tama_libnotify_send() {
 # anticipated: it is a command *line*, so it can carry its own flags, and the
 # arguments are appended as arguments rather than pasted into it — a notification
 # message is arbitrary text and must never be read as shell.
+tama_backend_effect_complete() { # <capability> <effect-id> <started-at> <status> [reason]
+  local capability="$1" effect_id="$2" started_at="$3" status="$4" reason="${5:-}"
+  local outcome=failed
+  if [ "$reason" = capability_unsupported ]; then
+    outcome=skipped
+  elif [ "$status" -eq 0 ]; then
+    outcome=applied
+  fi
+  tama_log_effect effect.completed "${capability}_backend" "$effect_id" \
+    "$outcome" "$started_at" "$reason"
+  return "$status"
+}
+
 tama_backend_invoke() { # <capability> [args…]
-  local capability="$1" override target status outcome effect_id started_at
+  local capability="$1" override target status effect_id started_at
   shift
 
   effect_id="e-$$-${RANDOM:-0}"
@@ -191,32 +204,29 @@ tama_backend_invoke() { # <capability> [args…]
     # user's command. The `_` is $0 for that shell.
     sh -c "$override \"\$@\"" _ "$@" >/dev/null 2>&1
     status=$?
-    outcome=failed
-    [ "$status" -eq 0 ] && outcome=applied
-    tama_log_effect effect.completed "${capability}_backend" "$effect_id" "$outcome" "$started_at"
-    return "$status"
+    tama_backend_effect_complete "$capability" "$effect_id" "$started_at" "$status"
+    return
   fi
 
   tama_backend_dir
   if [ -z "$TAMA_BACKEND_DIR" ]; then
-    tama_log_effect effect.completed "${capability}_backend" "$effect_id" skipped "$started_at" capability_unsupported
-    return "$TAMA_BACKEND_UNSUPPORTED"
+    tama_backend_effect_complete "$capability" "$effect_id" "$started_at" \
+      "$TAMA_BACKEND_UNSUPPORTED" capability_unsupported
+    return
   fi
 
   target="$TAMA_BACKEND_DIR/$capability"
   # -x alone is true of a directory, and running one is a diagnostic rather than a
   # status. Unsupported covers both.
   if [ ! -f "$target" ] || [ ! -x "$target" ]; then
-    tama_log_effect effect.completed "${capability}_backend" "$effect_id" skipped "$started_at" capability_unsupported
-    return "$TAMA_BACKEND_UNSUPPORTED"
+    tama_backend_effect_complete "$capability" "$effect_id" "$started_at" \
+      "$TAMA_BACKEND_UNSUPPORTED" capability_unsupported
+    return
   fi
 
   "$target" "$@" >/dev/null 2>&1
   status=$?
-  outcome=failed
-  [ "$status" -eq 0 ] && outcome=applied
-  tama_log_effect effect.completed "${capability}_backend" "$effect_id" "$outcome" "$started_at"
-  return "$status"
+  tama_backend_effect_complete "$capability" "$effect_id" "$started_at" "$status"
 }
 
 # The terminal a backend is talking about, for the two capabilities that have to name

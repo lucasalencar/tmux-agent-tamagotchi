@@ -53,15 +53,27 @@ main() {
     die_usage "no integration for agent: $agent"
   fi
 
-  tama_log_integration hook.started "$agent" "$1" applied
-  tama_log_integration integration.received "$agent" "$1" applied
-  TAMA_LOG_PARENT_OPERATION_ID="${TAMA_LOG_OPERATION_ID:-}"
-  export TAMA_LOG_PARENT_OPERATION_ID
+  [ -n "${TAMA_LOG_FILE:-}" ] || exec "$integration" "$@"
+
+  local command_operation="${TAMA_LOG_OPERATION_ID:-}" hook_operation started_at
+  hook_operation="h-$$-${RANDOM:-0}"
+  started_at="$(tama_log_clock 2>/dev/null || true)"
+  TAMA_LOG_PARENT_OPERATION_ID="$command_operation"
+  TAMA_LOG_OPERATION_ID="$hook_operation"
+  export TAMA_LOG_PARENT_OPERATION_ID TAMA_LOG_OPERATION_ID
+  tama_log_integration hook.started "$agent" "$1" ''
+  tama_log_integration integration.received "$agent" "$1" ''
+
+  TAMA_LOG_PARENT_OPERATION_ID="$hook_operation"
+  TAMA_LOG_OPERATION_ID="i-$$-${RANDOM:-0}"
+  export TAMA_LOG_PARENT_OPERATION_ID TAMA_LOG_OPERATION_ID
   "$integration" "$@"
   local status=$?
   local outcome=failed
   [ "$status" -eq 0 ] && outcome=applied
-  tama_log_integration hook.completed "$agent" "$1" "$outcome"
+  TAMA_LOG_PARENT_OPERATION_ID="$command_operation"
+  TAMA_LOG_OPERATION_ID="$hook_operation"
+  tama_log_integration hook.completed "$agent" "$1" "$outcome" '' "$started_at"
   return "$status"
 }
 
