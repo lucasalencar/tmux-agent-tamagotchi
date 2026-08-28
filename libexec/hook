@@ -53,10 +53,16 @@ main() {
     die_usage "no integration for agent: $agent"
   fi
 
+  tama_log_integration hook.started "$agent" "$1" applied
   tama_log_integration integration.received "$agent" "$1" applied
   TAMA_LOG_PARENT_OPERATION_ID="${TAMA_LOG_OPERATION_ID:-}"
   export TAMA_LOG_PARENT_OPERATION_ID
   "$integration" "$@"
+  local status=$?
+  local outcome=failed
+  [ "$status" -eq 0 ] && outcome=applied
+  tama_log_integration hook.completed "$agent" "$1" "$outcome"
+  return "$status"
 }
 
 main "$@"

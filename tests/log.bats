@@ -125,6 +125,9 @@ teardown() {
   assert_success
   assert_pane_option "$PANE" state_main idle
   jq -e -s '
+    any(.[]; .event == "hook.started" and .integration == "codex") and
+    any(.[]; .event == "hook.completed" and .integration == "codex" and
+      .outcome == "applied") and
     any(.[]; .event == "integration.received" and .integration == "codex" and
       .integration_event == "SessionStart") and
     any(.[]; .event == "integration.classified" and .outcome == "applied") and
