@@ -159,6 +159,10 @@ teardown() {
   assert_status 2
   assert_stderr_contains 'tama: --session needs a session id'
 
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities --session t
+  assert_status 2
+  assert_stderr_contains 'tama: --session needs an immutable session id'
+
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities --session '$0' --session '$1'
   assert_status 2
   assert_stderr_contains 'tama: clear-priorities accepts --session once'

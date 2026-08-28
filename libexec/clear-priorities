@@ -20,6 +20,13 @@ main() {
         case "$2" in
           -*) die_usage '--session needs a session id' ;;
         esac
+        case "${2#\$}" in
+          '' | *[!0-9]*) die_usage '--session needs an immutable session id' ;;
+        esac
+        case "$2" in
+          \$*) ;;
+          *) die_usage '--session needs an immutable session id' ;;
+        esac
         session="$2"
         shift 2
         ;;
