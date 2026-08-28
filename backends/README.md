@@ -31,7 +31,8 @@ that has since been closed (ADR-0006).
 Three rules, and they are not style:
 
 1. **Return promptly.** Capabilities run synchronously inside an agent's hook, on the
-   turn the user is waiting for, and there is no timeout. Background anything slow.
+   turn the user is waiting for. A built-in watchdog terminates the capability after
+   five seconds, but that bound is failure containment, not a latency budget.
 2. **Say nothing.** stdout and stderr are discarded. A capability speaks through its
    exit status and nothing else.
 3. **Exit 0 unless you mean it.** Only `focused` is asked a question.

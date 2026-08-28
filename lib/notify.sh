@@ -68,7 +68,9 @@ tama_notify_label() {
   # after it. A label provider is the user's own script and the window id is tmux's
   # own, but a command line built by substitution is a habit that only has to be
   # wrong once.
-  label="$(sh -c "$command \"\$1\"" _ "$TAMA_WINDOW_ID" 2>/dev/null)" || label=''
+  label="$(
+    tama_external_command_run sh -c "$command \"\$1\"" _ "$TAMA_WINDOW_ID" 2>/dev/null
+  )" || label=''
 
   # One line. A provider that prints several has said one thing and then said more.
   label="${label%%$'\n'*}"
@@ -101,7 +103,7 @@ tama_notify_suppressed() {
   tama_window_user_is_looking || return 1
 
   tama_notify_export_context
-  tama_backend_invoke focused
+  tama_external_command_run tama_backend_invoke focused
 }
 
 # The context every capability is given, in the environment rather than in argv so it
@@ -233,7 +235,7 @@ tama_notify_dismiss() {
   TAMA_GROUP="$TAMA_NOTIFY_GROUP"
   export TAMA_GROUP
 
-  # Fire and forget: a banner that would not go away is not worth a word out of an
-  # agent's hook, still less a failed turn.
-  tama_backend_invoke dismiss "$TAMA_NOTIFY_GROUP" || true
+  # A banner that would not go away is not worth a word out of an agent's hook, still
+  # less a failed turn. The watchdog limits how long even that ignored failure waits.
+  tama_external_command_run tama_backend_invoke dismiss "$TAMA_NOTIFY_GROUP" || true
 }

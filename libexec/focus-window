@@ -59,7 +59,7 @@ main() {
   export TAMA_SESSION
   tama_backend_export_terminal
 
-  tama_backend_invoke focus "$session" || true
+  tama_external_command_run tama_backend_invoke focus "$session" || true
 }
 
 main "$@"

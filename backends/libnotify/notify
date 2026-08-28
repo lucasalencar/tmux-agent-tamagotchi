@@ -19,9 +19,9 @@
 # this capability wholesale.
 #
 # Backgrounded, deliberately. This runs inside an agent's hook, on the turn the user is
-# waiting for, and there is no timeout to save them: `notify-send` speaks D-Bus, and a
-# daemon that is slow, D-Bus-activated, or not running at all is a wait nobody set a
-# bound on. The banner is worth nothing if it costs the turn, and nothing here has an
+# waiting for. The core watchdog is the last resort: `notify-send` speaks D-Bus, and a
+# daemon that is slow, D-Bus-activated, or not running at all must not consume that
+# whole bound. The banner is worth nothing if it costs the turn, and nothing here has an
 # answer anybody waits for — the exit status of `notify` is discarded by the contract.
 #
 # It needs a session bus to talk to: `notify-send` finds one through

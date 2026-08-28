@@ -439,6 +439,8 @@ focus'
 doctor_notifications() {
   doctor_section 'notifications'
 
+  doctor_ok "external commands are bounded by the built-in ${TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT}s watchdog"
+
   if tama_notify_enabled; then
     doctor_ok '@tama_notifications is on'
   else
@@ -640,8 +642,8 @@ doctor_label_command_unchecked() { # <verdict>
 }
 
 doctor_label_command_cost() {
-  doctor_more 'It runs synchronously inside the agent hook that asks for a label and'
-  doctor_more 'has no timeout. A slow provider makes the agent turn wait just as long.'
+  doctor_more 'It runs synchronously inside the agent hook that asks for a label.'
+  doctor_more "It is bounded by the same built-in ${TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT}s watchdog."
 }
 
 # `@tama_backend auto`, and the whole of why it landed where it did.

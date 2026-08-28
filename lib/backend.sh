@@ -2,8 +2,8 @@
 #
 # Backend boundary for desktop-specific behavior. A backend directory may provide
 # `notify`, `dismiss`, `focused`, and `focus` executables; missing capabilities are
-# unsupported, not errors. They run synchronously inside hooks, so implementations
-# must return promptly and communicate only through exit status.
+# unsupported, not errors. They run inside hooks under a five-second watchdog, so
+# implementations must still return promptly and communicate only through exit status.
 
 # The bare name whose directory is inside the plugin, and the one `auto` resolves to
 # when nothing better will work here.
@@ -39,6 +39,38 @@ TAMA_LIBNOTIFY_SEND_DIRS='/usr/bin /usr/local/bin'
 # The status for "this capability does not exist here". 127 is what a shell reports
 # for a command it could not find, which is exactly what happened.
 TAMA_BACKEND_UNSUPPORTED=127
+
+# Long enough for a desktop command under normal load, short enough that a broken one
+# cannot make an agent turn look dead. Tests may lower it through the environment;
+# there is deliberately no user option whose invalid value could remove the bound.
+TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT=5
+
+# Runs an external command in its own process group and tears that whole group down at
+# the deadline. Job control is Bash's portable way to create the group on macOS 3.2,
+# where neither `timeout` nor `setsid` is part of the operating system.
+tama_external_command_run() { # <command> [args…]
+  (
+    local command_pid watchdog_pid status timeout
+    timeout="${TAMA_EXTERNAL_COMMAND_TIMEOUT:-$TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT}"
+
+    set -m
+    "$@" &
+    command_pid=$!
+    (
+      sleep "$timeout"
+      kill -TERM -- "-$command_pid" 2>/dev/null || true
+      sleep 0.1
+      kill -KILL -- "-$command_pid" 2>/dev/null || true
+    ) >/dev/null 2>&1 &
+    watchdog_pid=$!
+
+    wait "$command_pid"
+    status=$?
+    kill -- "-$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+    return "$status"
+  )
+}
 
 # The directory the backend's capabilities live in, in TAMA_BACKEND_DIR. Empty when
 # the user has turned backends off or named one that cannot be a directory.
