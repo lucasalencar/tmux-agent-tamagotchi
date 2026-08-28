@@ -18,9 +18,17 @@ export type EffectRunnerDependencies = Readonly<{
 }>
 
 export type EffectRunner = Readonly<{
-  run(effect: StateMachineEffect): Promise<void>
+  observeEvent(observation: LogObservation): Promise<void>
+  run(effect: StateMachineEffect, context?: LogContext): Promise<void>
   notify(message: string): Promise<void>
   clearPane(): Promise<void>
+}>
+
+export type LogContext = Readonly<{ correlationId: string }>
+export type LogObservation = LogContext & Readonly<{
+  event: string
+  outcome: "applied" | "skipped"
+  reason?: "unknown_event" | "malformed_event"
 }>
 
 const AGENT_NAME = "OpenCode"
@@ -28,26 +36,34 @@ const GENERIC_ERROR = "OpenCode session failed"
 const GENERIC_COMPLETION = "OpenCode finished its turn"
 
 export function createEffectRunner(dependencies: EffectRunnerDependencies): EffectRunner {
-  async function invokeTama(args: readonly string[], integrationEvent: string): Promise<void> {
+  async function invokeTama(
+    args: readonly string[],
+    integrationEvent: string,
+    context?: LogContext,
+    classifyEffect = true,
+  ): Promise<void> {
     try {
       const resolved = await dependencies.execute(["tmux", "show", "-gqv", "@tama_bin"])
       if (resolved.exitCode !== 0) return
       const executable = parseExecutable(resolved.stdout)
       if (!executable) return
       await dependencies.execute([executable, ...args], {
-        TAMA_LOG_INTEGRATION: "opencode",
-        TAMA_LOG_INTEGRATION_EVENT: integrationEvent,
+        ...(classifyEffect ? {
+          TAMA_LOG_INTEGRATION: "opencode",
+          TAMA_LOG_INTEGRATION_EVENT: integrationEvent,
+        } : {}),
+        ...(context ? { TAMA_LOG_CORRELATION_ID: context.correlationId } : {}),
       })
     } catch {
       // An integration must never make OpenCode fail because tmux or tama is unavailable.
     }
   }
 
-  async function run(effect: StateMachineEffect): Promise<void> {
+  async function run(effect: StateMachineEffect, context?: LogContext): Promise<void> {
     try {
       switch (effect.type) {
         case "pane-state":
-          await invokeTama(["state", effect.state, AGENT_NAME], "pane-state")
+          await invokeTama(["state", effect.state, AGENT_NAME], effect.type, context)
           break
         case "root-error":
           await invokeTama([
@@ -55,11 +71,11 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
             "--",
             AGENT_NAME,
             sanitizeNotificationText(effect.message ?? "") ?? GENERIC_ERROR,
-          ], "root-error")
+          ], effect.type, context)
           break
         case "subagent-start":
         case "subagent-stop":
-          await invokeTama(["state", effect.type, "--", effect.sessionId], effect.type)
+          await invokeTama(["state", effect.type, "--", effect.sessionId], effect.type, context)
           break
         case "completion-eligible":
           await dependencies.onCompletionEligible?.({
@@ -74,6 +90,13 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
   }
 
   return {
+    observeEvent: (observation) => invokeTama([
+      "hook",
+      "opencode",
+      observation.event,
+      observation.outcome,
+      ...(observation.reason ? [observation.reason] : []),
+    ], observation.event, observation, false),
     run,
     notify: (message) => invokeTama([
       "notify",

@@ -21,9 +21,13 @@ set -o nounset
 
 main() {
   tama_optional_window_target flag "$@"
-  [ -n "$TAMA_WINDOW_TARGET" ] || exit 0
+  if [ -z "$TAMA_WINDOW_TARGET" ]; then
+    tama_log_command_result skipped
+    exit 0
+  fi
 
   tama_flag_raise "$TAMA_WINDOW_TARGET"
+  tama_log_command_result "$TAMA_FLAG_RESULT"
 }
 
 main "$@"

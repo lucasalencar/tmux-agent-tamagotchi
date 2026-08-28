@@ -53,6 +53,7 @@ main() {
     # the whole server either way. A target is about which window, and --all says
     # that question does not apply.
     tama_stale_sweep_server
+    tama_log_command_result "$TAMA_STALE_SWEEP_STATUS"
     return 0
   fi
 
@@ -64,10 +65,14 @@ main() {
   if [ -z "$target" ]; then
     target="$(tmux_run display-message -p '#{window_id}' 2>/dev/null)" || target=''
     # No window to sweep and nothing to say about it.
-    [ -n "$target" ] || return 0
+    if [ -z "$target" ]; then
+      tama_log_command_result skipped
+      return 0
+    fi
   fi
 
   tama_stale_sweep_window "$target"
+  tama_log_command_result "$TAMA_STALE_SWEEP_STATUS"
 }
 
 main "$@"

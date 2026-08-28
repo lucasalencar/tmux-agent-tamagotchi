@@ -4,6 +4,44 @@ import { createOpenCodeRuntime } from "../runtime"
 import type { StateMachineEffect } from "../state-machine"
 
 describe("OpenCode runtime", () => {
+  test("observes unknown events and correlates every effect from one native event", async () => {
+    const observations: unknown[] = []
+    const effectCorrelations: string[] = []
+    const runtime = createOpenCodeRuntime({
+      loggingEnabled: true,
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      observeEvent: async (observation) => {
+        observations.push(observation)
+      },
+      runEffect: async (_effect, context) => {
+        if (context) effectCorrelations.push(context.correlationId)
+      },
+      clearPane: async () => undefined,
+    })
+
+    await runtime.event({ type: "session.created", properties: { info: { id: "root-a" } } })
+    observations.length = 0
+    effectCorrelations.length = 0
+    await runtime.event({
+      type: "session.error",
+      properties: { sessionID: "root-a", error: { data: { message: "boom" } } },
+    })
+    await runtime.event({ type: "future.private-event", properties: { secret: "nope" } })
+
+    expect(effectCorrelations.length).toBeGreaterThanOrEqual(2)
+    expect(new Set(effectCorrelations).size).toBe(1)
+    expect(observations).toContainEqual(expect.objectContaining({
+      event: "session.error",
+      outcome: "applied",
+      correlationId: effectCorrelations[0],
+    }))
+    expect(observations).toContainEqual(expect.objectContaining({
+      event: "future.private-event",
+      outcome: "skipped",
+      reason: "unknown_event",
+    }))
+  })
+
   test("serializes fire-and-forget callbacks behind slow classification", async () => {
     const lookup = deferred<{ id: string } | undefined>()
     const effects: StateMachineEffect[] = []

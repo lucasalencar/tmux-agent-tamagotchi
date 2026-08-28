@@ -91,10 +91,13 @@ tama_window_user_is_looking() {
 
 # Raise on every event, even when state did not change: selection may have cleared
 # an earlier flag between identical reports.
+# shellcheck disable=SC2034 # TAMA_FLAG_RESULT is read by libexec/flag.
 tama_flag_raise() { # <target>
+  TAMA_FLAG_RESULT=skipped
   tama_window_read "$1" || return 0
   tama_window_user_is_looking && return 0
   tama_flag_set
+  TAMA_FLAG_RESULT="$TAMA_FLAG_WRITE_STATUS"
 }
 
 # Automatic requests obey Priority policy; the public flag command deliberately
@@ -113,15 +116,29 @@ tama_automatic_flag_is_eligible() {
 # Called after the caller has decided that an automatic or explicit Flag is eligible.
 # Use the previously read immutable id because a caller's index may have moved.
 tama_flag_set() {
-  tmux_run set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" on \
-    >/dev/null 2>&1 || true
+  if tmux_run set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" on \
+    >/dev/null 2>&1; then
+    TAMA_FLAG_WRITE_STATUS=applied
+  else
+    TAMA_FLAG_WRITE_STATUS=failed
+  fi
+  return 0
 }
 
 # Returns success only when a mark existed. Notification dismissal uses its own
 # pending marker because `tama unflag` may clear this independently.
+# shellcheck disable=SC2034 # TAMA_FLAG_CLEAR_STATUS is read by command owners.
 tama_flag_clear() { # <target>
+  TAMA_FLAG_CLEAR_STATUS=skipped
   tama_window_read "$1" || return 1
-  tmux_run set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" \
-    >/dev/null 2>&1 || true
-  [ -n "$TAMA_WINDOW_FLAG" ]
+  if ! tmux_run set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_FLAG_OPTION" \
+    >/dev/null 2>&1; then
+    TAMA_FLAG_CLEAR_STATUS=failed
+    return 1
+  fi
+  if [ -n "$TAMA_WINDOW_FLAG" ]; then
+    TAMA_FLAG_CLEAR_STATUS=applied
+    return 0
+  fi
+  return 1
 }

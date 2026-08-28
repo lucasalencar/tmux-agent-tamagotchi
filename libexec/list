@@ -31,9 +31,15 @@ main() {
     esac
   done
 
-  records="$(tama_list_records "$session")" || return 0
+  records="$(tama_list_records "$session")" || {
+    tama_log_command_result failed
+    return 0
+  }
   [ -n "$records" ] || return 0
-  sorted="$(printf '%s\n' "$records" | LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k3,3n -k6,6n)" || return 0
+  sorted="$(printf '%s\n' "$records" | LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k3,3n -k6,6n)" || {
+    tama_log_command_result failed
+    return 0
+  }
   [ -n "$sorted" ] && printf '%s\n' "$sorted"
 }
 

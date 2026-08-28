@@ -17,8 +17,12 @@
 
 set -o nounset
 
-# shellcheck source=lib/log.sh
-. "$TAMA_PLUGIN_DIR/lib/log.sh"
+if [ -n "${TAMA_LOG_FILE:-}" ]; then
+  # shellcheck source=lib/log.sh
+  . "$TAMA_PLUGIN_DIR/lib/log.sh"
+else
+  tama_log_integration() { :; }
+fi
 
 # Exported by bin/tama, which is the only thing that runs this file. Missing means
 # something invoked the adapter directly, which is not a user's mistake to be
@@ -460,7 +464,6 @@ main() {
       cc_state_and_notify error "$TAMA_CC_TEXT" "$@"
       ;;
     SubagentStart | SubagentStop)
-      tama_log_integration integration.classified claude-code "$event" applied
       # The counter is keyed by the id Claude Code gives the delegated run, so a
       # payload without one leaves nothing to count. Ignoring that is safe in the
       # direction that matters: no subagent is tracked, rather than a pane pinned
@@ -471,10 +474,15 @@ main() {
       # to whatever the session's own turn is doing, and nothing else.
       case "$event" in
         SubagentStart)
-          cc_field agent_id || exit 0
+          if ! cc_field agent_id; then
+            tama_log_integration integration.classified claude-code "$event" skipped malformed_event
+            exit 0
+          fi
+          tama_log_integration integration.classified claude-code "$event" applied
           exec "$TAMA_BIN" state subagent-start "$TAMA_CC_FIELD" "$@"
           ;;
         *)
+          tama_log_integration integration.classified claude-code "$event" applied
           if cc_field agent_id; then
             "$TAMA_BIN" state subagent-stop "$TAMA_CC_FIELD" "$@" || true
           fi

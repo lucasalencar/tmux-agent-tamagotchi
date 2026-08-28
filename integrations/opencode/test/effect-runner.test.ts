@@ -14,13 +14,48 @@ describe("tama effect runner", () => {
       },
     })
 
-    await runner.run({ type: "pane-state", state: "waiting" })
+    await runner.run({ type: "pane-state", state: "waiting" }, { correlationId: "oc-1" })
     await runner.run({ type: "subagent-start", sessionId: "opaque-child" })
 
     expect(environments).toEqual([
-      { TAMA_LOG_INTEGRATION: "opencode", TAMA_LOG_INTEGRATION_EVENT: "pane-state" },
+      {
+        TAMA_LOG_INTEGRATION: "opencode",
+        TAMA_LOG_INTEGRATION_EVENT: "pane-state",
+        TAMA_LOG_CORRELATION_ID: "oc-1",
+      },
       { TAMA_LOG_INTEGRATION: "opencode", TAMA_LOG_INTEGRATION_EVENT: "subagent-start" },
     ])
+  })
+
+  test("records the native event boundary without misclassifying it as an effect", async () => {
+    const calls: Array<{ argv: string[]; environment?: Readonly<Record<string, string>> }> = []
+    const runner = createEffectRunner({
+      execute: async (argv, environment) => {
+        calls.push({ argv: [...argv], environment })
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+
+    await runner.observeEvent({
+      event: "session.error",
+      outcome: "skipped",
+      reason: "unknown_event",
+      correlationId: "oc-event-1",
+    })
+
+    expect(calls[1]).toEqual({
+      argv: [
+        "/plugin/bin/tama",
+        "hook",
+        "opencode",
+        "session.error",
+        "skipped",
+        "unknown_event",
+      ],
+      environment: { TAMA_LOG_CORRELATION_ID: "oc-event-1" },
+    })
   })
 
   test("resolves the public CLI through tmux and invokes it only with argv", async () => {

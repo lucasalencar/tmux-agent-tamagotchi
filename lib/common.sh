@@ -198,10 +198,18 @@ _tama_require_lib "$_tama_lib_dir/options.sh"
 # shellcheck source=options.sh
 . "$_tama_lib_dir/options.sh"
 
-_tama_require_lib "$_tama_lib_dir/log.sh"
-# shellcheck source-path=SCRIPTDIR
-# shellcheck source=log.sh
-. "$_tama_lib_dir/log.sh"
+if [ -n "${TAMA_LOG_FILE:-}" ]; then
+  _tama_require_lib "$_tama_lib_dir/log.sh"
+  # shellcheck source-path=SCRIPTDIR
+  # shellcheck source=log.sh
+  . "$_tama_lib_dir/log.sh"
+else
+  # Behavior owners call these unconditionally; disabled logging keeps those seams
+  # branch-free without reading or parsing the optional implementation.
+  tama_log_command_result() { :; }
+  tama_log_effect() { :; }
+  tama_log_attention_decision() { :; }
+fi
 
 _tama_require_lib "$_tama_lib_dir/inventory.sh"
 # shellcheck source-path=SCRIPTDIR

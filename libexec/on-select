@@ -13,6 +13,7 @@ set -o nounset
 
 main() {
   local window='' pane='' all='no'
+  local outcome=skipped
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -49,8 +50,13 @@ main() {
   # result of clearing that mark — decides whether arriving dismisses it.
   if [ -n "$target" ]; then
     tama_flag_clear "$target" || true
+    outcome="$TAMA_FLAG_CLEAR_STATUS"
     if tama_notify_enabled && [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
       tama_notify_dismiss
+      case "$TAMA_NOTIFY_DISMISS_STATUS" in
+        failed) outcome=failed ;;
+        applied) [ "$outcome" = failed ] || outcome=applied ;;
+      esac
     fi
   fi
 
@@ -58,9 +64,18 @@ main() {
   # and the sweep is housekeeping that may read every pane on the server.
   if [ "$all" = 'yes' ]; then
     tama_stale_sweep_server
+    case "$TAMA_STALE_SWEEP_STATUS" in
+      failed) outcome=failed ;;
+      applied) [ "$outcome" = failed ] || outcome=applied ;;
+    esac
   elif [ -n "$target" ]; then
     tama_stale_sweep_window "$target"
+    case "$TAMA_STALE_SWEEP_STATUS" in
+      failed) outcome=failed ;;
+      applied) [ "$outcome" = failed ] || outcome=applied ;;
+    esac
   fi
+  tama_log_command_result "$outcome"
 }
 
 main "$@"

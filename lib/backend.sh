@@ -179,7 +179,7 @@ tama_backend_effect_complete() { # <capability> <effect-id> <started-at> <status
   local outcome=failed
   if [ "$reason" = capability_unsupported ]; then
     outcome=skipped
-  elif [ "$status" -eq 0 ]; then
+  elif [ "$capability" = focused ] || [ "$status" -eq 0 ]; then
     outcome=applied
   fi
   tama_log_effect effect.completed "${capability}_backend" "$effect_id" \

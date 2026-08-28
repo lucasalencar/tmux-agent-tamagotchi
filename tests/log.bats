@@ -10,11 +10,13 @@ setup() {
 }
 
 teardown() {
+  tama_detach_client
   tmux_test_server_stop
 }
 
 @test "logging disabled does not invoke jq or touch a destination" {
   local shim="$BATS_TEST_TMPDIR/bin" marker="$BATS_TEST_TMPDIR/jq-called"
+  local plugin="$BATS_TEST_TMPDIR/no-logger-plugin"
   mkdir -p "$shim"
   printf '#!/bin/sh\n: >"$TAMA_JQ_MARKER"\nexit 99\n' >"$shim/jq"
   chmod +x "$shim/jq"
@@ -25,15 +27,34 @@ teardown() {
   assert_success
   [ ! -e "$marker" ]
   assert_pane_option "$PANE" state_main running
+
+  tama_copy_plugin "$plugin"
+  rm "$plugin/lib/log.sh"
+  TAMA_LOG_FILE='' run "$plugin/bin/tama" state idle --pane "$PANE"
+  assert_success
+  assert_pane_option "$PANE" state_main idle
 }
 
 @test "successful status rendering stays out of an enabled Log" {
   local log="$BATS_TEST_TMPDIR/render.jsonl"
 
-  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" icons '@999'
+  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" icons '@0'
 
   assert_success
   [ ! -e "$log" ]
+}
+
+@test "an abnormal status rendering is recorded without changing its quiet exit" {
+  local log="$BATS_TEST_TMPDIR/render-failed.jsonl"
+  tama_log_tmux_calls
+  export TAMA_FAKE_TMUX_FAIL_COMMAND=display-message
+
+  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" icons '@0'
+
+  assert_success
+  assert_equal "$output" ''
+  jq -e -s 'any(.[]; .event == "command.completed" and
+    .command == "icons" and .outcome == "failed")' "$log"
 }
 
 @test "an enabled Log records command start and completion as valid JSONL" {
@@ -124,6 +145,30 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
+@test "the Log rejects inherited identifiers and normalizes free-form tmux state" {
+  local log="$BATS_TEST_TMPDIR/allowlist.jsonl"
+  tmux_test_server_run set -p -t "$PANE" @tama_pane_state_main 'customer secret'
+
+  TAMA_LOG_CORRELATION_ID='correlation secret' \
+    TAMA_LOG_OPERATION_ID='operation secret' \
+    TAMA_LOG_PARENT_OPERATION_ID='parent secret' \
+    TAMA_LOG_FILE="$log" run \
+    "$PLUGIN_ROOT/bin/tama" state running --pane "$PANE"
+
+  assert_success
+  tmux_test_server_run set -w -t "$PANE" @tama_window_priority 'priority secret'
+  TMUX_PANE="$PANE" TAMA_LOG_FILE="$log" run \
+    "$PLUGIN_ROOT/bin/tama" notify -- Agent message
+  assert_success
+  run grep -E 'customer secret|priority secret|correlation secret|operation secret|parent secret' "$log"
+  [ "$status" -ne 0 ]
+  jq -e -s '
+    all(.[]; (.correlation_id | test("^[A-Za-z0-9_.-]{1,64}$"))) and
+    any(.[]; .operation == "report_state" and .state_before.main == "unknown") and
+    any(.[]; .operation == "attention_policy" and .priority == true)
+  ' "$log"
+}
+
 @test "doctor validates the configured Log without appending to it" {
   local log="$BATS_TEST_TMPDIR/doctor.jsonl"
   printf '{"existing":true}\n' >"$log"
@@ -178,6 +223,27 @@ teardown() {
     .command == "stub" and .outcome == "failed")' "$log"
 }
 
+@test "a nonzero command status overrides an earlier partial outcome" {
+  local log="$BATS_TEST_TMPDIR/final-status.jsonl"
+
+  TMUX_PANE="$PANE" TAMA_LOG_FILE="$log" run \
+    "$PLUGIN_ROOT/bin/tama" hook claude-code SessionStart --bad
+
+  assert_status 2
+  jq -e -s 'any(.[]; .event == "command.completed" and
+    .command == "hook" and .outcome == "failed")' "$log"
+}
+
+@test "a redundant public mutation is recorded as skipped" {
+  local log="$BATS_TEST_TMPDIR/redundant-command.jsonl"
+
+  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" unflag --pane "$PANE"
+
+  assert_success
+  jq -e -s 'any(.[]; .event == "command.completed" and
+    .command == "unflag" and .outcome == "skipped")' "$log"
+}
+
 @test "a Codex event is correlated through integration classification and its command" {
   local log="$BATS_TEST_TMPDIR/codex.jsonl"
   local payload='{"session_id":"secret-session","hook_event_name":"SessionStart","source":"startup"}'
@@ -212,8 +278,8 @@ teardown() {
   wait
 
   [ "$(wc -l <"$log" | tr -d ' ')" -ge 12 ]
-  while IFS= read -r line; do
-    jq -e 'type == "object"' <<<"$line" >/dev/null || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    jq -Re 'fromjson | type == "object"' <<<"$line" >/dev/null || return 1
   done <"$log"
 }
 
@@ -225,10 +291,11 @@ teardown() {
     TMUX_PANE="$PANE" TAMA_LOG_FILE="$log" \
       "$PLUGIN_ROOT/bin/tama" hook codex "$event" <<<'{}' &
   done
-  wait
+  wait || return 1
 
-  while IFS= read -r line; do
-    jq -e 'type == "object"' <<<"$line" >/dev/null || return 1
+  assert_equal "$(grep -c 'integration.classified' "$log")" 4
+  while IFS= read -r line || [ -n "$line" ]; do
+    jq -Re 'fromjson | type == "object"' <<<"$line" >/dev/null || return 1
   done <"$log"
   run grep -F "$event" "$log"
   [ "$status" -ne 0 ]
@@ -301,7 +368,9 @@ teardown() {
       .state_after.main == "running") and
     any(.[]; .event == "decision.made" and .operation == "report_state" and
       .outcome == "skipped" and .reason == "pane_record_unchanged" and
-      .state_before.main == "running" and .state_after.main == "running")
+      .state_before.main == "running" and .state_after.main == "running") and
+    ([.[] | select(.event == "command.completed" and .command == "state")][-1].outcome
+      == "skipped")
   ' "$log"
 }
 
@@ -433,5 +502,23 @@ teardown() {
       .outcome == "skipped" and .reason == "capability_unsupported") and
     any(.[]; .event == "effect.completed" and .operation == "notify_backend" and
       .outcome == "failed")
+  ' "$log"
+}
+
+@test "a negative focused answer is a successful backend query" {
+  local log="$BATS_TEST_TMPDIR/focused-outcome.jsonl"
+  tama_fake_backend_env
+  tama_use_fake_backend
+  tama_attach_client t
+
+  TMUX_PANE="$PANE" TAMA_LOG_FILE="$log" TAMA_FAKE_FOCUSED=1 run \
+    "$PLUGIN_ROOT/bin/tama" notify -- Agent message
+
+  assert_success
+  jq -e -s '
+    any(.[]; .event == "effect.completed" and .operation == "focused_backend" and
+      .outcome == "applied") and
+    any(.[]; .event == "command.completed" and .command == "notify" and
+      .outcome != "failed")
   ' "$log"
 }
