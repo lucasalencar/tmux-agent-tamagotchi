@@ -12,7 +12,7 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 deliver() { # <target> <agent_name> <message>
-  local target="$1" agent="$2" message="$3" flag='no' notification='no'
+  local target="$1" agent="$2" message="$3" flag='no' notification='no' eligible=no
 
   tama_window_read "$target" || exit 0
 
@@ -26,10 +26,11 @@ deliver() { # <target> <agent_name> <message>
     notification='yes'
   fi
 
+  tama_attention_is_eligible "$flag" "$notification" && eligible=yes
   tama_log_attention_decision "$TAMA_WINDOW_PANE_ID" "$TAMA_WINDOW_ID" \
-    "$TAMA_WINDOW_PRIORITY" "$flag" "$notification"
+    "$TAMA_WINDOW_PRIORITY" "$flag" "$notification" "$eligible"
 
-  [ "$flag" = yes ] || [ "$notification" = yes ] || exit 0
+  [ "$eligible" = yes ] || exit 0
 
   # A Flag-only event needs no notification metadata or backend work.
   if [ "$notification" = no ]; then

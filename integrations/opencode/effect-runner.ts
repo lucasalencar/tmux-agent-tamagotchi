@@ -6,7 +6,11 @@ export type ProcessResult = Readonly<{
   stdout: string
 }>
 
-export type ProcessExecutor = (argv: readonly string[]) => Promise<ProcessResult>
+export type ProcessEnvironment = Readonly<Record<string, string>>
+export type ProcessExecutor = (
+  argv: readonly string[],
+  environment?: ProcessEnvironment,
+) => Promise<ProcessResult>
 
 export type EffectRunnerDependencies = Readonly<{
   execute: ProcessExecutor
@@ -24,13 +28,16 @@ const GENERIC_ERROR = "OpenCode session failed"
 const GENERIC_COMPLETION = "OpenCode finished its turn"
 
 export function createEffectRunner(dependencies: EffectRunnerDependencies): EffectRunner {
-  async function invokeTama(args: readonly string[]): Promise<void> {
+  async function invokeTama(args: readonly string[], integrationEvent: string): Promise<void> {
     try {
       const resolved = await dependencies.execute(["tmux", "show", "-gqv", "@tama_bin"])
       if (resolved.exitCode !== 0) return
       const executable = parseExecutable(resolved.stdout)
       if (!executable) return
-      await dependencies.execute([executable, ...args])
+      await dependencies.execute([executable, ...args], {
+        TAMA_LOG_INTEGRATION: "opencode",
+        TAMA_LOG_INTEGRATION_EVENT: integrationEvent,
+      })
     } catch {
       // An integration must never make OpenCode fail because tmux or tama is unavailable.
     }
@@ -40,7 +47,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
     try {
       switch (effect.type) {
         case "pane-state":
-          await invokeTama(["state", effect.state, AGENT_NAME])
+          await invokeTama(["state", effect.state, AGENT_NAME], "pane-state")
           break
         case "root-error":
           await invokeTama([
@@ -48,11 +55,11 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
             "--",
             AGENT_NAME,
             sanitizeNotificationText(effect.message ?? "") ?? GENERIC_ERROR,
-          ])
+          ], "root-error")
           break
         case "subagent-start":
         case "subagent-stop":
-          await invokeTama(["state", effect.type, "--", effect.sessionId])
+          await invokeTama(["state", effect.type, "--", effect.sessionId], effect.type)
           break
         case "completion-eligible":
           await dependencies.onCompletionEligible?.({
@@ -73,13 +80,14 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
       "--",
       AGENT_NAME,
       sanitizeNotificationText(message) ?? GENERIC_COMPLETION,
-    ]),
-    clearPane: () => invokeTama(["state", "clear"]),
+    ], "completion-notification"),
+    clearPane: () => invokeTama(["state", "clear"], "dispose"),
   }
 }
 
-export const executeWithBun: ProcessExecutor = async (argv) => {
+export const executeWithBun: ProcessExecutor = async (argv, environment) => {
   const child = Bun.spawn([...argv], {
+    env: environment ? { ...Bun.env, ...environment } : undefined,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "ignore",

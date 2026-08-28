@@ -238,14 +238,36 @@ main() {
     *) require_tmux ;;
   esac
 
-  if [ "$subcommand" != doctor ]; then
-    tama_log_command_start "$subcommand"
+  case "$subcommand" in
+    doctor | setup | icons | summary | list) exec "$command_file" "$@" ;;
+  esac
+  [ -n "${TAMA_LOG_FILE:-}" ] || exec "$command_file" "$@"
+
+  tama_log_command_start "$subcommand"
+  if [ -n "${TAMA_LOG_INTEGRATION:-}" ] && [ -n "${TAMA_LOG_INTEGRATION_EVENT:-}" ]; then
+    tama_log_integration integration.received "$TAMA_LOG_INTEGRATION" \
+      "$TAMA_LOG_INTEGRATION_EVENT" ''
+    tama_log_integration integration.classified "$TAMA_LOG_INTEGRATION" \
+      "$TAMA_LOG_INTEGRATION_EVENT" applied
   fi
+  local result_file=''
+  result_file="$(mktemp /tmp/tama-log-result.XXXXXX 2>/dev/null)" || result_file=''
+  TAMA_LOG_RESULT_FILE="$result_file"
+  export TAMA_LOG_RESULT_FILE
   "$command_file" "$@"
   local status=$?
-  if [ "$subcommand" != doctor ]; then
-    tama_log_command_complete "$subcommand" "$status"
+  local logged_outcome='' result
+  if [ -n "$result_file" ]; then
+    while IFS= read -r result; do
+      case "$result" in
+        failed) logged_outcome=failed; break ;;
+        applied) [ "$logged_outcome" = failed ] || logged_outcome=applied ;;
+        skipped) [ -n "$logged_outcome" ] || logged_outcome=skipped ;;
+      esac
+    done <"$result_file"
+    rm -f -- "$result_file"
   fi
+  tama_log_command_complete "$subcommand" "$status" "$logged_outcome"
   return "$status"
 }
 

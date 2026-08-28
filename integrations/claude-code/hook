@@ -405,24 +405,16 @@ main() {
   shift
 
   case "$event" in
-    SessionStart | UserPromptSubmit | PreToolUse | PostToolUse | PostToolUseFailure | \
-      PostToolBatch | PermissionRequest | Notification | Stop | StopFailure | \
-      SubagentStart | SubagentStop | SessionEnd)
-      tama_log_integration integration.classified claude-code "$event" applied
-      ;;
-    *)
-      tama_log_integration integration.classified claude-code "$event" skipped unknown_event
-      ;;
-  esac
-
-  case "$event" in
     SessionStart)
+      tama_log_integration integration.classified claude-code "$event" applied
       cc_state idle "$@"
       ;;
     UserPromptSubmit | PreToolUse | PostToolUse | PostToolUseFailure | PostToolBatch)
+      tama_log_integration integration.classified claude-code "$event" applied
       cc_state running "$@"
       ;;
     PermissionRequest)
+      tama_log_integration integration.classified claude-code "$event" applied
       # The icon and the window mark, and no banner: see the note at the top of this
       # file. Claude Code raises `Notification` for the same interruption a few
       # seconds later, carrying the sentence this event does not have.
@@ -431,8 +423,15 @@ main() {
     Notification)
       # Without a type there is nothing to tell noise from a question, and
       # guessing wrong leaves a pane asking for the user forever.
-      cc_field notification_type || exit 0
-      cc_notification_wants_user "$TAMA_CC_FIELD" || exit 0
+      if ! cc_field notification_type; then
+        tama_log_integration integration.classified claude-code "$event" skipped malformed_event
+        exit 0
+      fi
+      if ! cc_notification_wants_user "$TAMA_CC_FIELD"; then
+        tama_log_integration integration.classified claude-code "$event" skipped event_not_actionable
+        exit 0
+      fi
+      tama_log_integration integration.classified claude-code "$event" applied
       if cc_is_delegated; then
         cc_state waiting "$@"
       fi
@@ -440,6 +439,7 @@ main() {
       cc_state_and_notify waiting "$TAMA_CC_TEXT" "$@"
       ;;
     Stop)
+      tama_log_integration integration.classified claude-code "$event" applied
       # The turn is over, and what the agent last said is what the user missed. A
       # delegated run cannot reach here — Claude Code converts its end into
       # SubagentStop — but the check costs nothing on a payload already read, and it
@@ -452,6 +452,7 @@ main() {
       cc_state_and_notify idle "$TAMA_CC_TEXT" "$@"
       ;;
     StopFailure)
+      tama_log_integration integration.classified claude-code "$event" applied
       if cc_is_delegated; then
         cc_state error "$@"
       fi
@@ -459,6 +460,7 @@ main() {
       cc_state_and_notify error "$TAMA_CC_TEXT" "$@"
       ;;
     SubagentStart | SubagentStop)
+      tama_log_integration integration.classified claude-code "$event" applied
       # The counter is keyed by the id Claude Code gives the delegated run, so a
       # payload without one leaves nothing to count. Ignoring that is safe in the
       # direction that matters: no subagent is tracked, rather than a pane pinned
@@ -481,12 +483,14 @@ main() {
       esac
       ;;
     SessionEnd)
+      tama_log_integration integration.classified claude-code "$event" applied
       exec "$TAMA_BIN" state clear "$@"
       ;;
     # An event this version does not map. Silent on purpose: Claude Code adds
     # events, and a settings.json written against a newer plugin has to be
     # harmless on an older one.
     *)
+      tama_log_integration integration.classified claude-code "$event" skipped unknown_event
       exit 0
       ;;
   esac

@@ -3,6 +3,26 @@ import { describe, expect, test } from "bun:test"
 import { createEffectRunner, type ProcessExecutor, type ProcessResult } from "../effect-runner"
 
 describe("tama effect runner", () => {
+  test("marks public CLI effects with privacy-safe OpenCode lifecycle metadata", async () => {
+    const environments: Array<Readonly<Record<string, string>> | undefined> = []
+    const runner = createEffectRunner({
+      execute: async (argv, environment) => {
+        if (argv[0] !== "tmux") environments.push(environment)
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+
+    await runner.run({ type: "pane-state", state: "waiting" })
+    await runner.run({ type: "subagent-start", sessionId: "opaque-child" })
+
+    expect(environments).toEqual([
+      { TAMA_LOG_INTEGRATION: "opencode", TAMA_LOG_INTEGRATION_EVENT: "pane-state" },
+      { TAMA_LOG_INTEGRATION: "opencode", TAMA_LOG_INTEGRATION_EVENT: "subagent-start" },
+    ])
+  })
+
   test("resolves the public CLI through tmux and invokes it only with argv", async () => {
     const calls: string[][] = []
     const execute: ProcessExecutor = async (argv) => {

@@ -31,6 +31,10 @@ tama_notify_enabled() {
   tama_opt_enabled tama_notifications on
 }
 
+tama_attention_is_eligible() { # <flag yes|no> <notification yes|no>
+  [ "$1" = yes ] || [ "$2" = yes ]
+}
+
 # The group id for the window tama_window_read last read, in TAMA_NOTIFY_GROUP.
 # A pending banner keeps the group it was raised with until dismissal, so changing
 # the format cannot orphan it in the notification centre. The pending marker is
