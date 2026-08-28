@@ -3,6 +3,9 @@
 
 set -o nounset
 
+# shellcheck source=../../lib/log.sh
+. "$TAMA_PLUGIN_DIR/lib/log.sh"
+
 [ -n "${TAMA_BIN:-}" ] || exit 0
 
 TAMA_CODEX_AGENT='codex'
@@ -275,6 +278,7 @@ codex_auto_review_is_configured() {
 TAMA_CODEX_EVENT="${1:-}"
 codex_read_payload
 if [ "$TAMA_CODEX_PAYLOAD_TRUNCATED" = 'yes' ]; then
+  tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" skipped payload_truncated
   [ "$TAMA_CODEX_EVENT" = 'SessionEnd' ] && codex_session_end
   [ "$TAMA_CODEX_EVENT" = 'SubagentStop' ] && printf '{}'
   exit 0
@@ -287,6 +291,16 @@ case "$TAMA_CODEX_EVENT" in
     if codex_text_field agent_id top; then
       exit 0
     fi
+    ;;
+esac
+
+case "$TAMA_CODEX_EVENT" in
+  SessionStart | UserPromptSubmit | PostToolUse | PreToolUse | PermissionRequest | \
+    SubagentStart | SubagentStop | Stop | SessionEnd | PreCompact | PostCompact)
+    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" applied
+    ;;
+  *)
+    tama_log_integration integration.classified codex "$TAMA_CODEX_EVENT" skipped unknown_event
     ;;
 esac
 

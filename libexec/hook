@@ -53,7 +53,10 @@ main() {
     die_usage "no integration for agent: $agent"
   fi
 
-  exec "$integration" "$@"
+  tama_log_integration integration.received "$agent" "$1" applied
+  TAMA_LOG_PARENT_OPERATION_ID="${TAMA_LOG_OPERATION_ID:-}"
+  export TAMA_LOG_PARENT_OPERATION_ID
+  "$integration" "$@"
 }
 
 main "$@"

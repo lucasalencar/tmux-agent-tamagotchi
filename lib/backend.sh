@@ -175,28 +175,48 @@ tama_libnotify_send() {
 # arguments are appended as arguments rather than pasted into it — a notification
 # message is arbitrary text and must never be read as shell.
 tama_backend_invoke() { # <capability> [args…]
-  local capability="$1" override target
+  local capability="$1" override target status outcome reason='' effect_id started_at
   shift
+
+  effect_id="e-$$-${RANDOM:-0}"
+  started_at=''
+  if [ -n "${TAMA_LOG_FILE:-}" ]; then
+    started_at="$(tama_log_clock 2>/dev/null || true)"
+  fi
+  tama_log_effect effect.started "${capability}_backend" "$effect_id" ''
 
   override="$(tama_opt "tama_${capability}_command" '')"
   if [ -n "$override" ]; then
     # `"$@"` inside the sh program text, so the values arrive as arguments of the
     # user's command. The `_` is $0 for that shell.
     sh -c "$override \"\$@\"" _ "$@" >/dev/null 2>&1
-    return
+    status=$?
+    outcome=failed
+    [ "$status" -eq 0 ] && outcome=applied
+    tama_log_effect effect.completed "${capability}_backend" "$effect_id" "$outcome" "$started_at"
+    return "$status"
   fi
 
   tama_backend_dir
-  [ -n "$TAMA_BACKEND_DIR" ] || return "$TAMA_BACKEND_UNSUPPORTED"
+  if [ -z "$TAMA_BACKEND_DIR" ]; then
+    tama_log_effect effect.completed "${capability}_backend" "$effect_id" skipped "$started_at" capability_unsupported
+    return "$TAMA_BACKEND_UNSUPPORTED"
+  fi
 
   target="$TAMA_BACKEND_DIR/$capability"
   # -x alone is true of a directory, and running one is a diagnostic rather than a
   # status. Unsupported covers both.
   if [ ! -f "$target" ] || [ ! -x "$target" ]; then
+    tama_log_effect effect.completed "${capability}_backend" "$effect_id" skipped "$started_at" capability_unsupported
     return "$TAMA_BACKEND_UNSUPPORTED"
   fi
 
   "$target" "$@" >/dev/null 2>&1
+  status=$?
+  outcome=failed
+  [ "$status" -eq 0 ] && outcome=applied
+  tama_log_effect effect.completed "${capability}_backend" "$effect_id" "$outcome" "$started_at"
+  return "$status"
 }
 
 # The terminal a backend is talking about, for the two capabilities that have to name

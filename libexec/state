@@ -23,11 +23,23 @@ TAMA_SUBAGENT_RETRY_DELAY=0.05
 # Record state and the command snapshot used by stale detection, writing only changes.
 report() {
   local pane="$1" state_main="$2" name="$3" refresh='no'
+  local state_before_derived state_after_derived outcome=applied reason='' subagent_count=0
   tama_pane_read "$pane" || exit 0
+
+  tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS"
+  state_before_derived="$TAMA_PANE_DERIVED"
+  if [ -n "$TAMA_PANE_SUBAGENTS" ]; then
+    set -f
+    # shellcheck disable=SC2086 # one opaque id per space-delimited field
+    set -- $TAMA_PANE_SUBAGENTS
+    set +f
+    subagent_count=$#
+  fi
 
   # Only a different icon is worth redrawing every client for; a pane whose command
   # or path merely moved is a cheap write and nothing a user can see.
   tama_pane_derive "$state_main" "$TAMA_PANE_SUBAGENTS"
+  state_after_derived="$TAMA_PANE_DERIVED"
   tama_pane_display_changed "$TAMA_PANE_DISPLAY" "$TAMA_PANE_DERIVED" && refresh='yes'
 
   # The snapshot comes from tmux, not from the hook, so a value the record cannot
@@ -50,6 +62,14 @@ report() {
   # is the last command of the script, so without this the hot path — a repeated
   # `state running` — would exit non-zero out of an agent's hook.
   tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID" || true
+
+  if [ "$state_main" = "$TAMA_PANE_STATE_MAIN" ]; then
+    outcome=skipped
+    reason=pane_state_unchanged
+  fi
+  tama_log_state_decision "$outcome" "$reason" "$TAMA_PANE_ID" \
+    "$TAMA_PANE_WINDOW_ID" "$TAMA_PANE_STATE_MAIN" "$state_before_derived" \
+    "$subagent_count" "$state_main" "$state_after_derived"
 
   # Deliberately after the flush and outside it: the flag answers to the *event*, not
   # to the write. An agent already in `waiting` that asks again — the user glanced at

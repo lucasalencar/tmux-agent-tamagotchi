@@ -198,6 +198,11 @@ _tama_require_lib "$_tama_lib_dir/options.sh"
 # shellcheck source=options.sh
 . "$_tama_lib_dir/options.sh"
 
+_tama_require_lib "$_tama_lib_dir/log.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=log.sh
+. "$_tama_lib_dir/log.sh"
+
 _tama_require_lib "$_tama_lib_dir/inventory.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=inventory.sh

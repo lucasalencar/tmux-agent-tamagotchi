@@ -24,6 +24,7 @@
 set -o nounset
 
 TAMA_VERSION='0.3.0'
+export TAMA_VERSION
 
 # Where we are, following symlinks: a user may well symlink this file even though
 # the plugin never installs itself anywhere (ADR-0003). Must run in a subshell —
@@ -237,7 +238,15 @@ main() {
     *) require_tmux ;;
   esac
 
-  exec "$command_file" "$@"
+  if [ "$subcommand" != doctor ]; then
+    tama_log_command_start "$subcommand"
+  fi
+  "$command_file" "$@"
+  local status=$?
+  if [ "$subcommand" != doctor ]; then
+    tama_log_command_complete "$subcommand" "$status"
+  fi
+  return "$status"
 }
 
 main "$@"
