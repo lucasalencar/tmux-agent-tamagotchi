@@ -46,36 +46,12 @@ TAMA_BACKEND_UNSUPPORTED=127
 TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT=5
 TAMA_EXTERNAL_COMMAND_TIMEOUT_TEST_SECONDS=1
 
-# Prints every current descendant of a process. The watchdog calls this only after the
-# deadline, where the extra `ps` is cheaper than letting a child that made its own
-# process group keep the hook's output pipe open forever.
-tama_external_command_descendants() { # <pid>
-  local descendants='' generation="$1" next='' parent pid ppid snapshot
-  snapshot="$(ps -axo pid=,ppid= 2>/dev/null)" || return 0
-  while [ -n "$generation" ]; do
-    next=''
-    while read -r pid ppid; do
-      for parent in $generation; do
-        if [ "$ppid" = "$parent" ]; then
-          descendants="$descendants $pid"
-          next="$next $pid"
-          break
-        fi
-      done
-    done <<EOF
-$snapshot
-EOF
-    generation="$next"
-  done
-  printf '%s' "$descendants"
-}
-
 # Runs an external command in its own process group and tears that whole group down at
 # the deadline. Job control is Bash's portable way to create the group on macOS 3.2,
 # where neither `timeout` nor `setsid` is part of the operating system.
 tama_external_command_run() { # <command> [args…]
   (
-    local command_pid descendants status timeout watchdog_pid
+    local command_pid status timeout watchdog_pid
     case "${TAMA_EXTERNAL_COMMAND_TIMEOUT:-}" in
       "$TAMA_EXTERNAL_COMMAND_TIMEOUT_TEST_SECONDS") timeout="$TAMA_EXTERNAL_COMMAND_TIMEOUT" ;;
       *) timeout="$TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT" ;;
@@ -89,26 +65,17 @@ tama_external_command_run() { # <command> [args…]
       # one signal instead of leaving a five-second sleep behind.
       set +m
       sleep "$timeout"
-      # Release the caller at the deadline before consulting ps: even a sick system
-      # utility must not extend a user command's budget.
       kill -KILL -- "-$command_pid" 2>/dev/null || true
-      descendants="$(tama_external_command_descendants "$command_pid")"
-      # Known descendants may have made their own process groups.
-      # shellcheck disable=SC2086  # one numeric pid per word from ps
-      [ -z "$descendants" ] || kill -KILL -- $descendants 2>/dev/null || true
     ) >/dev/null 2>&1 &
     watchdog_pid=$!
 
     wait "$command_pid" 2>/dev/null
     status=$?
-    if kill -0 -- "-$command_pid" 2>/dev/null; then
-      # The leader exited after leaving children in its group. They may still hold a
-      # command-substitution pipe open, so leave the deadline armed for the group.
-      disown "$watchdog_pid" 2>/dev/null || true
-    else
-      kill -- "-$watchdog_pid" 2>/dev/null || true
-      wait "$watchdog_pid" 2>/dev/null || true
-    fi
+    # A command that returned after backgrounding work has finished its capability;
+    # do not leave either that group or a delayed signal to a recyclable PGID behind.
+    kill -KILL -- "-$command_pid" 2>/dev/null || true
+    kill -- "-$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
     return "$status"
   )
 }

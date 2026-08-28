@@ -12,7 +12,7 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 deliver() { # <target> <agent_name> <message>
-  local target="$1" agent="$2" message="$3" flag='no' notification='no'
+  local target="$1" agent="$2" message="$3" flag='no' notification='no' notify_group
 
   tama_window_read "$target" || exit 0
 
@@ -84,7 +84,19 @@ deliver() { # <target> <agent_name> <message>
   TAMA_CLICK="$TAMA_NOTIFY_CLICK"
   export TAMA_GROUP TAMA_PANE_ID TAMA_AGENT TAMA_CLICK
 
+  notify_group="$TAMA_NOTIFY_GROUP"
   tama_backend_invoke notify "$TAMA_NOTIFY_TITLE" "$message" || true
+
+  # Selection hooks run concurrently with agent hooks. If one dismissed this group
+  # while the backend was still delivering it, remove the just-finished banner again.
+  # A newer pending group belongs to newer work and must not be touched.
+  if ! tama_window_read "$TAMA_WINDOW_ID" ||
+    [ -z "$TAMA_WINDOW_NOTIFICATION_PENDING" ] ||
+    [ "${TAMA_WINDOW_NOTIFY_GROUP:-}" != "$notify_group" ]; then
+    TAMA_GROUP="$notify_group"
+    export TAMA_GROUP
+    tama_backend_invoke dismiss "$notify_group" || true
+  fi
 }
 
 main() {

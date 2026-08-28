@@ -24,6 +24,7 @@
 
 tama_positional=0
 tama_values=0
+[ -z "${TAMA_NOTIFY_SEND_DELAY:-}" ] || sleep "$TAMA_NOTIFY_SEND_DELAY"
 for tama_argument in "$@"; do
   if [ "$tama_values" -eq 1 ]; then
     tama_positional=$((tama_positional + 1))

@@ -142,6 +142,31 @@ run_click() { # <click command line>
   assert_notifier_flag activate com.mitchellh.ghostty
 }
 
+@test "terminal-notifier finishes before the notification command returns" {
+  use_macos_backend
+  export TAMA_NOTIFIER_DELAY=0.2
+  local pane
+  pane="$(agent_pane_elsewhere)"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  [ -e "$TAMA_NOTIFIER_DIR/message" ]
+}
+
+@test "terminal-notifier finishes removing before dismiss returns" {
+  use_macos_backend
+  export TAMA_NOTIFIER_DELAY=2
+  local pane window
+  pane="$(agent_pane_elsewhere)"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
+  assert_success
+  [ -e "$TAMA_NOTIFIER_DIR/remove" ]
+}
+
 @test "the terminal a banner activates is configuration, not a hardcoded app" {
   use_macos_backend
   tmux_test_server_run set -g @tama_terminal_bundle_id net.kovidgoyal.kitty

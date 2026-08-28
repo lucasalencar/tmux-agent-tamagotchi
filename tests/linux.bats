@@ -149,6 +149,17 @@ agent_pane_elsewhere() {
   assert_notify_send_value hint.x-canonical-private-synchronous "tmux-window-$window"
 }
 
+@test "notify-send finishes before the notification command returns" {
+  use_libnotify_backend
+  export TAMA_NOTIFY_SEND_DELAY=0.2
+  local pane
+  pane="$(agent_pane_elsewhere)"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  [ -e "$TAMA_NOTIFY_SEND_DIR/message" ]
+}
+
 @test "banners replace per window: same window, same hint; another window, another" {
   use_libnotify_backend
   local first second first_hint

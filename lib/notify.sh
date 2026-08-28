@@ -4,6 +4,7 @@
 
 # One group per window lets newer banners replace older ones.
 TAMA_NOTIFY_GROUP_DEFAULT='tmux-window-#{window_id}'
+TAMA_NOTIFY_LABEL_CAPTURE_BYTES=2049
 
 # tmux may intermittently omit a live pane path, so fall back to the last reported cwd.
 TAMA_NOTIFY_TITLE_DEFAULT='#{@tama_pane_agent} - #{?pane_current_path,#{b:pane_current_path},#{b:@tama_pane_cwd}}#{?@tama_pane_label, (#{@tama_pane_label}),}'
@@ -43,7 +44,12 @@ tama_notify_capture_open() {
     TAMA_NOTIFY_CAPTURE_DIR="$directory/tama-label-$$-$RANDOM-$attempt"
     if (umask 077; mkdir "$TAMA_NOTIFY_CAPTURE_DIR") 2>/dev/null; then
       TAMA_NOTIFY_CAPTURE="$TAMA_NOTIFY_CAPTURE_DIR/output"
-      (umask 077; : >"$TAMA_NOTIFY_CAPTURE") || return 1
+      if ! (umask 077; : >"$TAMA_NOTIFY_CAPTURE"); then
+        rmdir "$TAMA_NOTIFY_CAPTURE_DIR" 2>/dev/null || true
+        TAMA_NOTIFY_CAPTURE=''
+        TAMA_NOTIFY_CAPTURE_DIR=''
+        return 1
+      fi
       return 0
     fi
     attempt=$((attempt + 1))
@@ -81,7 +87,7 @@ tama_notify_title() { # <pane_id>
 # A configured provider receives the window id; only its first storable line is used.
 # shellcheck disable=SC2034  # TAMA_NOTIFY_LABEL is read by the caller
 tama_notify_label() {
-  local command label status
+  local command label size status
   TAMA_NOTIFY_LABEL=''
   command="$(tama_opt tama_label_command '')"
   [ -n "$command" ] || return 0
@@ -93,21 +99,28 @@ tama_notify_label() {
   tama_notify_capture_open || return 0
   # Separate descriptions preserve the reader's offset while the provider writes.
   # shellcheck disable=SC2094
-  exec 8>"$TAMA_NOTIFY_CAPTURE" 9<"$TAMA_NOTIFY_CAPTURE"
+  exec 8>"$TAMA_NOTIFY_CAPTURE" 9<"$TAMA_NOTIFY_CAPTURE" 10<"$TAMA_NOTIFY_CAPTURE"
   rm -f "$TAMA_NOTIFY_CAPTURE"
   rmdir "$TAMA_NOTIFY_CAPTURE_DIR" 2>/dev/null || true
-  # A label is one short line. Bound the backing file as well as time so a provider
-  # cannot consume unbounded disk or memory before it reaches a newline.
-  (ulimit -f 2; tama_external_command_run sh -c "$command \"\$1\"" _ \
-    "$TAMA_WINDOW_ID") >&8 2>/dev/null
+  # The collector, not the provider, owns the byte limit: a provider remains free to
+  # update its own cache or log while stdout can never fill storage or memory.
+  # shellcheck disable=SC2016  # expanded by the child Bash, not this shell
+  tama_external_command_run "$BASH" -o pipefail -c \
+    'sh -c "$1 \"\$1\"" _ "$2" | head -c "$3"' _ \
+    "$command" "$TAMA_WINDOW_ID" "$TAMA_NOTIFY_LABEL_CAPTURE_BYTES" >&8 2>/dev/null
   status=$?
   exec 8>&-
   if [ "$status" -eq 0 ]; then
-    IFS= read -r label <&9 || true
+    size="$(wc -c <&10 | tr -d ' ')"
+    if [ "$size" -lt "$TAMA_NOTIFY_LABEL_CAPTURE_BYTES" ]; then
+      IFS= read -r label <&9 || true
+    else
+      label=''
+    fi
   else
     label=''
   fi
-  exec 9<&-
+  exec 9<&- 10<&-
 
   # One line. A provider that prints several has said one thing and then said more.
   label="${label%%$'\n'*}"
