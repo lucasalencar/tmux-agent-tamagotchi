@@ -44,7 +44,7 @@ TAMA_BACKEND_UNSUPPORTED=127
 # cannot make an agent turn look dead. Tests may lower it to a whole second through the
 # environment; there is no user option or environment value that can extend the bound.
 TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT=5
-TAMA_EXTERNAL_COMMAND_TIMEOUT_TEST=1
+TAMA_EXTERNAL_COMMAND_TIMEOUT_TEST_SECONDS=1
 
 # Prints every current descendant of a process. The watchdog calls this only after the
 # deadline, where the extra `ps` is cheaper than letting a child that made its own
@@ -77,7 +77,7 @@ tama_external_command_run() { # <command> [args…]
   (
     local command_pid descendants status timeout watchdog_pid
     case "${TAMA_EXTERNAL_COMMAND_TIMEOUT:-}" in
-      "$TAMA_EXTERNAL_COMMAND_TIMEOUT_TEST") timeout="$TAMA_EXTERNAL_COMMAND_TIMEOUT" ;;
+      "$TAMA_EXTERNAL_COMMAND_TIMEOUT_TEST_SECONDS") timeout="$TAMA_EXTERNAL_COMMAND_TIMEOUT" ;;
       *) timeout="$TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT" ;;
     esac
 
@@ -85,14 +85,17 @@ tama_external_command_run() { # <command> [args…]
     "$@" &
     command_pid=$!
     (
+      # Keep the timer in the watchdog's group, so a fast command can reap both with
+      # one signal instead of leaving a five-second sleep behind.
+      set +m
       sleep "$timeout"
+      # Release the caller at the deadline before consulting ps: even a sick system
+      # utility must not extend a user command's budget.
+      kill -KILL -- "-$command_pid" 2>/dev/null || true
       descendants="$(tama_external_command_descendants "$command_pid")"
-      if kill -0 "$command_pid" 2>/dev/null || [ -n "$descendants" ]; then
-        # Known descendants may have made their own process groups, so address both
-        # their pids and the original group.
-        # shellcheck disable=SC2086  # one numeric pid per word from ps
-        kill -KILL -- "-$command_pid" $descendants 2>/dev/null || true
-      fi
+      # Known descendants may have made their own process groups.
+      # shellcheck disable=SC2086  # one numeric pid per word from ps
+      [ -z "$descendants" ] || kill -KILL -- $descendants 2>/dev/null || true
     ) >/dev/null 2>&1 &
     watchdog_pid=$!
 

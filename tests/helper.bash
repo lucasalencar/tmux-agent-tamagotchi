@@ -211,7 +211,7 @@ wait_until_file_exists() { # <path>
   [ -e "$1" ]
 }
 
-assert_process_exits_within() { # <pid> <seconds> <description>
+assert_process_succeeds_within() { # <pid> <seconds> <description>
   local pid="$1" limit="$2" description="$3" state waited=0
   state="$(ps -o stat= -p "$pid" 2>/dev/null)" || state=''
   while [ -n "$state" ] && [ "${state#Z}" = "$state" ] &&
