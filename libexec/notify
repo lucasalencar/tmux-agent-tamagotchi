@@ -26,6 +26,9 @@ deliver() { # <target> <agent_name> <message>
     notification='yes'
   fi
 
+  tama_log_attention_decision "$TAMA_WINDOW_PANE_ID" "$TAMA_WINDOW_ID" \
+    "$TAMA_WINDOW_PRIORITY" "$flag" "$notification"
+
   [ "$flag" = yes ] || [ "$notification" = yes ] || exit 0
 
   # A Flag-only event needs no notification metadata or backend work.

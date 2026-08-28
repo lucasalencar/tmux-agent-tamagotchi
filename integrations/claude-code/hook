@@ -17,6 +17,9 @@
 
 set -o nounset
 
+# shellcheck source=../../lib/log.sh
+. "$TAMA_PLUGIN_DIR/lib/log.sh"
+
 # Exported by bin/tama, which is the only thing that runs this file. Missing means
 # something invoked the adapter directly, which is not a user's mistake to be
 # shouted about from inside a turn.
@@ -400,6 +403,17 @@ main() {
 
   local event="$1"
   shift
+
+  case "$event" in
+    SessionStart | UserPromptSubmit | PreToolUse | PostToolUse | PostToolUseFailure | \
+      PostToolBatch | PermissionRequest | Notification | Stop | StopFailure | \
+      SubagentStart | SubagentStop | SessionEnd)
+      tama_log_integration integration.classified claude-code "$event" applied
+      ;;
+    *)
+      tama_log_integration integration.classified claude-code "$event" skipped unknown_event
+      ;;
+  esac
 
   case "$event" in
     SessionStart)
