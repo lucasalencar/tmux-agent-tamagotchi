@@ -119,6 +119,14 @@ teardown() {
   [ -z "$stderr" ]
 }
 
+@test "clear-priorities diagnoses a missing immutable session target" {
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities --session '$999'
+
+  assert_status 1
+  [ -z "$output" ]
+  assert_equal "$stderr" "tama: cannot clear Priority: session \$999 is unavailable"
+}
+
 @test "clear-priorities preserves unrelated tmux data and is idempotent" {
   local window pane
   window="$(tama_window_id t:0)"

@@ -8,6 +8,16 @@ set -o nounset
 # shellcheck source=../lib/common.sh
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
+tama_session_id_is_immutable() { # <session_id>
+  case "$1" in
+    \$*) ;;
+    *) return 1 ;;
+  esac
+  case "${1#\$}" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+}
+
 main() {
   local session=''
   while [ "$#" -gt 0 ]; do
@@ -20,13 +30,8 @@ main() {
         case "$2" in
           -*) die_usage '--session needs a session id' ;;
         esac
-        case "${2#\$}" in
-          '' | *[!0-9]*) die_usage '--session needs an immutable session id' ;;
-        esac
-        case "$2" in
-          \$*) ;;
-          *) die_usage '--session needs an immutable session id' ;;
-        esac
+        tama_session_id_is_immutable "$2" ||
+          die_usage '--session needs an immutable session id'
         session="$2"
         shift 2
         ;;
@@ -36,7 +41,12 @@ main() {
   done
 
   local records record window_id has_priority failures=0
-  records="$(tama_priority_records "$session")" || return 1
+  if ! records="$(tama_priority_records "$session")"; then
+    if [ -n "$session" ]; then
+      printf 'tama: cannot clear Priority: session %s is unavailable\n' "$session" >&2
+    fi
+    return 1
+  fi
 
   while IFS= read -r record; do
     [ -n "$record" ] || continue

@@ -240,7 +240,7 @@ loaded_server() {
   printf '%s\n' "$recipe" >"$conf"
   run tmux_test_server_run source-file "$conf"
   assert_success
-  assert_contains "$(tmux_test_server_run list-keys -T prefix | grep 'M-O')" \
+  assert_contains "$(tmux_test_server_run list-keys -T prefix | grep ' M-O ')" \
     'clear-priorities --session #{q:session_id}' 'the prefix + M-O binding'
 }
 

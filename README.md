@@ -128,16 +128,11 @@ the others are still attempted and the command exits non-zero with a diagnostic.
 changes racing after the snapshot are not guaranteed to be cleared. State, Flags,
 Notifications, and unrelated tmux options are preserved.
 
-Pass an immutable session ID to limit the same operation to the distinct tmux windows
-visible in that session:
-
-```sh
-"$(tmux show -gqv @tama_bin)" clear-priorities --session '$1'
-```
-
-Because Priority belongs to a tmux window, this also removes Priority from any links to
-those tmux windows in other sessions. Priorities on tmux windows not linked into the
-selected session remain unchanged. An already-empty session is a quiet success.
+Pass `--session <session_id>` to limit the same operation to the distinct tmux windows
+visible in that immutable session. Because Priority belongs to a tmux window, this also
+removes Priority from any links to those tmux windows in other sessions. Priorities on
+tmux windows not linked into the selected session remain unchanged. An already-empty
+session is a quiet success.
 
 An optional adjacent binding clears the server-wide set without the plugin reserving a key:
 
