@@ -202,6 +202,39 @@ tama_backend_value() { # <capability> <what>
   cat "$file"
 }
 
+wait_until_file_exists() { # <path>
+  local waited=0
+  while [ ! -e "$1" ] && [ "$waited" -lt 200 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  [ -e "$1" ]
+}
+
+assert_process_succeeds_within() { # <pid> <seconds> <description>
+  local pid="$1" limit="$2" description="$3" state waited=0
+  state="$(ps -o stat= -p "$pid" 2>/dev/null)" || state=''
+  while [ -n "$state" ] && [ "${state#Z}" = "$state" ] &&
+    [ "$waited" -lt "$((limit * 20))" ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+    state="$(ps -o stat= -p "$pid" 2>/dev/null)" || state=''
+  done
+  if [ -n "$state" ] && [ "${state#Z}" = "$state" ]; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    printf '%s was still running after %ss\n' "$description" "$limit" >&2
+    return 1
+  fi
+  wait "$pid"
+}
+
+assert_process_running() { # <pid>
+  local state
+  state="$(ps -o stat= -p "$1" 2>/dev/null)" || state=''
+  [ -n "$state" ] && [ "${state#Z}" = "$state" ]
+}
+
 assert_backend_value() { # <capability> <what> <expected>
   local actual
   actual="$(tama_backend_value "$1" "$2")" || return 1

@@ -83,6 +83,7 @@ run_click() { # <click command line>
   assert_backend_value notify argc 2
   assert_backend_value notify argv1 'claude-code - the-api'
   assert_backend_value notify argv2 'permission needed'
+  refute_backend_called dismiss
 }
 
 @test "the backend is told the complete notification context" {
@@ -219,6 +220,29 @@ run_click() { # <click command line>
 
   assert_backend_called focused
   assert_backend_called notify
+}
+
+@test "a focus check that never returns is bounded and delivers" {
+  tama_attach_client t
+  local invoked="$BATS_TEST_TMPDIR/focused-invoked"
+  local focused="$BATS_TEST_TMPDIR/hung-focused"
+  cat >"$focused" <<FOCUSED
+#!/bin/sh
+printf invoked >'$invoked'
+while :; do sleep 1; done
+FOCUSED
+  chmod +x "$focused"
+  tmux_test_server_run set -g @tama_focused_command "$focused"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
+
+  local pane pid
+  pane="$(tama_pane_of t:0)"
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+
+  assert_process_succeeds_within "$pid" 3 'notify with a hung focus check'
+  wait_until_file_exists "$invoked"
+  wait_until_backend_called notify
 }
 
 @test "suppression can be turned off, and then nothing is asked or dropped" {
@@ -423,6 +447,103 @@ PROVIDER
   assert_backend_value notify argv1 'claude-code - the-api'
 }
 
+@test "a notifier that never returns does not hold the agent turn" {
+  local invoked="$BATS_TEST_TMPDIR/notify-invoked"
+  local backend="$BATS_TEST_TMPDIR/hung-backend"
+  mkdir -p "$backend"
+  cat >"$backend/notify" <<BACKEND
+#!/bin/sh
+printf invoked >'$invoked'
+sleep 30
+BACKEND
+  chmod +x "$backend/notify"
+  tmux_test_server_run set -g @tama_backend "$backend"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
+
+  local pane pid
+  pane="$(tama_pane_of t:0)"
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+
+  assert_process_succeeds_within "$pid" 3 'notify with a hung backend'
+  wait_until_file_exists "$invoked"
+}
+
+@test "a label provider that never returns does not hold the agent turn" {
+  local invoked="$BATS_TEST_TMPDIR/label-invoked"
+  tmux_test_server_run set -g @tama_label_command \
+    "printf invoked >'$invoked'; sleep 30; :"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
+
+  local pane pid
+  pane="$(tama_pane_of t:0)"
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+
+  assert_process_succeeds_within "$pid" 3 'notify with a hung label provider'
+  wait_until_file_exists "$invoked"
+  assert_pane_option_unset "$pane" label
+  assert_backend_called notify
+}
+
+@test "an environment value cannot extend the external command deadline" {
+  local invoked="$BATS_TEST_TMPDIR/label-long-timeout"
+  tmux_test_server_run set -g @tama_label_command \
+    "printf invoked >'$invoked'; sleep 30; :"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=30
+
+  local pane pid
+  pane="$(tama_pane_of t:0)"
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+
+  assert_process_succeeds_within "$pid" 7 'notify with an extended deadline request'
+  wait_until_file_exists "$invoked"
+  assert_backend_called notify
+}
+
+@test "a detached label descendant cannot hold the agent turn open" {
+  local child_file="$BATS_TEST_TMPDIR/label-child"
+  local stdout="$BATS_TEST_TMPDIR/notify.stdout"
+  local stderr="$BATS_TEST_TMPDIR/notify.stderr"
+  tmux_test_server_run set -g @tama_label_command \
+    "set -m; sleep 30 & child=\$!; printf '%s' \"\$child\" >'$child_file'; wait"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
+
+  local pane pid child
+  pane="$(tama_pane_of t:0)"
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" \
+    >"$stdout" 2>"$stderr" &
+  pid=$!
+
+  assert_process_succeeds_within "$pid" 3 'notify with a detached label descendant'
+  wait_until_file_exists "$child_file"
+  child="$(cat "$child_file")"
+  kill -KILL "$child" 2>/dev/null || true
+  [ ! -s "$stdout" ]
+  [ ! -s "$stderr" ]
+}
+
+@test "a returned backend cannot leave work in its process group" {
+  local child_file="$BATS_TEST_TMPDIR/backend-child" backend="$BATS_TEST_TMPDIR/background-backend"
+  mkdir -p "$backend"
+  cat >"$backend/notify" <<BACKEND
+#!/bin/sh
+sleep 30 &
+printf '%s' "\$!" >'$child_file'
+BACKEND
+  chmod +x "$backend/notify"
+  tmux_test_server_run set -g @tama_backend "$backend"
+
+  local child pane state
+  pane="$(tama_pane_of t:0)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  child="$(cat "$child_file")"
+  state="$(ps -o stat= -p "$child" 2>/dev/null)" || state=''
+  [ -z "$state" ] || [ "${state#Z}" != "$state" ]
+}
+
 @test "a label the plugin cannot store is no label" {
   # A value with a control character in it comes back from a tmux option changed or
   # escaped depending on the version and the locale, so the title would be nonsense
@@ -541,6 +662,209 @@ PROVIDER
   assert_backend_called dismiss
   assert_backend_value dismiss argv1 "$group"
   assert_backend_value dismiss env.TAMA_GROUP "$group"
+}
+
+@test "a dismiss capability that never returns does not hold the caller" {
+  local invoked="$BATS_TEST_TMPDIR/dismiss-invoked"
+  tmux_test_server_run set -g @tama_dismiss_command \
+    "printf invoked >'$invoked'; sleep 30; :"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
+
+  local window pid
+  window="$(tama_window_id t:0)"
+  "$PLUGIN_ROOT/bin/tama" dismiss "$window" &
+  pid=$!
+
+  assert_process_succeeds_within "$pid" 3 'dismiss with a hung backend'
+  wait_until_file_exists "$invoked"
+}
+
+@test "a slow notification cannot arrive after its dismissal" {
+  local effects="$BATS_TEST_TMPDIR/backend-effects"
+  tmux_test_server_run set -g @tama_notify_command \
+    "sleep 30; printf 'notify\n' >>'$effects'; :"
+  tmux_test_server_run set -g @tama_dismiss_command \
+    "printf 'dismiss\n' >>'$effects'; :"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
+
+  local pane window
+  pane="$(tama_pane_of t:0)"
+  window="$(tama_window_id t:0)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
+  assert_success
+
+  assert_equal "$(cat "$effects")" 'dismiss'
+}
+
+@test "a failed label provider cannot publish partial output" {
+  tmux_test_server_run set -g @tama_label_command \
+    "printf partial-label; exit 1"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option_unset "$pane" label
+  assert_backend_value notify argv1 'claude-code - the-api'
+}
+
+@test "a timed out label provider cannot publish partial output" {
+  tmux_test_server_run set -g @tama_label_command \
+    "printf partial-label; sleep 30"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option_unset "$pane" label
+  assert_backend_value notify argv1 'claude-code - the-api'
+}
+
+@test "a label provider cannot fill an unbounded capture file" {
+  tmux_test_server_run set -g @tama_label_command \
+    "i=0; while [ \"\$i\" -lt 500 ]; do printf 1234567890; i=\$((i + 1)); done; :"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option_unset "$pane" label
+  assert_backend_value notify argv1 'claude-code - the-api'
+}
+
+@test "a label provider may write a side file larger than the captured label" {
+  local cache="$BATS_TEST_TMPDIR/provider-cache" provider="$BATS_TEST_TMPDIR/provider"
+  cat >"$provider" <<PROVIDER
+#!/bin/sh
+dd if=/dev/zero bs=5000 count=1 2>/dev/null >'$cache'
+printf useful-label
+PROVIDER
+  chmod +x "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_equal "$(wc -c <"$cache" | tr -d ' ')" 5000
+  assert_pane_option "$pane" label useful-label
+}
+
+@test "a label provider cannot bypass capture through inherited descriptors" {
+  tmux_test_server_run set -g @tama_label_command \
+    "printf bypass >&8; printf useful-label"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option "$pane" label useful-label
+}
+
+@test "a label provider cannot forge success through the private status descriptor" {
+  tmux_test_server_run set -g @tama_label_command \
+    "printf '0 0\\n' >&7; printf partial-label; exit 1"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option_unset "$pane" label
+}
+
+@test "only the first label line counts toward the capture limit" {
+  local completed="$BATS_TEST_TMPDIR/provider-drained"
+  tmux_test_server_run set -g @tama_label_command \
+    "printf 'wanted\\n'; dd if=/dev/zero bs=65536 count=2 2>/dev/null; : >'$completed'; :"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option "$pane" label wanted
+  [ -e "$completed" ]
+}
+
+@test "a label may use the complete 2048-byte capture allowance" {
+  local provider="$BATS_TEST_TMPDIR/provider"
+  cat >"$provider" <<'PROVIDER'
+#!/bin/sh
+dd if=/dev/zero bs=2048 count=1 2>/dev/null | tr '\000' x
+PROVIDER
+  chmod +x "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
+
+  local label pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  label="$(tmux_test_server_run show-options -pv -t "$pane" '@tama_pane_label')"
+  assert_equal "${#label}" 2048
+}
+
+@test "the label allowance is measured in bytes under a multibyte locale" {
+  local utf8_locale
+  utf8_locale="$(locale -a | awk 'tolower($0) ~ /utf-?8/ { print; exit }')"
+  [ -n "$utf8_locale" ] || skip 'no UTF-8 locale is installed'
+  tmux_test_server_run set -g @tama_label_command \
+    "i=0; while [ \"\$i\" -lt 1025 ]; do printf é; i=\$((i + 1)); done; :"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  LC_ALL="$utf8_locale" run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option_unset "$pane" label
+}
+
+@test "the label provider keeps the hook locale" {
+  local locale_file="$BATS_TEST_TMPDIR/provider-locale" provider="$BATS_TEST_TMPDIR/provider"
+  cat >"$provider" <<PROVIDER
+#!/bin/sh
+printf '%s' "\$LC_ALL" >'$locale_file'
+printf useful-label
+PROVIDER
+  chmod +x "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
+
+  local pane utf8_locale
+  utf8_locale="$(locale -a | awk 'tolower($0) ~ /utf-?8/ { print; exit }')"
+  [ -n "$utf8_locale" ] || skip 'no UTF-8 locale is installed'
+  pane="$(agent_pane_in the-api)"
+  export LC_ALL="$utf8_locale"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_equal "$(cat "$locale_file")" "$utf8_locale"
+  assert_pane_option "$pane" label useful-label
+}
+
+@test "a failed capture write cannot publish a partial label" {
+  tmux_test_server_run set -g @tama_label_command \
+    "i=0; while [ \"\$i\" -lt 1500 ]; do printf x; i=\$((i + 1)); done; :"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run bash -c 'ulimit -f 1; exec "$1" notify claude-code "permission needed" --pane "$2"' \
+    _ "$PLUGIN_ROOT/bin/tama" "$pane"
+  assert_success
+  assert_pane_option_unset "$pane" label
+}
+
+@test "label capture names are gone before the provider runs" {
+  local exposed="$BATS_TEST_TMPDIR/capture-name-exposed" scratch="$BATS_TEST_TMPDIR/scratch"
+  mkdir -p "$scratch"
+  tmux_test_server_run set -g @tama_label_command \
+    "for path in '$scratch'/tama-label-*; do [ ! -e \"\$path\" ] || : >'$exposed'; done; printf useful-label; :"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  TMPDIR="$scratch" run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option "$pane" label useful-label
+  [ ! -e "$exposed" ]
+  [ -z "$(find "$scratch" -mindepth 1 -print -quit)" ]
 }
 
 @test "a group format of the user's own is followed by both halves" {
@@ -821,6 +1145,20 @@ PROVIDER
   assert_backend_value focus env.TAMA_SESSION t
 }
 
+@test "a focus capability that never returns does not hold the caller" {
+  local invoked="$BATS_TEST_TMPDIR/focus-invoked"
+  tmux_test_server_run set -g @tama_focus_command \
+    "printf invoked >'$invoked'; sleep 30; :"
+  export TAMA_EXTERNAL_COMMAND_TIMEOUT=1
+
+  local pid
+  env -u TMUX "$PLUGIN_ROOT/bin/tama" focus-window t &
+  pid=$!
+
+  assert_process_succeeds_within "$pid" 3 'focus-window with a hung backend'
+  wait_until_file_exists "$invoked"
+}
+
 @test "a session name a shell would act on survives the click" {
   # The one command line this plugin composes out of values it did not choose. A
   # session called this is legal in tmux, and every part of the click has to arrive as
@@ -900,6 +1238,7 @@ NOTIFIER
   assert_success
 
   refute_backend_called notify
+  wait_until_file_exists "$TAMA_TEST_LOG.own.argc"
   # The user's own flag first, then the two the contract promises.
   assert_equal "$(cat "$TAMA_TEST_LOG.own.argc")" '3'
   assert_equal "$(cat "$TAMA_TEST_LOG.own.argv1")" '--loud'

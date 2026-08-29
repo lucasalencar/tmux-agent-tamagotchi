@@ -63,8 +63,8 @@ use_macos_backend() {
   tmux_test_server_run set -g @tama_terminal_notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier"
 }
 
-# The plugin backgrounds the notifier on purpose — it must not cost an agent's turn — so
-# every assertion about it has to be an eventual one or it is timing noise.
+# Keep assertions tolerant of the notifier recording its call near the end of the
+# bounded invocation.
 wait_for_notifier() {
   local waited=0
   while [ "$(wc -l <"$TAMA_NOTIFIER_DIR/calls")" -eq 0 ]; do
@@ -140,6 +140,41 @@ run_click() { # <click command line>
   # The shell callback selects the exact tmux target; native activation still surfaces
   # the terminal when terminal-notifier does not run that callback.
   assert_notifier_flag activate com.mitchellh.ghostty
+}
+
+@test "terminal-notifier finishes before the notification command returns" {
+  use_macos_backend
+  export TAMA_NOTIFIER_GATE="$BATS_TEST_TMPDIR/notifier-gate"
+  local pane pid
+  pane="$(agent_pane_elsewhere)"
+
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+  wait_until_file_exists "$TAMA_NOTIFIER_GATE.started"
+  assert_process_running "$pid"
+  : >"$TAMA_NOTIFIER_GATE.release"
+  assert_process_succeeds_within "$pid" 3 'notify waiting for terminal-notifier'
+  [ -e "$TAMA_NOTIFIER_DIR/message" ]
+}
+
+@test "terminal-notifier finishes removing before dismiss returns" {
+  use_macos_backend
+  local pane window pid
+  pane="$(agent_pane_elsewhere)"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  [ ! -e "$TAMA_NOTIFIER_DIR/remove" ]
+  export TAMA_NOTIFIER_GATE="$BATS_TEST_TMPDIR/dismiss-gate"
+  "$PLUGIN_ROOT/bin/tama" dismiss "$window" &
+  pid=$!
+  wait_until_file_exists "$TAMA_NOTIFIER_GATE.started"
+  assert_process_running "$pid"
+  [ ! -e "$TAMA_NOTIFIER_DIR/remove" ]
+  : >"$TAMA_NOTIFIER_GATE.release"
+  assert_process_succeeds_within "$pid" 3 'dismiss waiting for terminal-notifier'
+  [ -e "$TAMA_NOTIFIER_DIR/remove" ]
 }
 
 @test "the terminal a banner activates is configuration, not a hardcoded app" {
@@ -255,9 +290,6 @@ FOCUS
   run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
   assert_success
 
-  # The backend backgrounds terminal-notifier, so give a regressed invocation time to
-  # reach the fixture before asserting that no global removal was requested.
-  sleep 0.2
   [ ! -e "$TAMA_NOTIFIER_DIR/remove" ]
 }
 

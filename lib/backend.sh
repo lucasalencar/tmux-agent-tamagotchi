@@ -2,8 +2,8 @@
 #
 # Backend boundary for desktop-specific behavior. A backend directory may provide
 # `notify`, `dismiss`, `focused`, and `focus` executables; missing capabilities are
-# unsupported, not errors. They run synchronously inside hooks, so implementations
-# must return promptly and communicate only through exit status.
+# unsupported, not errors. They run inside hooks under a five-second watchdog, so
+# implementations must still return promptly and communicate only through exit status.
 
 # The bare name whose directory is inside the plugin, and the one `auto` resolves to
 # when nothing better will work here.
@@ -39,6 +39,52 @@ TAMA_LIBNOTIFY_SEND_DIRS='/usr/bin /usr/local/bin'
 # The status for "this capability does not exist here". 127 is what a shell reports
 # for a command it could not find, which is exactly what happened.
 TAMA_BACKEND_UNSUPPORTED=127
+
+# Long enough for a desktop command under normal load, short enough that a broken one
+# cannot make an agent turn look dead. Tests may lower it to a whole second through the
+# environment; there is no user option or environment value that can extend the bound.
+TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT=5
+TAMA_EXTERNAL_COMMAND_TIMEOUT_TEST_SECONDS=1
+
+# Runs an external command in its own process group and tears that whole group down at
+# the deadline. Job control is Bash's portable way to create the group on macOS 3.2,
+# where neither `timeout` nor `setsid` is part of the operating system.
+tama_external_command_run() { # <command> [args…]
+  (
+    local command_pid status timeout watchdog_pid
+    case "${TAMA_EXTERNAL_COMMAND_TIMEOUT:-}" in
+      "$TAMA_EXTERNAL_COMMAND_TIMEOUT_TEST_SECONDS") timeout="$TAMA_EXTERNAL_COMMAND_TIMEOUT" ;;
+      *) timeout="$TAMA_EXTERNAL_COMMAND_TIMEOUT_DEFAULT" ;;
+    esac
+
+    set -m
+    # Keep a same-uid shell as the process-group leader. Even if the command becomes
+    # unkillable or changes credentials, killing this supervisor releases our wait.
+    (
+      set +m
+      "$@"
+      exit $?
+    ) &
+    command_pid=$!
+    (
+      # Keep the timer in the watchdog's group, so a fast command can reap both with
+      # one signal instead of leaving a five-second sleep behind.
+      set +m
+      sleep "$timeout"
+      kill -KILL -- "-$command_pid" 2>/dev/null || true
+    ) >/dev/null 2>&1 &
+    watchdog_pid=$!
+
+    wait "$command_pid" 2>/dev/null
+    status=$?
+    # A command that returned after backgrounding work has finished its capability;
+    # do not leave either that group or a delayed signal to a recyclable PGID behind.
+    kill -KILL -- "-$command_pid" 2>/dev/null || true
+    kill -- "-$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+    return "$status"
+  )
+}
 
 # The directory the backend's capabilities live in, in TAMA_BACKEND_DIR. Empty when
 # the user has turned backends off or named one that cannot be a directory.
@@ -165,9 +211,9 @@ tama_libnotify_send() {
   TAMA_LIBNOTIFY_SEND="$TAMA_BINARY"
 }
 
-# Runs <capability>, with the caller's arguments, and returns its exit status —
-# or TAMA_BACKEND_UNSUPPORTED when there is nothing to run. Output is discarded;
-# see the rules above.
+# Runs <capability>, with the caller's arguments, under the external-command deadline.
+# Returns its exit status, or TAMA_BACKEND_UNSUPPORTED when there is nothing to run.
+# Output is discarded; see the rules above.
 #
 # `@tama_<capability>_command` replaces one capability wholesale, which is the
 # extension point for a user whose terminal or desktop needs something nobody
@@ -182,7 +228,7 @@ tama_backend_invoke() { # <capability> [args…]
   if [ -n "$override" ]; then
     # `"$@"` inside the sh program text, so the values arrive as arguments of the
     # user's command. The `_` is $0 for that shell.
-    sh -c "$override \"\$@\"" _ "$@" >/dev/null 2>&1
+    tama_external_command_run sh -c "$override \"\$@\"" _ "$@" >/dev/null 2>&1
     return
   fi
 
@@ -196,7 +242,7 @@ tama_backend_invoke() { # <capability> [args…]
     return "$TAMA_BACKEND_UNSUPPORTED"
   fi
 
-  "$target" "$@" >/dev/null 2>&1
+  tama_external_command_run "$target" "$@" >/dev/null 2>&1
 }
 
 # The terminal a backend is talking about, for the two capabilities that have to name
