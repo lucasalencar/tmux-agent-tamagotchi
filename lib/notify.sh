@@ -4,7 +4,10 @@
 
 # One group per window lets newer banners replace older ones.
 TAMA_NOTIFY_GROUP_DEFAULT='tmux-window-#{window_id}'
-TAMA_NOTIFY_LABEL_CAPTURE_BYTES=2049
+# At most 2048 bytes reach tmux. The extra byte is a sentinel that distinguishes an
+# exact maximum from output that had to be truncated; truncated output is discarded.
+TAMA_NOTIFY_LABEL_MAX_BYTES=2048
+TAMA_NOTIFY_LABEL_CAPTURE_BYTES=$((TAMA_NOTIFY_LABEL_MAX_BYTES + 1))
 
 # tmux may intermittently omit a live pane path, so fall back to the last reported cwd.
 TAMA_NOTIFY_TITLE_DEFAULT='#{@tama_pane_agent} - #{?pane_current_path,#{b:pane_current_path},#{b:@tama_pane_cwd}}#{?@tama_pane_label, (#{@tama_pane_label}),}'
@@ -40,14 +43,18 @@ tama_notify_capture_open() {
   local attempt=0 directory="${TMPDIR:-/tmp}"
   TAMA_NOTIFY_CAPTURE=''
   TAMA_NOTIFY_CAPTURE_DIR=''
+  TAMA_NOTIFY_STATUS=''
   while [ "$attempt" -lt 10 ]; do
     TAMA_NOTIFY_CAPTURE_DIR="$directory/tama-label-$$-$RANDOM-$attempt"
     if (umask 077; mkdir "$TAMA_NOTIFY_CAPTURE_DIR") 2>/dev/null; then
       TAMA_NOTIFY_CAPTURE="$TAMA_NOTIFY_CAPTURE_DIR/output"
-      if ! (umask 077; : >"$TAMA_NOTIFY_CAPTURE"); then
+      TAMA_NOTIFY_STATUS="$TAMA_NOTIFY_CAPTURE_DIR/status"
+      if ! (umask 077; : >"$TAMA_NOTIFY_CAPTURE" && : >"$TAMA_NOTIFY_STATUS"); then
+        rm -f "$TAMA_NOTIFY_CAPTURE" "$TAMA_NOTIFY_STATUS"
         rmdir "$TAMA_NOTIFY_CAPTURE_DIR" 2>/dev/null || true
         TAMA_NOTIFY_CAPTURE=''
         TAMA_NOTIFY_CAPTURE_DIR=''
+        TAMA_NOTIFY_STATUS=''
         return 1
       fi
       return 0
@@ -56,6 +63,7 @@ tama_notify_capture_open() {
   done
   TAMA_NOTIFY_CAPTURE=''
   TAMA_NOTIFY_CAPTURE_DIR=''
+  TAMA_NOTIFY_STATUS=''
   return 1
 }
 
@@ -87,7 +95,7 @@ tama_notify_title() { # <pane_id>
 # A configured provider receives the window id; only its first storable line is used.
 # shellcheck disable=SC2034  # TAMA_NOTIFY_LABEL is read by the caller
 tama_notify_label() {
-  local command label size status
+  local LC_ALL=C command label provider_status status
   TAMA_NOTIFY_LABEL=''
   command="$(tama_opt tama_label_command '')"
   [ -n "$command" ] || return 0
@@ -99,28 +107,29 @@ tama_notify_label() {
   tama_notify_capture_open || return 0
   # Separate descriptions preserve the reader's offset while the provider writes.
   # shellcheck disable=SC2094
-  exec 8>"$TAMA_NOTIFY_CAPTURE" 9<"$TAMA_NOTIFY_CAPTURE" 10<"$TAMA_NOTIFY_CAPTURE"
-  rm -f "$TAMA_NOTIFY_CAPTURE"
+  exec 8>"$TAMA_NOTIFY_CAPTURE" 9<"$TAMA_NOTIFY_CAPTURE" \
+    7>"$TAMA_NOTIFY_STATUS" 6<"$TAMA_NOTIFY_STATUS"
+  rm -f "$TAMA_NOTIFY_CAPTURE" "$TAMA_NOTIFY_STATUS"
   rmdir "$TAMA_NOTIFY_CAPTURE_DIR" 2>/dev/null || true
-  # The collector, not the provider, owns the byte limit: a provider remains free to
-  # update its own cache or log while stdout can never fill storage or memory.
+  # The collector, not the provider, owns the byte limit. It drains only as much as
+  # the first line needs, while a separate anonymous descriptor preserves the
+  # provider's status even when head closes its pipe after that line.
   # shellcheck disable=SC2016  # expanded by the child Bash, not this shell
-  tama_external_command_run "$BASH" -o pipefail -c \
-    'sh -c "$1 \"\$1\"" _ "$2" | head -c "$3"' _ \
-    "$command" "$TAMA_WINDOW_ID" "$TAMA_NOTIFY_LABEL_CAPTURE_BYTES" >&8 2>/dev/null
+  tama_external_command_run "$BASH" -c \
+    'sh -c "$1 \"\$1\"" _ "$2" 6>&- 7>&- 8>&- 9>&- | { head -n 1 | head -c "$3"; cat >/dev/null; }; statuses=("${PIPESTATUS[@]}"); printf "%s\n" "${statuses[0]}" >&7' _ \
+    "$command" "$TAMA_WINDOW_ID" "$TAMA_NOTIFY_LABEL_CAPTURE_BYTES" \
+    >&8 2>/dev/null 6<&- 8>&- 9<&-
   status=$?
-  exec 8>&-
+  exec 8>&- 7>&-
   if [ "$status" -eq 0 ]; then
-    size="$(wc -c <&10 | tr -d ' ')"
-    if [ "$size" -lt "$TAMA_NOTIFY_LABEL_CAPTURE_BYTES" ]; then
-      IFS= read -r label <&9 || true
-    else
-      label=''
-    fi
+    IFS= read -r provider_status <&6 || provider_status=''
+    IFS= read -r -n "$TAMA_NOTIFY_LABEL_CAPTURE_BYTES" label <&9 || true
+    [ "$provider_status" = 0 ] || label=''
+    [ "${#label}" -le "$TAMA_NOTIFY_LABEL_MAX_BYTES" ] || label=''
   else
     label=''
   fi
-  exec 9<&- 10<&-
+  exec 6<&- 9<&-
 
   # One line. A provider that prints several has said one thing and then said more.
   label="${label%%$'\n'*}"

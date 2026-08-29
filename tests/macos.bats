@@ -144,26 +144,36 @@ run_click() { # <click command line>
 
 @test "terminal-notifier finishes before the notification command returns" {
   use_macos_backend
-  export TAMA_NOTIFIER_DELAY=0.2
-  local pane
+  export TAMA_NOTIFIER_GATE="$BATS_TEST_TMPDIR/notifier-gate"
+  local pane pid
   pane="$(agent_pane_elsewhere)"
 
-  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
-  assert_success
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+  wait_until_file_exists "$TAMA_NOTIFIER_GATE.started"
+  kill -0 "$pid"
+  : >"$TAMA_NOTIFIER_GATE.release"
+  assert_process_succeeds_within "$pid" 3 'notify waiting for terminal-notifier'
   [ -e "$TAMA_NOTIFIER_DIR/message" ]
 }
 
 @test "terminal-notifier finishes removing before dismiss returns" {
   use_macos_backend
-  export TAMA_NOTIFIER_DELAY=2
-  local pane window
+  local pane window pid
   pane="$(agent_pane_elsewhere)"
   window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
-  run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
-  assert_success
+  [ ! -e "$TAMA_NOTIFIER_DIR/remove" ]
+  export TAMA_NOTIFIER_GATE="$BATS_TEST_TMPDIR/dismiss-gate"
+  "$PLUGIN_ROOT/bin/tama" dismiss "$window" &
+  pid=$!
+  wait_until_file_exists "$TAMA_NOTIFIER_GATE.started"
+  kill -0 "$pid"
+  [ ! -e "$TAMA_NOTIFIER_DIR/remove" ]
+  : >"$TAMA_NOTIFIER_GATE.release"
+  assert_process_succeeds_within "$pid" 3 'dismiss waiting for terminal-notifier'
   [ -e "$TAMA_NOTIFIER_DIR/remove" ]
 }
 
