@@ -164,7 +164,10 @@ main() {
   local raw
   # A window that is gone — closed between the format expanding and this running —
   # is not an error worth a word on stdout.
-  raw="$(tama_icons_query "$1")" || exit 0
+  raw="$(tama_icons_query "$1")" || {
+    tama_log_command_result failed
+    exit 0
+  }
 
   tama_icons_defaults
 

@@ -11,7 +11,7 @@ set -o nounset
 main() {
   [ "$#" -eq 0 ] || die_usage "clear-priorities takes no arguments, got: $1"
 
-  local records record window_id has_priority failures=0
+  local records record window_id has_priority failures=0 cleared=0
   records="$(tama_priority_records)" || return 1
 
   while IFS= read -r record; do
@@ -19,8 +19,11 @@ main() {
     window_id="${record%% *}"
     has_priority="${record#* }"
     [ "$has_priority" = 1 ] || continue
-    tmux_run set -wuq -t "$window_id" "$TAMA_WINDOW_PRIORITY_OPTION" ||
+    if tmux_run set -wuq -t "$window_id" "$TAMA_WINDOW_PRIORITY_OPTION"; then
+      cleared=$((cleared + 1))
+    else
       failures=$((failures + 1))
+    fi
   done <<EOF
 $records
 EOF
@@ -28,9 +31,15 @@ EOF
   tmux_run refresh-client -S >/dev/null 2>&1 || true
 
   if [ "$failures" -ne 0 ]; then
+    tama_log_command_result failed
     printf 'tama: could not clear Priority from %s tmux window%s\n' \
       "$failures" "$( [ "$failures" -eq 1 ] || printf s )" >&2
     return 1
+  fi
+  if [ "$cleared" -eq 0 ]; then
+    tama_log_command_result skipped
+  else
+    tama_log_command_result applied
   fi
 }
 

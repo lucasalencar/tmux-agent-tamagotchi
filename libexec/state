@@ -23,11 +23,23 @@ TAMA_SUBAGENT_RETRY_DELAY=0.05
 # Record state and the command snapshot used by stale detection, writing only changes.
 report() {
   local pane="$1" state_main="$2" name="$3" refresh='no'
-  tama_pane_read "$pane" || exit 0
+  local state_before_derived='' state_after_derived logged_after_main outcome reason subagent_count=0
+  if ! tama_pane_read "$pane"; then
+    tama_log_command_result skipped
+    exit 0
+  fi
+
+  if [ -n "${TAMA_LOG_FILE:-}" ]; then
+    logged_after_main="$state_main"
+    state_before_derived="$TAMA_PANE_DISPLAY"
+    tama_subagents_count "$TAMA_PANE_SUBAGENTS"
+    subagent_count="$TAMA_SUBAGENTS_COUNT"
+  fi
 
   # Only a different icon is worth redrawing every client for; a pane whose command
   # or path merely moved is a cheap write and nothing a user can see.
   tama_pane_derive "$state_main" "$TAMA_PANE_SUBAGENTS"
+  state_after_derived="$TAMA_PANE_DERIVED"
   tama_pane_display_changed "$TAMA_PANE_DISPLAY" "$TAMA_PANE_DERIVED" && refresh='yes'
 
   # The snapshot comes from tmux, not from the hook, so a value the record cannot
@@ -50,6 +62,22 @@ report() {
   # is the last command of the script, so without this the hot path — a repeated
   # `state running` — would exit non-zero out of an agent's hook.
   tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID" || true
+
+  if [ -n "${TAMA_LOG_FILE:-}" ]; then
+    outcome="$TAMA_BATCH_WRITE_STATUS"
+    reason=''
+    case "$outcome" in
+      skipped) reason=pane_record_unchanged ;;
+      failed)
+        reason=write_pane_record_failed
+        logged_after_main="$TAMA_PANE_STATE_MAIN"
+        state_after_derived="$state_before_derived"
+        ;;
+    esac
+    tama_log_state_decision report_state "$outcome" "$reason" "$TAMA_PANE_ID" \
+      "$TAMA_PANE_WINDOW_ID" "$TAMA_PANE_STATE_MAIN" "$state_before_derived" \
+      "$subagent_count" "$logged_after_main" "$state_after_derived" "$subagent_count"
+  fi
 
   # Deliberately after the flush and outside it: the flag answers to the *event*, not
   # to the write. An agent already in `waiting` that asks again — the user glanced at
@@ -74,15 +102,30 @@ report() {
 # pane whether anything of ours is left rather than checking a list of names, so an
 # option added to the record and forgotten there fails it.
 clear_pane() {
-  local pane="$1" refresh='no'
-  tama_pane_read "$pane" || exit 0
+  local pane="$1" refresh='no' logging=no before_derived='' before_count=0
+  if ! tama_pane_read "$pane"; then
+    tama_log_command_result skipped
+    exit 0
+  fi
+  if [ -n "${TAMA_LOG_FILE:-}" ]; then
+    logging=yes
+    before_derived="$TAMA_PANE_DISPLAY"
+    tama_subagents_count "$TAMA_PANE_SUBAGENTS"
+    before_count="$TAMA_SUBAGENTS_COUNT"
+  fi
 
   # Nothing of ours is on this pane, so there is nothing to unset — which is what
   # keeps clearing a pane that never ran an agent free of a write and of the read
   # per option that asking one at a time would cost.
   local trace="$TAMA_PANE_STATE_MAIN$TAMA_PANE_SUBAGENTS$TAMA_PANE_CMD"
   trace="$trace$TAMA_PANE_AGENT$TAMA_PANE_CWD"
-  [ -n "$trace" ] || return 0
+  if [ -z "$trace" ]; then
+    [ "$logging" = no ] || tama_log_state_decision clear_state skipped \
+      pane_record_unchanged "$TAMA_PANE_ID" "$TAMA_PANE_WINDOW_ID" \
+      "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count" \
+      "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count"
+    return 0
+  fi
 
   # Clearing an agent pane takes an icon away, which is a change a user sees.
   tama_pane_display_changed "$TAMA_PANE_DISPLAY" '' && refresh='yes'
@@ -91,6 +134,18 @@ clear_pane() {
   tama_pane_stage_clear "$TAMA_PANE_ID"
   # As in report(): nothing staged is not a failure, and this is the exit status.
   tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID" || true
+  if [ "$logging" = yes ]; then
+    if [ "$TAMA_BATCH_WRITE_STATUS" = applied ]; then
+      tama_log_state_decision clear_state applied '' "$TAMA_PANE_ID" \
+        "$TAMA_PANE_WINDOW_ID" "$TAMA_PANE_STATE_MAIN" "$before_derived" \
+        "$before_count" '' '' 0
+    else
+      tama_log_state_decision clear_state failed write_pane_record_failed \
+        "$TAMA_PANE_ID" "$TAMA_PANE_WINDOW_ID" "$TAMA_PANE_STATE_MAIN" \
+        "$before_derived" "$before_count" "$TAMA_PANE_STATE_MAIN" \
+        "$before_derived" "$before_count"
+    fi
+  fi
 }
 
 # Adds or removes a subagent id, and recomputes the display state with it, since
@@ -130,12 +185,22 @@ clear_pane() {
 # than a wrong glyph on a few.
 subagent() {
   local target="$1" verb="$2" id="$3" attempt=1 wanted was refresh was_agent_pane
+  local before_count=0 after_count=0 before_derived='' logging=no
+  [ -n "${TAMA_LOG_FILE:-}" ] && logging=yes
   while :; do
-    tama_pane_read "$target" || exit 0
+    if ! tama_pane_read "$target"; then
+      tama_log_command_result skipped
+      exit 0
+    fi
     # From here on the pane is addressed by its own id: a target given by index
     # could come to mean another pane while this loop is still running.
     target="$TAMA_PANE_ID"
     was="$TAMA_PANE_DISPLAY"
+    if [ "$logging" = yes ]; then
+      before_derived="$TAMA_PANE_DISPLAY"
+      tama_subagents_count "$TAMA_PANE_SUBAGENTS"
+      before_count="$TAMA_SUBAGENTS_COUNT"
+    fi
     # Whether this was an agent pane at all when the attempt started, which is how
     # the read-back below tells a `state clear` from a lost race.
     was_agent_pane="$TAMA_PANE_STATE_MAIN"
@@ -153,11 +218,47 @@ subagent() {
     tama_batch_reset
     tama_pane_stage "$target" subagents "$wanted" "$TAMA_PANE_SUBAGENTS"
     # Nothing to write: a duplicate start, or a stop for an id that is not there.
-    tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID" || return 0
+    if ! tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID"; then
+      [ "$logging" = no ] || tama_log_subagent_attempt skipped \
+        subagent_state_unchanged "$attempt" "$target" "$TAMA_PANE_WINDOW_ID" \
+        "$was_agent_pane" "$before_derived" "$before_count" \
+        "$was_agent_pane" "$before_derived" "$before_count"
+      return 0
+    fi
 
-    tama_pane_read "$target" || return 0
+    if [ "$TAMA_BATCH_WRITE_STATUS" = failed ]; then
+      [ "$logging" = no ] || tama_log_subagent_attempt failed \
+        write_pane_record_failed "$attempt" "$target" "$TAMA_PANE_WINDOW_ID" \
+        "$was_agent_pane" "$before_derived" "$before_count" \
+        "$was_agent_pane" "$before_derived" "$before_count"
+      return 0
+    fi
 
-    subagent_clear_won "$target" "$was_agent_pane" && return 0
+    if ! tama_pane_read "$target"; then
+      [ "$logging" = no ] || tama_log_subagent_attempt failed \
+        read_pane_state_failed "$attempt" "$target" '' "$was_agent_pane" \
+        "$before_derived" "$before_count" '' "$before_derived" "$before_count"
+      return 0
+    fi
+
+    if [ "$logging" = yes ]; then
+      tama_subagents_count "$TAMA_PANE_SUBAGENTS"
+      after_count="$TAMA_SUBAGENTS_COUNT"
+    fi
+
+    if subagent_clear_won "$target" "$was_agent_pane"; then
+      if [ "$TAMA_SUBAGENT_CLEAR_STATUS" = failed ]; then
+        [ "$logging" = no ] || tama_log_subagent_attempt failed \
+          clear_residue_failed "$attempt" "$target" "$TAMA_PANE_WINDOW_ID" \
+          "$was_agent_pane" "$before_derived" "$before_count" \
+          "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_DISPLAY" "$after_count"
+      else
+        [ "$logging" = no ] || tama_log_subagent_attempt skipped pane_cleared "$attempt" "$target" \
+          "$TAMA_PANE_WINDOW_ID" "$was_agent_pane" "$before_derived" \
+          "$before_count" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_DISPLAY" 0
+      fi
+      return 0
+    fi
 
     if subagent_settled "$verb" "$TAMA_PANE_SUBAGENTS" "$id"; then
       # The read-back is also the one chance to notice that the other half of the
@@ -169,11 +270,23 @@ subagent() {
       [ "$refresh" = 'yes' ] ||
         ! tama_pane_display_changed "$was" "$TAMA_PANE_DISPLAY" ||
         tama_summary_refresh_window "$TAMA_PANE_WINDOW_ID"
+      [ "$logging" = no ] || tama_log_subagent_attempt applied '' "$attempt" "$target" \
+        "$TAMA_PANE_WINDOW_ID" "$was_agent_pane" "$before_derived" \
+        "$before_count" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_DISPLAY" "$after_count"
       return 0
     fi
 
     attempt=$((attempt + 1))
-    [ "$attempt" -le "$TAMA_SUBAGENT_ATTEMPTS" ] || return 0
+    if [ "$attempt" -gt "$TAMA_SUBAGENT_ATTEMPTS" ]; then
+      [ "$logging" = no ] || tama_log_subagent_attempt failed retries_exhausted "$TAMA_SUBAGENT_ATTEMPTS" \
+        "$target" "$TAMA_PANE_WINDOW_ID" "$was_agent_pane" \
+        "$before_derived" "$before_count" "$TAMA_PANE_STATE_MAIN" \
+        "$TAMA_PANE_DISPLAY" "$after_count"
+      return 0
+    fi
+    [ "$logging" = no ] || tama_log_subagent_attempt skipped write_conflict "$((attempt - 1))" "$target" \
+      "$TAMA_PANE_WINDOW_ID" "$was_agent_pane" "$before_derived" \
+      "$before_count" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_DISPLAY" "$after_count"
     # Not worth a word on stderr from inside an agent's hook if this shell's sleep
     # cannot do fractions; the delay is a courtesy, not a requirement.
     sleep "$TAMA_SUBAGENT_RETRY_DELAY" 2>/dev/null || true
@@ -185,6 +298,7 @@ subagent() {
 # is this write's residue, not live state belonging to a pane that still has an
 # agent. This is also why reconciliation does not need a lock or revision number.
 subagent_clear_won() { # <pane_id> <had_main_state>
+  TAMA_SUBAGENT_CLEAR_STATUS=applied
   [ -n "$2" ] && [ -z "$TAMA_PANE_STATE_MAIN" ] || return 1
 
   if [ -n "$TAMA_PANE_SUBAGENTS" ]; then
@@ -192,6 +306,7 @@ subagent_clear_won() { # <pane_id> <had_main_state>
     tama_pane_stage "$1" subagents '' "$TAMA_PANE_SUBAGENTS"
     # A pane with no main state draws nothing; clear already requested its redraw.
     tama_batch_flush 'no' || true
+    [ "$TAMA_BATCH_WRITE_STATUS" != failed ] || TAMA_SUBAGENT_CLEAR_STATUS=failed
   fi
   return 0
 }
@@ -202,21 +317,72 @@ subagent_clear_won() { # <pane_id> <had_main_state>
 # work. A complete provider snapshot can instead replace the set without weakening
 # unknown `subagent-stop` into an arbitrary decrement.
 reconcile_subagents() { # <pane> <space-separated-live-ids>
-  local target="$1" wanted="$2" was refresh='no' was_agent_pane
-  tama_pane_read "$target" || exit 0
+  local target="$1" wanted="$2" was refresh='no' was_agent_pane logging=no
+  local before_count=0 after_count=0 before_derived=''
+  if ! tama_pane_read "$target"; then
+    tama_log_command_result skipped
+    exit 0
+  fi
   target="$TAMA_PANE_ID"
   was="$TAMA_PANE_DISPLAY"
   was_agent_pane="$TAMA_PANE_STATE_MAIN"
+  if [ -n "${TAMA_LOG_FILE:-}" ]; then
+    logging=yes
+    before_derived="$TAMA_PANE_DISPLAY"
+    tama_subagents_count "$TAMA_PANE_SUBAGENTS"
+    before_count="$TAMA_SUBAGENTS_COUNT"
+  fi
 
   tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$wanted"
   tama_pane_display_changed "$was" "$TAMA_PANE_DERIVED" && refresh='yes'
 
   tama_batch_reset
   tama_pane_stage "$target" subagents "$wanted" "$TAMA_PANE_SUBAGENTS"
-  tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID" || return 0
+  if ! tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID"; then
+    [ "$logging" = no ] || tama_log_state_decision reconcile_subagents skipped \
+      subagent_state_unchanged "$target" "$TAMA_PANE_WINDOW_ID" \
+      "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count" \
+      "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count"
+    return 0
+  fi
 
-  tama_pane_read "$target" || return 0
-  subagent_clear_won "$target" "$was_agent_pane" && return 0
+  if ! tama_pane_read "$target"; then
+    [ "$logging" = no ] || tama_log_state_decision reconcile_subagents failed \
+      read_pane_state_failed "$target" '' '' "$before_derived" "$before_count" \
+      '' "$before_derived" "$before_count"
+    return 0
+  fi
+  if [ "$logging" = yes ]; then
+    tama_subagents_count "$TAMA_PANE_SUBAGENTS"
+    after_count="$TAMA_SUBAGENTS_COUNT"
+  fi
+  if subagent_clear_won "$target" "$was_agent_pane"; then
+    if [ "$TAMA_SUBAGENT_CLEAR_STATUS" = failed ]; then
+      [ "$logging" = no ] || tama_log_state_decision reconcile_subagents failed \
+        clear_residue_failed "$target" "$TAMA_PANE_WINDOW_ID" "$was_agent_pane" \
+        "$before_derived" "$before_count" "$TAMA_PANE_STATE_MAIN" \
+        "$TAMA_PANE_DISPLAY" "$after_count"
+    else
+      [ "$logging" = no ] || tama_log_state_decision reconcile_subagents skipped \
+        pane_cleared "$target" "$TAMA_PANE_WINDOW_ID" "$was_agent_pane" \
+        "$before_derived" "$before_count" "$TAMA_PANE_STATE_MAIN" \
+        "$TAMA_PANE_DISPLAY" 0
+    fi
+    return 0
+  fi
+
+  if [ "$logging" = yes ]; then
+    if [ "$TAMA_BATCH_WRITE_STATUS" = applied ]; then
+      tama_log_state_decision reconcile_subagents applied '' "$target" \
+        "$TAMA_PANE_WINDOW_ID" "$was_agent_pane" "$before_derived" \
+        "$before_count" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_DISPLAY" "$after_count"
+    else
+      tama_log_state_decision reconcile_subagents failed write_pane_record_failed \
+        "$target" "$TAMA_PANE_WINDOW_ID" "$was_agent_pane" \
+        "$before_derived" "$before_count" "$TAMA_PANE_STATE_MAIN" \
+        "$TAMA_PANE_DISPLAY" "$after_count"
+    fi
+  fi
 
   # As with incremental writes, a concurrent main-state report may be the half
   # that changed what the screen shows. The writer that observes it pays the

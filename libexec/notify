@@ -12,9 +12,13 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 deliver() { # <target> <agent_name> <message>
-  local target="$1" agent="$2" message="$3" flag='no' notification='no'
+  local target="$1" agent="$2" message="$3" flag='no' notification='no' eligible=no
+  local outcome=applied backend_status=0
 
-  tama_window_read "$target" || exit 0
+  if ! tama_window_read "$target"; then
+    tama_log_command_result skipped
+    exit 0
+  fi
 
   # Flag and Notification retain independent Priority and observation policies.
   if tama_automatic_flag_is_eligible; then
@@ -26,11 +30,19 @@ deliver() { # <target> <agent_name> <message>
     notification='yes'
   fi
 
-  [ "$flag" = yes ] || [ "$notification" = yes ] || exit 0
+  tama_attention_is_eligible "$flag" "$notification" && eligible=yes
+  tama_log_attention_decision "$TAMA_WINDOW_PANE_ID" "$TAMA_WINDOW_ID" \
+    "$TAMA_WINDOW_PRIORITY" "$flag" "$notification" "$eligible"
+
+  if [ "$eligible" != yes ]; then
+    tama_log_command_result skipped
+    exit 0
+  fi
 
   # A Flag-only event needs no notification metadata or backend work.
   if [ "$notification" = no ]; then
     [ "$flag" = yes ] && tama_flag_set
+    tama_log_command_result "${TAMA_FLAG_WRITE_STATUS:-skipped}"
     exit 0
   fi
 
@@ -59,6 +71,7 @@ deliver() { # <target> <agent_name> <message>
   # No refresh: the agent, label and mark are not icon jobs; the plain flag format
   # redraws with its option write itself.
   tama_batch_flush 'no' || true
+  [ "$TAMA_BATCH_WRITE_STATUS" != failed ] || outcome=failed
 
   # A new group may name the agent or label just written above. A pending banner instead
   # reads its original identity, so a newer notification replaces it rather than making
@@ -70,6 +83,7 @@ deliver() { # <target> <agent_name> <message>
       "$TAMA_NOTIFY_GROUP"
     tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION" on
     tama_batch_flush 'no' || true
+    [ "$TAMA_BATCH_WRITE_STATUS" != failed ] || outcome=failed
   fi
 
   # After the writes, because the title reads what was just written.
@@ -84,7 +98,15 @@ deliver() { # <target> <agent_name> <message>
   TAMA_CLICK="$TAMA_NOTIFY_CLICK"
   export TAMA_GROUP TAMA_PANE_ID TAMA_AGENT TAMA_CLICK
 
-  tama_backend_invoke notify "$TAMA_NOTIFY_TITLE" "$message" || true
+  tama_backend_invoke notify "$TAMA_NOTIFY_TITLE" "$message" || backend_status=$?
+  if [ "$backend_status" -ne 0 ]; then
+    if [ "$backend_status" -eq "$TAMA_BACKEND_UNSUPPORTED" ] && [ "$flag" = yes ]; then
+      : # The requested Flag was still applied.
+    else
+      outcome=failed
+    fi
+  fi
+  tama_log_command_result "$outcome"
 }
 
 main() {

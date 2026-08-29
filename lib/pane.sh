@@ -110,6 +110,18 @@ tama_subagents_contains() { # <list> <id>
   return 1
 }
 
+# Number of opaque ids in the pane's space-delimited set, without exposing them.
+# The result is in TAMA_SUBAGENTS_COUNT.
+tama_subagents_count() { # <list>
+  TAMA_SUBAGENTS_COUNT=0
+  [ -n "$1" ] || return 0
+  set -f
+  # shellcheck disable=SC2086 # the record owns this space-delimited representation
+  set -- $1
+  set +f
+  TAMA_SUBAGENTS_COUNT=$#
+}
+
 # Sets TAMA_SUBAGENTS_NEW to the list with <id> present. Already being there is
 # the whole answer — a duplicate start is idempotent, which is what makes a hook
 # that fires twice harmless.
@@ -233,10 +245,17 @@ EOF
 # worth that, and there is nothing to force for a snapshot nobody draws.
 tama_batch_flush() { # <refresh: yes|no> [changed window id]
   local refresh="$1" window_id="${2:-}"
-  [ "$TAMA_BATCH_COUNT" -gt 0 ] || return 1
+  if [ "$TAMA_BATCH_COUNT" -eq 0 ]; then
+    TAMA_BATCH_WRITE_STATUS=skipped
+    return 1
+  fi
   [ "$refresh" = 'no' ] || [ -n "$window_id" ] || tama_batch_add refresh-client -S
   # A write that did not land is not worth failing an agent's turn over.
-  tmux_run "${TAMA_BATCH[@]}" >/dev/null 2>&1 || true
+  if tmux_run "${TAMA_BATCH[@]}" >/dev/null 2>&1; then
+    TAMA_BATCH_WRITE_STATUS=applied
+  else
+    TAMA_BATCH_WRITE_STATUS=failed
+  fi
   tama_batch_reset
   [ "$refresh" = 'no' ] || [ -z "$window_id" ] || tama_summary_refresh_window "$window_id"
   return 0
