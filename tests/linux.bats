@@ -151,12 +151,16 @@ agent_pane_elsewhere() {
 
 @test "notify-send finishes before the notification command returns" {
   use_libnotify_backend
-  export TAMA_NOTIFY_SEND_DELAY=0.2
-  local pane
+  export TAMA_NOTIFY_SEND_GATE="$BATS_TEST_TMPDIR/notify-send-gate"
+  local pane pid
   pane="$(agent_pane_elsewhere)"
 
-  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
-  assert_success
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+  wait_until_file_exists "$TAMA_NOTIFY_SEND_GATE.started"
+  kill -0 "$pid"
+  : >"$TAMA_NOTIFY_SEND_GATE.release"
+  assert_process_succeeds_within "$pid" 3 'notify waiting for notify-send'
   [ -e "$TAMA_NOTIFY_SEND_DIR/message" ]
 }
 

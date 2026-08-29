@@ -24,6 +24,10 @@
 
 tama_positional=0
 tama_values=0
+[ -z "${TAMA_NOTIFY_SEND_GATE:-}" ] || {
+  : >"$TAMA_NOTIFY_SEND_GATE.started"
+  while [ ! -e "$TAMA_NOTIFY_SEND_GATE.release" ]; do sleep 0.05; done
+}
 [ -z "${TAMA_NOTIFY_SEND_DELAY:-}" ] || sleep "$TAMA_NOTIFY_SEND_DELAY"
 for tama_argument in "$@"; do
   if [ "$tama_values" -eq 1 ]; then
