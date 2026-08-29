@@ -759,15 +759,28 @@ PROVIDER
   assert_pane_option "$pane" label useful-label
 }
 
-@test "only the first label line counts toward the capture limit" {
+@test "a label provider cannot forge success through the private status descriptor" {
   tmux_test_server_run set -g @tama_label_command \
-    "printf 'wanted\\n'; i=0; while [ \"\$i\" -lt 500 ]; do printf 1234567890; i=\$((i + 1)); done; :"
+    "printf '0\\n' >&7; printf partial-label; exit 1"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option_unset "$pane" label
+}
+
+@test "only the first label line counts toward the capture limit" {
+  local completed="$BATS_TEST_TMPDIR/provider-drained"
+  tmux_test_server_run set -g @tama_label_command \
+    "printf 'wanted\\n'; dd if=/dev/zero bs=65536 count=2 2>/dev/null; : >'$completed'; :"
 
   local pane
   pane="$(agent_pane_in the-api)"
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
   assert_pane_option "$pane" label wanted
+  [ -e "$completed" ]
 }
 
 @test "a label may use the complete 2048-byte capture allowance" {
@@ -780,6 +793,32 @@ PROVIDER
   assert_success
   label="$(tmux_test_server_run show-options -pv -t "$pane" '@tama_pane_label')"
   assert_equal "${#label}" 2048
+}
+
+@test "the label allowance is measured in bytes under a multibyte locale" {
+  tmux_test_server_run set -g @tama_label_command \
+    "i=0; while [ \"\$i\" -lt 1025 ]; do printf é; i=\$((i + 1)); done; :"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option_unset "$pane" label
+}
+
+@test "label capture names are gone before the provider runs" {
+  local exposed="$BATS_TEST_TMPDIR/capture-name-exposed" scratch="$BATS_TEST_TMPDIR/scratch"
+  mkdir -p "$scratch"
+  tmux_test_server_run set -g @tama_label_command \
+    "for path in '$scratch'/tama-label-*; do [ ! -e \"\$path\" ] || : >'$exposed'; done; printf useful-label; :"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  TMPDIR="$scratch" run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option "$pane" label useful-label
+  [ ! -e "$exposed" ]
+  [ -z "$(find "$scratch" -mindepth 1 -print -quit)" ]
 }
 
 @test "a group format of the user's own is followed by both halves" {

@@ -158,7 +158,7 @@ agent_pane_elsewhere() {
   "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
   pid=$!
   wait_until_file_exists "$TAMA_NOTIFY_SEND_GATE.started"
-  kill -0 "$pid"
+  assert_process_running "$pid"
   : >"$TAMA_NOTIFY_SEND_GATE.release"
   assert_process_succeeds_within "$pid" 3 'notify waiting for notify-send'
   [ -e "$TAMA_NOTIFY_SEND_DIR/message" ]

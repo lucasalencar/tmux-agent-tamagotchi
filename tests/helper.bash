@@ -229,6 +229,12 @@ assert_process_succeeds_within() { # <pid> <seconds> <description>
   wait "$pid"
 }
 
+assert_process_running() { # <pid>
+  local state
+  state="$(ps -o stat= -p "$1" 2>/dev/null)" || state=''
+  [ -n "$state" ] && [ "${state#Z}" = "$state" ]
+}
+
 assert_backend_value() { # <capability> <what> <expected>
   local actual
   actual="$(tama_backend_value "$1" "$2")" || return 1

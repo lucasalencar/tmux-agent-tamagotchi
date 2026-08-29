@@ -58,7 +58,13 @@ tama_external_command_run() { # <command> [args…]
     esac
 
     set -m
-    "$@" &
+    # Keep a same-uid shell as the process-group leader. Even if the command becomes
+    # unkillable or changes credentials, killing this supervisor releases our wait.
+    (
+      set +m
+      "$@"
+      exit $?
+    ) &
     command_pid=$!
     (
       # Keep the timer in the watchdog's group, so a fast command can reap both with
