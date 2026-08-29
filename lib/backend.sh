@@ -202,7 +202,7 @@ tama_backend_invoke() { # <capability> [args…]
   if [ -n "$override" ]; then
     # `"$@"` inside the sh program text, so the values arrive as arguments of the
     # user's command. The `_` is $0 for that shell.
-    sh -c "$override \"\$@\"" _ "$@" >/dev/null 2>&1
+    sh -c "$override \"\$@\"" _ "$@" 3>&- >/dev/null 2>&1
     status=$?
     tama_backend_effect_complete "$capability" "$effect_id" "$started_at" "$status"
     return
@@ -224,7 +224,7 @@ tama_backend_invoke() { # <capability> [args…]
     return
   fi
 
-  "$target" "$@" >/dev/null 2>&1
+  "$target" "$@" 3>&- >/dev/null 2>&1
   status=$?
   tama_backend_effect_complete "$capability" "$effect_id" "$started_at" "$status"
 }

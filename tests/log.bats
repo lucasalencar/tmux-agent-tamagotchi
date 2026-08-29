@@ -60,7 +60,7 @@ teardown() {
 @test "an enabled Log records command start and completion as valid JSONL" {
   local log="$BATS_TEST_TMPDIR/tama.jsonl"
 
-  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" state running --pane "$PANE"
+  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" state running --pane "$PANE" 4>&-
 
   assert_success
   assert_pane_option "$PANE" state_main running

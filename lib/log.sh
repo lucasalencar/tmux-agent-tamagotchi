@@ -170,12 +170,13 @@ tama_log_state_decision() { # <operation> <outcome> <reason> <pane> <window> <be
     --arg after_derived "$after_derived" --argjson after_count "$after_count"
 }
 
-tama_log_subagent_attempt() { # <outcome> <reason> <attempt> <pane> <window> <main> <before-derived> <before-count> <after-derived> <after-count>
+tama_log_subagent_attempt() { # <outcome> <reason> <attempt> <pane> <window> <before-main> <before-derived> <before-count> <after-main> <after-derived> <after-count>
   local outcome="$1" reason="$2" attempt="$3" pane_id="$4" window_id="$5"
-  local main="$6" before_derived="$7" before_count="$8" after_derived="$9"
-  shift 9; local after_count="$1"
-  tama_log_safe_state "$main"; main="$TAMA_LOG_SAFE_STATE"
+  local before_main="$6" before_derived="$7" before_count="$8" after_main="$9"
+  shift 9; local after_derived="$1" after_count="$2"
+  tama_log_safe_state "$before_main"; before_main="$TAMA_LOG_SAFE_STATE"
   tama_log_safe_state "$before_derived"; before_derived="$TAMA_LOG_SAFE_STATE"
+  tama_log_safe_state "$after_main"; after_main="$TAMA_LOG_SAFE_STATE"
   tama_log_safe_state "$after_derived"; after_derived="$TAMA_LOG_SAFE_STATE"
   tama_log_command_result "$outcome"
   # shellcheck disable=SC2016 # jq variables expand inside jq, not the shell
@@ -183,11 +184,12 @@ tama_log_subagent_attempt() { # <outcome> <reason> <attempt> <pane> <window> <ma
     "${TAMA_LOG_PARENT_OPERATION_ID:-}" '' '
       {operation: "update_subagents", attempt: $attempt, outcome: $outcome,
        pane_id: $pane_id, window_id: $window_id,
-       state_before: {main: $main, derived: $before_derived, subagent_count: $before_count},
-       state_after: {main: $main, derived: $after_derived, subagent_count: $after_count}} +
+       state_before: {main: $before_main, derived: $before_derived, subagent_count: $before_count},
+       state_after: {main: $after_main, derived: $after_derived, subagent_count: $after_count}} +
       (if $reason == "" then {} else {reason: $reason} end)' \
     --arg outcome "$outcome" --arg reason "$reason" --argjson attempt "$attempt" \
-    --arg pane_id "$pane_id" --arg window_id "$window_id" --arg main "$main" \
+    --arg pane_id "$pane_id" --arg window_id "$window_id" \
+    --arg before_main "$before_main" --arg after_main "$after_main" \
     --arg before_derived "$before_derived" --argjson before_count "$before_count" \
     --arg after_derived "$after_derived" --argjson after_count "$after_count"
 }
