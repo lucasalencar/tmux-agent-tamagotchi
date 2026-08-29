@@ -761,7 +761,7 @@ PROVIDER
 
 @test "a label provider cannot forge success through the private status descriptor" {
   tmux_test_server_run set -g @tama_label_command \
-    "printf '0\\n' >&7; printf partial-label; exit 1"
+    "printf '0 0\\n' >&7; printf partial-label; exit 1"
 
   local pane
   pane="$(agent_pane_in the-api)"
@@ -796,12 +796,40 @@ PROVIDER
 }
 
 @test "the label allowance is measured in bytes under a multibyte locale" {
+  local utf8_locale
+  utf8_locale="$(locale -a | awk 'tolower($0) ~ /utf-?8/ { print; exit }')"
+  [ -n "$utf8_locale" ] || skip 'no UTF-8 locale is installed'
   tmux_test_server_run set -g @tama_label_command \
     "i=0; while [ \"\$i\" -lt 1025 ]; do printf é; i=\$((i + 1)); done; :"
 
   local pane
   pane="$(agent_pane_in the-api)"
-  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  LC_ALL="$utf8_locale" run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_pane_option_unset "$pane" label
+}
+
+@test "the label provider keeps the hook locale" {
+  local locale_file="$BATS_TEST_TMPDIR/provider-locale"
+  tmux_test_server_run set -g @tama_label_command \
+    "printf '%s' \"\$LC_ALL\" >'$locale_file'; printf useful-label"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  LC_ALL=en_US.UTF-8 run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  assert_equal "$(cat "$locale_file")" en_US.UTF-8
+  assert_pane_option "$pane" label useful-label
+}
+
+@test "a failed capture write cannot publish a partial label" {
+  tmux_test_server_run set -g @tama_label_command \
+    "i=0; while [ \"\$i\" -lt 1500 ]; do printf x; i=\$((i + 1)); done; :"
+
+  local pane
+  pane="$(agent_pane_in the-api)"
+  run bash -c 'ulimit -f 1; exec "$1" notify claude-code "permission needed" --pane "$2"' \
+    _ "$PLUGIN_ROOT/bin/tama" "$pane"
   assert_success
   assert_pane_option_unset "$pane" label
 }

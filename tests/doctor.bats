@@ -145,7 +145,7 @@ PROVIDER
   [ ! -e "$marker" ]
 }
 
-@test "doctor reports how external commands are kept off the hook path" {
+@test "doctor reports the bound on external commands in the hook path" {
   healthy_server
 
   run "$PLUGIN_ROOT/bin/tama" doctor
