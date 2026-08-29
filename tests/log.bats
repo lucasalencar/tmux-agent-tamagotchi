@@ -14,6 +14,10 @@ teardown() {
   tmux_test_server_stop
 }
 
+file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+
 @test "logging disabled does not invoke jq or touch a destination" {
   local shim="$BATS_TEST_TMPDIR/bin" marker="$BATS_TEST_TMPDIR/jq-called"
   local plugin="$BATS_TEST_TMPDIR/no-logger-plugin"
@@ -90,11 +94,11 @@ teardown() {
 
   TAMA_LOG_FILE="$created" run "$PLUGIN_ROOT/bin/tama" state running --pane "$PANE"
   assert_success
-  assert_equal "$(stat -f '%Lp' "$created")" 600
+  assert_equal "$(file_mode "$created")" 600
 
   TAMA_LOG_FILE="$existing" run "$PLUGIN_ROOT/bin/tama" state idle --pane "$PANE"
   assert_success
-  assert_equal "$(stat -f '%Lp' "$existing")" 644
+  assert_equal "$(file_mode "$existing")" 644
 }
 
 @test "a symlink to a regular file is an append destination" {
