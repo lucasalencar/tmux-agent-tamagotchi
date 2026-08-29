@@ -42,7 +42,7 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
   function event(event: unknown): Promise<void> {
     return enqueue(async () => {
       const context = dependencies.loggingEnabled
-        ? { correlationId: `oc-${Date.now().toString(36)}-${++logSequence}` }
+        ? { correlationId: `oc-${process.pid}-${Date.now().toString(36)}-${++logSequence}` }
         : undefined
       const eventName = context ? observableEventName(event) : ""
       try {

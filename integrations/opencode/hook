@@ -16,7 +16,9 @@ reason="${3:-malformed_event}"
 
 case "$outcome" in
   applied) reason='' ;;
-  skipped) ;;
+  skipped)
+    case "$reason" in unknown_event | malformed_event) ;; *) reason=malformed_event ;; esac
+    ;;
   *) outcome=skipped reason=malformed_event ;;
 esac
 

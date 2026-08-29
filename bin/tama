@@ -195,7 +195,7 @@ tama_run_with_log_results() { # <command-file> [args...]
   # fd 3 is captured for the private outcome protocol while fd 1 remains the
   # command's real stdout. This keeps hook-safe status separate without another
   # filesystem write or an interruptible temporary artifact.
-  logged_results="$("$command_file" "$@" 3>&1 1>&4)" 4>&1
+  logged_results="$("$command_file" "$@" 3>&1 1>&4)"
   TAMA_LOGGED_COMMAND_STATUS=$?
   tama_log_outcome_from_results "$logged_results"
   TAMA_LOGGED_COMMAND_OUTCOME="$TAMA_LOG_OUTCOME"
@@ -258,7 +258,7 @@ main() {
   case "$subcommand" in
     icons | summary | list)
       tama_log_command_prepare
-      tama_run_with_log_results "$command_file" "$@"
+      tama_run_with_log_results "$command_file" "$@" 4>&1
       if [ "$TAMA_LOGGED_COMMAND_STATUS" -ne 0 ] ||
         [ "$TAMA_LOGGED_COMMAND_OUTCOME" = failed ]; then
         tama_log_write command.started "$subcommand"
@@ -276,7 +276,7 @@ main() {
     tama_log_integration integration.classified "$TAMA_LOG_INTEGRATION" \
       "$TAMA_LOG_INTEGRATION_EVENT" applied
   fi
-  tama_run_with_log_results "$command_file" "$@"
+  tama_run_with_log_results "$command_file" "$@" 4>&1
   tama_log_command_complete "$subcommand" "$TAMA_LOGGED_COMMAND_STATUS" \
     "$TAMA_LOGGED_COMMAND_OUTCOME"
   return "$TAMA_LOGGED_COMMAND_STATUS"

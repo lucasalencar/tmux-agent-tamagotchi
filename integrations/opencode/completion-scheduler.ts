@@ -3,6 +3,7 @@ import type { StateMachineEffect } from "./state-machine"
 export type CompletionReference = Readonly<{
   sessionId: string
   messageId: string
+  correlationId?: string
 }>
 
 export type MessageResponse = Readonly<{
@@ -18,7 +19,7 @@ export type CompletionClock = Readonly<{
 export type CompletionSchedulerDependencies = Readonly<{
   lookupMessage(completion: CompletionReference): Promise<MessageResponse | undefined>
   enqueue(work: () => Promise<void>): void
-  notify(message: string): Promise<void>
+  notify(message: string, completion: CompletionReference): Promise<void>
   clock?: CompletionClock
 }>
 
@@ -103,7 +104,7 @@ export function createCompletionScheduler(
           dependencies.enqueue(async () => {
             if (pending !== own || own.generation !== generation) return
             try {
-              await dependencies.notify(message || GENERIC_COMPLETION)
+              await dependencies.notify(message || GENERIC_COMPLETION, completion)
             } catch {
               // A notification backend cannot reject into OpenCode.
             } finally {

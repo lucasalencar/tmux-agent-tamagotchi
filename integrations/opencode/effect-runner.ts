@@ -20,7 +20,7 @@ export type EffectRunnerDependencies = Readonly<{
 export type EffectRunner = Readonly<{
   observeEvent(observation: LogObservation): Promise<void>
   run(effect: StateMachineEffect, context?: LogContext): Promise<void>
-  notify(message: string): Promise<void>
+  notify(message: string, context?: LogContext): Promise<void>
   clearPane(): Promise<void>
 }>
 
@@ -81,6 +81,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
           await dependencies.onCompletionEligible?.({
             sessionId: effect.sessionId,
             messageId: effect.messageId,
+            ...(context ? { correlationId: context.correlationId } : {}),
           })
           break
       }
@@ -98,12 +99,12 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
       ...(observation.reason ? [observation.reason] : []),
     ], observation.event, observation, false),
     run,
-    notify: (message) => invokeTama([
+    notify: (message, context) => invokeTama([
       "notify",
       "--",
       AGENT_NAME,
       sanitizeNotificationText(message) ?? GENERIC_COMPLETION,
-    ], "completion-notification"),
+    ], "completion-notification", context),
     clearPane: () => invokeTama(["state", "clear"], "dispose"),
   }
 }

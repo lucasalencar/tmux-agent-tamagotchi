@@ -67,7 +67,10 @@ export function createTmuxAgentTamagotchiPlugin(dependencies: PluginDependencies
       enqueue: (work) => {
         void runtime.enqueueLateWork(work)
       },
-      notify: runner.notify,
+      notify: (message, completion) => runner.notify(
+        message,
+        completion.correlationId ? { correlationId: completion.correlationId } : undefined,
+      ),
     })
 
     return {
