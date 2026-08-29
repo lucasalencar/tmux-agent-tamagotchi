@@ -736,9 +736,14 @@ PROVIDER
 }
 
 @test "a label provider may write a side file larger than the captured label" {
-  local cache="$BATS_TEST_TMPDIR/provider-cache"
-  tmux_test_server_run set -g @tama_label_command \
-    "i=0; while [ \"\$i\" -lt 500 ]; do printf 1234567890 >>'$cache'; i=\$((i + 1)); done; printf useful-label"
+  local cache="$BATS_TEST_TMPDIR/provider-cache" provider="$BATS_TEST_TMPDIR/provider"
+  cat >"$provider" <<PROVIDER
+#!/bin/sh
+dd if=/dev/zero bs=5000 count=1 2>/dev/null >'$cache'
+printf useful-label
+PROVIDER
+  chmod +x "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
 
   local pane
   pane="$(agent_pane_in the-api)"
@@ -784,8 +789,13 @@ PROVIDER
 }
 
 @test "a label may use the complete 2048-byte capture allowance" {
-  tmux_test_server_run set -g @tama_label_command \
-    "i=0; while [ \"\$i\" -lt 2048 ]; do printf x; i=\$((i + 1)); done; :"
+  local provider="$BATS_TEST_TMPDIR/provider"
+  cat >"$provider" <<'PROVIDER'
+#!/bin/sh
+dd if=/dev/zero bs=2048 count=1 2>/dev/null | tr '\000' x
+PROVIDER
+  chmod +x "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
 
   local label pane
   pane="$(agent_pane_in the-api)"
@@ -810,15 +820,23 @@ PROVIDER
 }
 
 @test "the label provider keeps the hook locale" {
-  local locale_file="$BATS_TEST_TMPDIR/provider-locale"
-  tmux_test_server_run set -g @tama_label_command \
-    "printf '%s' \"\$LC_ALL\" >'$locale_file'; printf useful-label"
+  local locale_file="$BATS_TEST_TMPDIR/provider-locale" provider="$BATS_TEST_TMPDIR/provider"
+  cat >"$provider" <<PROVIDER
+#!/bin/sh
+printf '%s' "\$LC_ALL" >'$locale_file'
+printf useful-label
+PROVIDER
+  chmod +x "$provider"
+  tmux_test_server_run set -g @tama_label_command "$provider"
 
-  local pane
+  local pane utf8_locale
+  utf8_locale="$(locale -a | awk 'tolower($0) ~ /utf-?8/ { print; exit }')"
+  [ -n "$utf8_locale" ] || skip 'no UTF-8 locale is installed'
   pane="$(agent_pane_in the-api)"
-  LC_ALL=en_US.UTF-8 run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  export LC_ALL="$utf8_locale"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
-  assert_equal "$(cat "$locale_file")" en_US.UTF-8
+  assert_equal "$(cat "$locale_file")" "$utf8_locale"
   assert_pane_option "$pane" label useful-label
 }
 
