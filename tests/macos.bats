@@ -151,7 +151,7 @@ run_click() { # <click command line>
   "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
   pid=$!
   wait_until_file_exists "$TAMA_NOTIFIER_GATE.started"
-  kill -0 "$pid"
+  assert_process_running "$pid"
   : >"$TAMA_NOTIFIER_GATE.release"
   assert_process_succeeds_within "$pid" 3 'notify waiting for terminal-notifier'
   [ -e "$TAMA_NOTIFIER_DIR/message" ]
@@ -170,7 +170,7 @@ run_click() { # <click command line>
   "$PLUGIN_ROOT/bin/tama" dismiss "$window" &
   pid=$!
   wait_until_file_exists "$TAMA_NOTIFIER_GATE.started"
-  kill -0 "$pid"
+  assert_process_running "$pid"
   [ ! -e "$TAMA_NOTIFIER_DIR/remove" ]
   : >"$TAMA_NOTIFIER_GATE.release"
   assert_process_succeeds_within "$pid" 3 'dismiss waiting for terminal-notifier'

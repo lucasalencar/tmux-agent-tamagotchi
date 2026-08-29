@@ -9,6 +9,17 @@ TAMA_NOTIFY_GROUP_DEFAULT='tmux-window-#{window_id}'
 TAMA_NOTIFY_LABEL_MAX_BYTES=2048
 TAMA_NOTIFY_LABEL_CAPTURE_BYTES=$((TAMA_NOTIFY_LABEL_MAX_BYTES + 1))
 
+# Runs in a child Bash. FD 7 reports the provider status; stdout carries at most the
+# first line plus one overflow byte. The group drains later output so closing the first
+# line does not turn a successful provider into SIGPIPE.
+# shellcheck disable=SC2016  # expanded by the child Bash
+TAMA_NOTIFY_LABEL_COLLECTOR='
+sh -c "$1 \"\$1\"" _ "$2" 6>&- 7>&- 8>&- 9>&- |
+  { head -n 1 | head -c "$3"; cat >/dev/null; }
+statuses=("${PIPESTATUS[@]}")
+printf "%s\n" "${statuses[0]}" >&7
+'
+
 # tmux may intermittently omit a live pane path, so fall back to the last reported cwd.
 TAMA_NOTIFY_TITLE_DEFAULT='#{@tama_pane_agent} - #{?pane_current_path,#{b:pane_current_path},#{b:@tama_pane_cwd}}#{?@tama_pane_label, (#{@tama_pane_label}),}'
 
@@ -105,18 +116,22 @@ tama_notify_label() {
   # own, but a command line built by substitution is a habit that only has to be
   # wrong once.
   tama_notify_capture_open || return 0
-  # Separate descriptions preserve the reader's offset while the provider writes.
+  # FD 8/9 write/read captured output; FD 7/6 write/read provider status. Separate
+  # descriptions preserve each reader's offset while the child writes.
   # shellcheck disable=SC2094
-  exec 8>"$TAMA_NOTIFY_CAPTURE" 9<"$TAMA_NOTIFY_CAPTURE" \
-    7>"$TAMA_NOTIFY_STATUS" 6<"$TAMA_NOTIFY_STATUS"
+  if ! { exec 8>"$TAMA_NOTIFY_CAPTURE" 9<"$TAMA_NOTIFY_CAPTURE" \
+    7>"$TAMA_NOTIFY_STATUS" 6<"$TAMA_NOTIFY_STATUS"; } 2>/dev/null; then
+    exec 6<&- 7>&- 8>&- 9<&- 2>/dev/null || true
+    rm -f "$TAMA_NOTIFY_CAPTURE" "$TAMA_NOTIFY_STATUS"
+    rmdir "$TAMA_NOTIFY_CAPTURE_DIR" 2>/dev/null || true
+    return 0
+  fi
   rm -f "$TAMA_NOTIFY_CAPTURE" "$TAMA_NOTIFY_STATUS"
   rmdir "$TAMA_NOTIFY_CAPTURE_DIR" 2>/dev/null || true
   # The collector, not the provider, owns the byte limit. It drains only as much as
   # the first line needs, while a separate anonymous descriptor preserves the
   # provider's status even when head closes its pipe after that line.
-  # shellcheck disable=SC2016  # expanded by the child Bash, not this shell
-  tama_external_command_run "$BASH" -c \
-    'sh -c "$1 \"\$1\"" _ "$2" 6>&- 7>&- 8>&- 9>&- | { head -n 1 | head -c "$3"; cat >/dev/null; }; statuses=("${PIPESTATUS[@]}"); printf "%s\n" "${statuses[0]}" >&7' _ \
+  tama_external_command_run "$BASH" -c "$TAMA_NOTIFY_LABEL_COLLECTOR" _ \
     "$command" "$TAMA_WINDOW_ID" "$TAMA_NOTIFY_LABEL_CAPTURE_BYTES" \
     >&8 2>/dev/null 6<&- 8>&- 9<&-
   status=$?
