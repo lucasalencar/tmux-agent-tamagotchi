@@ -15,9 +15,9 @@ TAMA_NOTIFY_LABEL_CAPTURE_BYTES=$((TAMA_NOTIFY_LABEL_MAX_BYTES + 1))
 # shellcheck disable=SC2016  # expanded by the child Bash
 TAMA_NOTIFY_LABEL_COLLECTOR='
 sh -c "$1 \"\$1\"" _ "$2" 6>&- 7>&- 8>&- 9>&- |
-  { head -n 1 | head -c "$3"; cat >/dev/null; }
+  { head -n 1 | head -c "$3"; collector_status=${PIPESTATUS[1]}; cat >/dev/null; exit "$collector_status"; }
 statuses=("${PIPESTATUS[@]}")
-printf "%s\n" "${statuses[0]}" >&7
+printf "%s %s\n" "${statuses[0]}" "${statuses[1]}" >&7
 '
 
 # tmux may intermittently omit a live pane path, so fall back to the last reported cwd.
@@ -106,7 +106,7 @@ tama_notify_title() { # <pane_id>
 # A configured provider receives the window id; only its first storable line is used.
 # shellcheck disable=SC2034  # TAMA_NOTIFY_LABEL is read by the caller
 tama_notify_label() {
-  local LC_ALL=C command label provider_status status
+  local byte_length collector_status command label provider_status status
   TAMA_NOTIFY_LABEL=''
   command="$(tama_opt tama_label_command '')"
   [ -n "$command" ] || return 0
@@ -128,19 +128,20 @@ tama_notify_label() {
   fi
   rm -f "$TAMA_NOTIFY_CAPTURE" "$TAMA_NOTIFY_STATUS"
   rmdir "$TAMA_NOTIFY_CAPTURE_DIR" 2>/dev/null || true
-  # The collector, not the provider, owns the byte limit. It drains only as much as
-  # the first line needs, while a separate anonymous descriptor preserves the
-  # provider's status even when head closes its pipe after that line.
+  # The collector, not the provider, owns the byte limit. It captures only the first
+  # line, drains the rest to avoid SIGPIPE, and preserves the provider's status through
+  # a separate anonymous descriptor.
   tama_external_command_run "$BASH" -c "$TAMA_NOTIFY_LABEL_COLLECTOR" _ \
     "$command" "$TAMA_WINDOW_ID" "$TAMA_NOTIFY_LABEL_CAPTURE_BYTES" \
     >&8 2>/dev/null 6<&- 8>&- 9<&-
   status=$?
   exec 8>&- 7>&-
   if [ "$status" -eq 0 ]; then
-    IFS= read -r provider_status <&6 || provider_status=''
-    IFS= read -r -n "$TAMA_NOTIFY_LABEL_CAPTURE_BYTES" label <&9 || true
-    [ "$provider_status" = 0 ] || label=''
-    [ "${#label}" -le "$TAMA_NOTIFY_LABEL_MAX_BYTES" ] || label=''
+    IFS=' ' read -r provider_status collector_status <&6 || provider_status=''
+    LC_ALL=C IFS= read -r -n "$TAMA_NOTIFY_LABEL_CAPTURE_BYTES" label <&9 || true
+    byte_length="$(LC_ALL=C; printf '%s' "${#label}")"
+    [ "$provider_status" = 0 ] && [ "$collector_status" = 0 ] || label=''
+    [ "$byte_length" -le "$TAMA_NOTIFY_LABEL_MAX_BYTES" ] || label=''
   else
     label=''
   fi
