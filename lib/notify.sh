@@ -323,5 +323,10 @@ tama_notify_dismiss() {
   # A banner that would not go away is not worth a word out of an agent's hook, still
   # less a failed turn. The synchronous call is bounded by the watchdog; a backend
   # may hand work to the desktop only after that work is safely accepted.
-  tama_backend_invoke dismiss "$TAMA_NOTIFY_GROUP" || true
+  tama_backend_invoke dismiss "$TAMA_NOTIFY_GROUP" || backend_status=$?
+  if [ "$backend_status" -eq 0 ]; then
+    [ "$TAMA_NOTIFY_DISMISS_STATUS" = failed ] || TAMA_NOTIFY_DISMISS_STATUS=applied
+  elif [ "$backend_status" -ne "$TAMA_BACKEND_UNSUPPORTED" ]; then
+    TAMA_NOTIFY_DISMISS_STATUS=failed
+  fi
 }
