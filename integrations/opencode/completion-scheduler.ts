@@ -24,7 +24,7 @@ export type CompletionSchedulerDependencies = Readonly<{
 }>
 
 export type CompletionScheduler = Readonly<{
-  handle(effect: StateMachineEffect): void
+  handle(effect: StateMachineEffect, context?: Readonly<{ correlationId?: string }>): void
   dispose(): void
 }>
 
@@ -58,7 +58,7 @@ export function createCompletionScheduler(
     pending = undefined
   }
 
-  function handle(effect: StateMachineEffect): void {
+  function handle(effect: StateMachineEffect, context?: Readonly<{ correlationId?: string }>): void {
     if (effect.type === "subagent-start") {
       cancelPending()
       return
@@ -71,7 +71,11 @@ export function createCompletionScheduler(
     cancelPending()
     const own: PendingCompletion = { generation }
     pending = own
-    const completion = { sessionId: effect.sessionId, messageId: effect.messageId }
+    const completion: CompletionReference = {
+      sessionId: effect.sessionId,
+      messageId: effect.messageId,
+      ...(context?.correlationId ? { correlationId: context.correlationId } : {}),
+    }
     const content = new Promise<string | undefined>((resolve) => {
       let settled = false
       const finish = (message: string | undefined) => {

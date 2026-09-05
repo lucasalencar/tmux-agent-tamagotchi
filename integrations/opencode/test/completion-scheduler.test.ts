@@ -336,6 +336,31 @@ describe("completion scheduler", () => {
 
     expect(notifications).toEqual([])
   })
+
+  test("retains the originating correlation for delayed completion notifications", async () => {
+    const clock = new FakeClock()
+    const notified: Array<{ text: string; completion: unknown }> = []
+    const scheduler = createScheduler({
+      clock,
+      lookupMessage: async () => message("root-a", "message-a", [
+        { type: "text", text: "done" },
+      ]),
+      notify: async (text, completion) => {
+        notified.push({ text, completion })
+      },
+    })
+
+    scheduler.handle(
+      { type: "completion-eligible", sessionId: "root-a", messageId: "message-a" },
+      { correlationId: "oc-1" },
+    )
+    await clock.advance(10_000)
+
+    expect(notified).toEqual([{
+      text: "done",
+      completion: { sessionId: "root-a", messageId: "message-a", correlationId: "oc-1" },
+    }])
+  })
 })
 
 function message(

@@ -57,7 +57,7 @@ export function createTmuxAgentTamagotchiPlugin(dependencies: PluginDependencies
         return undefined
       },
       runEffect: async (effect, context) => {
-        scheduler.handle(effect)
+        scheduler.handle(effect, context)
         await runner.run(effect, context)
       },
       observeEvent: runner.observeEvent,
