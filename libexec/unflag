@@ -20,12 +20,16 @@ set -o nounset
 
 main() {
   tama_optional_window_target unflag "$@"
-  [ -n "$TAMA_WINDOW_TARGET" ] || exit 0
+  if [ -z "$TAMA_WINDOW_TARGET" ]; then
+    tama_log_command_result skipped
+    exit 0
+  fi
 
   # The status says whether there was a mark to take off, which this command has no
   # use for and must not exit with: `tama unflag` on a window that was not marked has
   # done what was asked of it.
   tama_flag_clear "$TAMA_WINDOW_TARGET" || true
+  tama_log_command_result "$TAMA_FLAG_CLEAR_STATUS"
 }
 
 main "$@"

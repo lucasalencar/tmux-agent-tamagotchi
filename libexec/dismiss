@@ -24,14 +24,24 @@ set -o nounset
 
 main() {
   tama_optional_window_target dismiss "$@"
-  [ -n "$TAMA_WINDOW_TARGET" ] || exit 0
+  if [ -z "$TAMA_WINDOW_TARGET" ]; then
+    tama_log_command_result skipped
+    exit 0
+  fi
 
   # With banners off there is nothing of ours on screen to take down, and asking the
   # backend would start a notifier process to say so.
-  tama_notify_enabled || exit 0
+  if ! tama_notify_enabled; then
+    tama_log_command_result skipped
+    exit 0
+  fi
 
-  tama_window_read "$TAMA_WINDOW_TARGET" || exit 0
+  if ! tama_window_read "$TAMA_WINDOW_TARGET"; then
+    tama_log_command_result skipped
+    exit 0
+  fi
   tama_notify_dismiss
+  tama_log_command_result "$TAMA_NOTIFY_DISMISS_STATUS"
 }
 
 main "$@"

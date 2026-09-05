@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Logging-only adapter for OpenCode's native TypeScript lifecycle boundary.
+
+set -o nounset
+
+if [ -n "${TAMA_LOG_FILE:-}" ]; then
+  # shellcheck source=lib/log.sh
+  . "$TAMA_PLUGIN_DIR/lib/log.sh"
+else
+  tama_log_integration() { :; }
+fi
+
+event="${1:-malformed}"
+outcome="${2:-skipped}"
+reason="${3:-malformed_event}"
+
+case "$outcome" in
+  applied) reason='' ;;
+  skipped)
+    case "$reason" in unknown_event | malformed_event) ;; *) reason=malformed_event ;; esac
+    ;;
+  *) outcome=skipped reason=malformed_event ;;
+esac
+
+tama_log_integration integration.classified opencode "$event" "$outcome" "$reason"

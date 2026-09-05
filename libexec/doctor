@@ -172,6 +172,56 @@ doctor_plugin() {
   doctor_tmux_hooks
 }
 
+doctor_log() {
+  doctor_section 'the Log'
+  local path="${TAMA_LOG_FILE:-}" parent mode
+  if [ -z "$path" ]; then
+    doctor_ok 'TAMA_LOG_FILE is unset or empty: logging is disabled'
+    return 0
+  fi
+
+  doctor_more "configured path: $path"
+  case "$path" in
+    /*) ;;
+    *)
+      doctor_fail 'TAMA_LOG_FILE must be an absolute path'
+      return 0
+      ;;
+  esac
+  if ! command -v jq >/dev/null 2>&1 || ! jq -n empty >/dev/null 2>&1; then
+    doctor_fail 'jq is not available and working, so the configured Log cannot be written'
+    return 0
+  fi
+
+  parent="${path%/*}"
+  [ -n "$parent" ] || parent=/
+  if [ ! -d "$parent" ]; then
+    doctor_fail "the Log parent directory does not exist: $parent"
+    return 0
+  fi
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    if [ ! -f "$path" ]; then
+      doctor_fail "the configured Log destination is not a regular file: $path"
+      return 0
+    fi
+    if [ ! -w "$path" ]; then
+      doctor_fail "the configured Log is not writable: $path"
+      return 0
+    fi
+    mode="$(stat -L -f '%Lp' "$path" 2>/dev/null || stat -L -c '%a' "$path" 2>/dev/null || true)"
+    case "$mode" in
+      *[1-7][0-7] | *[0-7][1-7])
+        doctor_warn "the existing Log permissions are broad ($mode): $path"
+        doctor_more 'Existing permissions are preserved; narrow them explicitly if needed.'
+        ;;
+    esac
+  elif [ ! -w "$parent" ] || [ ! -x "$parent" ]; then
+    doctor_fail "the Log parent directory is not writable and searchable: $parent"
+    return 0
+  fi
+  doctor_ok "logging is usable at $path"
+}
+
 # Whether the hooks this version of the plugin wires are the hooks this server carries.
 #
 # Asked recipe by recipe, through the same TAMA_HOOKS and the same `tama_hook_is_wired`
@@ -1505,6 +1555,7 @@ main() {
 
   doctor_tmux
   doctor_plugin
+  doctor_log
   doctor_status_line
   doctor_status_summary_scope
   doctor_priority_configuration

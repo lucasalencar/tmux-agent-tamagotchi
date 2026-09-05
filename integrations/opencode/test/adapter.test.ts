@@ -13,19 +13,28 @@ describe("OpenCode event adapter", () => {
     await expect(adapter.adapt({
       type: "session.created",
       properties: { info: { id: "child-a", parentID: "root-a" } },
-    })).resolves.toEqual({ type: "session-created", sessionId: "child-a", kind: "delegated" })
+    })).resolves.toEqual({
+      status: "adapted",
+      event: { type: "session-created", sessionId: "child-a", kind: "delegated" },
+    })
     await expect(adapter.adapt({
       type: "session.created",
       properties: { info: { id: "root-a", parentID: undefined } },
-    })).resolves.toEqual({ type: "session-created", sessionId: "root-a", kind: "root" })
+    })).resolves.toEqual({
+      status: "adapted",
+      event: { type: "session-created", sessionId: "root-a", kind: "root" },
+    })
     await expect(adapter.adapt({
       type: "session.status",
       properties: { sessionID: "child-a", status: { type: "busy" } },
     })).resolves.toEqual({
-      type: "session-status",
-      sessionId: "child-a",
-      kind: "delegated",
-      status: "busy",
+      status: "adapted",
+      event: {
+        type: "session-status",
+        sessionId: "child-a",
+        kind: "delegated",
+        status: "busy",
+      },
     })
   })
 
@@ -38,28 +47,40 @@ describe("OpenCode event adapter", () => {
       type: "permission.asked",
       properties: { id: "request-a", sessionID: "root-a" },
     })).resolves.toEqual({
-      type: "permission-asked",
-      requestId: "request-a",
-      sessionId: "root-a",
-      kind: "root",
+      status: "adapted",
+      event: {
+        type: "permission-asked",
+        requestId: "request-a",
+        sessionId: "root-a",
+        kind: "root",
+      },
     })
     await expect(adapter.adapt({
       type: "permission.updated",
       properties: { id: "request-b", sessionID: "root-a" },
     })).resolves.toEqual({
-      type: "permission-asked",
-      requestId: "request-b",
-      sessionId: "root-a",
-      kind: "root",
+      status: "adapted",
+      event: {
+        type: "permission-asked",
+        requestId: "request-b",
+        sessionId: "root-a",
+        kind: "root",
+      },
     })
     await expect(adapter.adapt({
       type: "permission.replied",
       properties: { requestID: "request-a", sessionID: "root-a", reply: "once" },
-    })).resolves.toEqual({ type: "permission-replied", requestId: "request-a" })
+    })).resolves.toEqual({
+      status: "adapted",
+      event: { type: "permission-replied", requestId: "request-a" },
+    })
     await expect(adapter.adapt({
       type: "permission.replied",
       properties: { permissionID: "request-b", sessionID: "root-a", response: "once" },
-    })).resolves.toEqual({ type: "permission-replied", requestId: "request-b" })
+    })).resolves.toEqual({
+      status: "adapted",
+      event: { type: "permission-replied", requestId: "request-b" },
+    })
   })
 
   test("translates attributed errors and only terminal non-summary assistant messages", async () => {
@@ -71,15 +92,18 @@ describe("OpenCode event adapter", () => {
       type: "session.error",
       properties: { sessionID: "root-a", error: { data: { message: "provider failed" } } },
     })).resolves.toEqual({
-      type: "session-error",
-      sessionId: "root-a",
-      kind: "root",
-      message: "provider failed",
+      status: "adapted",
+      event: {
+        type: "session-error",
+        sessionId: "root-a",
+        kind: "root",
+        message: "provider failed",
+      },
     })
     await expect(adapter.adapt({
       type: "session.error",
       properties: { error: { data: { message: "unattributed" } } },
-    })).resolves.toBeUndefined()
+    })).resolves.toEqual({ status: "malformed" })
     await expect(adapter.adapt({
       type: "message.updated",
       properties: {
@@ -90,10 +114,13 @@ describe("OpenCode event adapter", () => {
         },
       },
     })).resolves.toEqual({
-      type: "user-message",
-      sessionId: "root-a",
-      kind: "root",
-      messageId: "user-a",
+      status: "adapted",
+      event: {
+        type: "user-message",
+        sessionId: "root-a",
+        kind: "root",
+        messageId: "user-a",
+      },
     })
     await expect(adapter.adapt({
       type: "message.updated",
@@ -107,11 +134,14 @@ describe("OpenCode event adapter", () => {
         },
       },
     })).resolves.toEqual({
-      type: "terminal-assistant-message",
-      sessionId: "root-a",
-      kind: "root",
-      messageId: "message-a",
-      finish: "stop",
+      status: "adapted",
+      event: {
+        type: "terminal-assistant-message",
+        sessionId: "root-a",
+        kind: "root",
+        messageId: "message-a",
+        finish: "stop",
+      },
     })
     await expect(adapter.adapt({
       type: "message.updated",
@@ -124,7 +154,7 @@ describe("OpenCode event adapter", () => {
           time: { created: 1, completed: 2 },
         },
       },
-    })).resolves.toBeUndefined()
+    })).resolves.toEqual({ status: "unknown" })
   })
 
   test("normalizes the standalone session idle event", async () => {
@@ -136,10 +166,13 @@ describe("OpenCode event adapter", () => {
       type: "session.idle",
       properties: { sessionID: "root-a" },
     })).resolves.toEqual({
-      type: "session-status",
-      sessionId: "root-a",
-      kind: "root",
-      status: "idle",
+      status: "adapted",
+      event: {
+        type: "session-status",
+        sessionId: "root-a",
+        kind: "root",
+        status: "idle",
+      },
     })
   })
 
@@ -159,11 +192,14 @@ describe("OpenCode event adapter", () => {
       type: "session.status",
       properties: { sessionID: "root-a", status: { type: "idle" } },
     })).resolves.toEqual({
-      type: "terminal-assistant-message",
-      sessionId: "root-a",
-      kind: "root",
-      messageId: "message-a",
-      finish: "stop",
+      status: "adapted",
+      event: {
+        type: "terminal-assistant-message",
+        sessionId: "root-a",
+        kind: "root",
+        messageId: "message-a",
+        finish: "stop",
+      },
     })
   })
 
@@ -176,16 +212,37 @@ describe("OpenCode event adapter", () => {
       lookupSession: async (sessionId) => sessions.get(sessionId),
     })
 
-    await expect(adapter.adapt(statusEvent("unknown-child"))).resolves.toBeUndefined()
-    await expect(adapter.adapt(statusEvent("invalid-child"))).resolves.toBeUndefined()
-    await expect(adapter.adapt(statusEvent("child-a"))).resolves.toMatchObject({ kind: "delegated" })
+    await expect(adapter.adapt(statusEvent("unknown-child"))).resolves.toEqual({ status: "malformed" })
+    await expect(adapter.adapt(statusEvent("invalid-child"))).resolves.toEqual({ status: "malformed" })
+    await expect(adapter.adapt(statusEvent("child-a"))).resolves.toEqual({
+      status: "adapted",
+      event: expect.objectContaining({ kind: "delegated" }),
+    })
 
     await expect(adapter.adapt({
       type: "session.deleted",
       properties: { info: { id: "child-a", parentID: "root-a" } },
-    })).resolves.toEqual({ type: "session-deleted", sessionId: "child-a", kind: "delegated" })
+    })).resolves.toEqual({
+      status: "adapted",
+      event: { type: "session-deleted", sessionId: "child-a", kind: "delegated" },
+    })
     sessions.delete("child-a")
-    await expect(adapter.adapt(statusEvent("child-a"))).resolves.toBeUndefined()
+    await expect(adapter.adapt(statusEvent("child-a"))).resolves.toEqual({ status: "malformed" })
+  })
+
+  test("distinguishes unknown event types from malformed known events", async () => {
+    const adapter = createEventAdapter({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+    })
+
+    await expect(adapter.adapt({
+      type: "future.private-event",
+      properties: { secret: "nope" },
+    })).resolves.toEqual({ status: "unknown" })
+    await expect(adapter.adapt({
+      type: "session.error",
+      properties: { error: { data: { message: "boom" } } },
+    })).resolves.toEqual({ status: "malformed" })
   })
 })
 

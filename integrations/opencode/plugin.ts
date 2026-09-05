@@ -28,6 +28,7 @@ export function createTmuxAgentTamagotchiPlugin(dependencies: PluginDependencies
     })
     let scheduler: CompletionScheduler
     const runtime = createOpenCodeRuntime({
+      loggingEnabled: Boolean(Bun.env.TAMA_LOG_FILE),
       lookupSession: async (sessionId) => {
         const response = await input.client.session.get({
           path: { id: sessionId },
@@ -55,10 +56,11 @@ export function createTmuxAgentTamagotchiPlugin(dependencies: PluginDependencies
         }
         return undefined
       },
-      runEffect: async (effect) => {
-        scheduler.handle(effect)
-        await runner.run(effect)
+      runEffect: async (effect, context) => {
+        scheduler.handle(effect, context)
+        await runner.run(effect, context)
       },
+      observeEvent: runner.observeEvent,
       clearPane: runner.clearPane,
       disposeLateWork: async () => {
         scheduler.dispose()
@@ -77,7 +79,10 @@ export function createTmuxAgentTamagotchiPlugin(dependencies: PluginDependencies
       enqueue: (work) => {
         void runtime.enqueueLateWork(work)
       },
-      notify: runner.notify,
+      notify: (message, completion) => runner.notify(
+        message,
+        completion.correlationId ? { correlationId: completion.correlationId } : undefined,
+      ),
     })
 
     return {

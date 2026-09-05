@@ -27,12 +27,13 @@ other agents can call the same CLI.
 | --- | --- |
 | tmux | 3.1a or newer |
 | bash | Compatible with bash 3.2.57, included with macOS |
-| Claude Code integration | `jq` ([installation](integrations/claude-code/README.md#requirement-jq)) |
+| Optional lifecycle Log and Claude Code integration | `jq` ([Log](docs/log.md), [Claude Code](integrations/claude-code/README.md#requirement-jq)) |
 | macOS notifications | [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) |
 | Other desktop notifications | `notify-send` and a freedesktop notification daemon |
 
-`jq` is required only for the Claude Code integration. Codex, OpenCode and the core plugin
-work without it. Without a supported notifier, icons and window marks still work.
+`jq` is required only when the lifecycle Log is enabled or the Claude Code integration is used.
+Codex, OpenCode and the core plugin work without it when logging is disabled. Without a supported
+notifier, icons and window marks still work.
 
 Platform capabilities and limitations are documented in
 [`backends/README.md`](backends/README.md).
@@ -259,9 +260,14 @@ It checks:
 - selected backend and notifier binary;
 - terminal-title configuration;
 - Claude Code hook configuration and its `jq` dependency when wired.
+- the configured lifecycle Log path, permissions, and `jq` dependency.
 
 Broken setups exit non-zero. Warnings exit zero. See
 [ADR-0007](docs/adr/0007-doctor-is-the-one-command-that-fails.md).
+
+For intermittent or ordering problems, enable the opt-in [`TAMA_LOG_FILE` lifecycle Log](docs/log.md).
+Agents working in this repository can use the automatically discoverable `diagnose-tamagotchi`
+skill to investigate that evidence without changing code or runtime state.
 
 ## Configuration reference
 

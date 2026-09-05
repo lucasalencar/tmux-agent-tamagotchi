@@ -3,6 +3,7 @@ import type { StateMachineEffect } from "./state-machine"
 export type CompletionReference = Readonly<{
   sessionId: string
   messageId: string
+  correlationId?: string
 }>
 
 export type MessageResponse = Readonly<{
@@ -18,12 +19,12 @@ export type CompletionClock = Readonly<{
 export type CompletionSchedulerDependencies = Readonly<{
   lookupMessage(completion: CompletionReference): Promise<MessageResponse | undefined>
   enqueue(work: () => Promise<void>): void
-  notify(message: string): Promise<void>
+  notify(message: string, completion: CompletionReference): Promise<void>
   clock?: CompletionClock
 }>
 
 export type CompletionScheduler = Readonly<{
-  handle(effect: StateMachineEffect): void
+  handle(effect: StateMachineEffect, context?: Readonly<{ correlationId?: string }>): void
   dispose(): void
 }>
 
@@ -57,7 +58,7 @@ export function createCompletionScheduler(
     pending = undefined
   }
 
-  function handle(effect: StateMachineEffect): void {
+  function handle(effect: StateMachineEffect, context?: Readonly<{ correlationId?: string }>): void {
     if (effect.type === "subagent-start") {
       cancelPending()
       return
@@ -70,7 +71,11 @@ export function createCompletionScheduler(
     cancelPending()
     const own: PendingCompletion = { generation }
     pending = own
-    const completion = { sessionId: effect.sessionId, messageId: effect.messageId }
+    const completion: CompletionReference = {
+      sessionId: effect.sessionId,
+      messageId: effect.messageId,
+      ...(context?.correlationId ? { correlationId: context.correlationId } : {}),
+    }
     const content = new Promise<string | undefined>((resolve) => {
       let settled = false
       const finish = (message: string | undefined) => {
@@ -103,7 +108,7 @@ export function createCompletionScheduler(
           dependencies.enqueue(async () => {
             if (pending !== own || own.generation !== generation) return
             try {
-              await dependencies.notify(message || GENERIC_COMPLETION)
+              await dependencies.notify(message || GENERIC_COMPLETION, completion)
             } catch {
               // A notification backend cannot reject into OpenCode.
             } finally {

@@ -35,9 +35,18 @@ main() {
     *) die_usage 'summary-scope scope must be current, all, or toggle' ;;
   esac
 
-  session_id="$(tama_inventory_session_id "$target")" || return 0
-  [ -n "$session_id" ] || return 0
-  current="$(tama_summary_scope "$session_id")" || return 0
+  session_id="$(tama_inventory_session_id "$target")" || {
+    tama_log_command_result failed
+    return 0
+  }
+  if [ -z "$session_id" ]; then
+    tama_log_command_result skipped
+    return 0
+  fi
+  current="$(tama_summary_scope "$session_id")" || {
+    tama_log_command_result failed
+    return 0
+  }
 
   if [ "$requested" = 'toggle' ]; then
     case "$current" in
@@ -48,7 +57,11 @@ main() {
     wanted="$requested"
   fi
 
-  tmux_run set-option -t "$session_id" @tama_summary_scope "$wanted" >/dev/null 2>&1 || return 0
+  tmux_run set-option -t "$session_id" @tama_summary_scope "$wanted" >/dev/null 2>&1 || {
+    tama_log_command_result failed
+    return 0
+  }
+  tama_log_command_result applied
   [ "$wanted" = "$current" ] || tama_summary_scope_refresh "$session_id"
 }
 

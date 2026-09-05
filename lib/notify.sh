@@ -31,6 +31,10 @@ tama_notify_enabled() {
   tama_opt_enabled tama_notifications on
 }
 
+tama_attention_is_eligible() { # <flag yes|no> <notification yes|no>
+  [ "$1" = yes ] || [ "$2" = yes ]
+}
+
 # The group id for the window tama_window_read last read, in TAMA_NOTIFY_GROUP.
 # A pending banner keeps the group it was raised with until dismissal, so changing
 # the format cannot orphan it in the notification centre. The pending marker is
@@ -219,12 +223,18 @@ tama_notify_tmux_command() {
 # banner is a harmless no-op. The window marker only preserves the group that `notify`
 # used and says when that persisted identity should be cleared.
 tama_notify_dismiss() {
+  local backend_status=0
+  TAMA_NOTIFY_DISMISS_STATUS=skipped
   tama_notify_group
 
   if [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
-    tmux_run set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" \
+    if tmux_run set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" \
       ';' set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION" \
-      >/dev/null 2>&1 || true
+      >/dev/null 2>&1; then
+      TAMA_NOTIFY_DISMISS_STATUS=applied
+    else
+      TAMA_NOTIFY_DISMISS_STATUS=failed
+    fi
   fi
 
   tama_notify_export_context
@@ -235,5 +245,10 @@ tama_notify_dismiss() {
 
   # Fire and forget: a banner that would not go away is not worth a word out of an
   # agent's hook, still less a failed turn.
-  tama_backend_invoke dismiss "$TAMA_NOTIFY_GROUP" || true
+  tama_backend_invoke dismiss "$TAMA_NOTIFY_GROUP" || backend_status=$?
+  if [ "$backend_status" -eq 0 ]; then
+    [ "$TAMA_NOTIFY_DISMISS_STATUS" = failed ] || TAMA_NOTIFY_DISMISS_STATUS=applied
+  elif [ "$backend_status" -ne "$TAMA_BACKEND_UNSUPPORTED" ]; then
+    TAMA_NOTIFY_DISMISS_STATUS=failed
+  fi
 }

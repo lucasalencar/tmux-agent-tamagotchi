@@ -20,9 +20,15 @@ export type EventAdapterDependencies = Readonly<{
 }>
 
 export type EventAdapter = Readonly<{
-  adapt(event: unknown): Promise<LifecycleEvent | undefined>
+  adapt(event: unknown): Promise<Adaptation>
   clear(): void
 }>
+
+export type Adaptation = Readonly<
+  | { status: "adapted"; event: LifecycleEvent }
+  | { status: "unknown" }
+  | { status: "malformed" }
+>
 
 export function createEventAdapter(dependencies: EventAdapterDependencies): EventAdapter {
   const classifications = new Map<string, SessionKind>()
@@ -48,21 +54,24 @@ export function createEventAdapter(dependencies: EventAdapterDependencies): Even
     }
   }
 
-  async function adapt(event: unknown): Promise<LifecycleEvent | undefined> {
-    if (!isRecord(event) || !isRecord(event.properties)) return undefined
+  async function adapt(event: unknown): Promise<Adaptation> {
+    if (!isRecord(event) || !isRecord(event.properties)) return { status: "malformed" }
     const properties = event.properties
     if (event.type === "session.created" || event.type === "session.deleted") {
-      if (!isSessionInfo(properties.info)) return undefined
+      if (!isSessionInfo(properties.info)) return { status: "malformed" }
       const sessionId = properties.info.id
       const kind = remember(properties.info)
       if (event.type === "session.deleted") {
         classifications.delete(sessionId)
       }
-      if (!kind) return undefined
+      if (!kind) return { status: "malformed" }
       return {
-        type: event.type === "session.created" ? "session-created" : "session-deleted",
-        sessionId,
-        kind,
+        status: "adapted",
+        event: {
+          type: event.type === "session.created" ? "session-created" : "session-deleted",
+          sessionId,
+          kind,
+        },
       }
     }
     if (event.type === "session.status" || event.type === "session.idle") {
@@ -72,73 +81,85 @@ export function createEventAdapter(dependencies: EventAdapterDependencies): Even
         : isRecord(properties.status)
           ? properties.status.type
           : undefined
-      if (!isIdentifier(sessionId) || (status !== "busy" && status !== "retry" && status !== "idle")) {
-        return undefined
+      if (!isIdentifier(sessionId)) return { status: "malformed" }
+      if (status !== "busy" && status !== "retry" && status !== "idle") {
+        return { status: "unknown" }
       }
       const kind = await classify(sessionId)
+      if (!kind) return { status: "malformed" }
       if (kind === "root" && status === "idle") {
         try {
           const latest = await dependencies.lookupLatestMessage?.(sessionId)
           if (latest && isTerminalAssistant(latest, sessionId)) {
             return {
-              type: "terminal-assistant-message",
-              sessionId,
-              kind,
-              messageId: latest.id,
-              ...(typeof latest.finish === "string" ? { finish: latest.finish } : {}),
+              status: "adapted",
+              event: {
+                type: "terminal-assistant-message",
+                sessionId,
+                kind,
+                messageId: latest.id,
+                ...(typeof latest.finish === "string" ? { finish: latest.finish } : {}),
+              },
             }
           }
         } catch {
           // An optional message lookup cannot block lifecycle state updates.
         }
       }
-      return kind ? { type: "session-status", sessionId, kind, status } : undefined
+      return { status: "adapted", event: { type: "session-status", sessionId, kind, status } }
     }
     if (event.type === "permission.asked" || event.type === "permission.updated") {
       const requestId = properties.id ?? properties.permissionID
       const sessionId = properties.sessionID
-      if (!isIdentifier(requestId) || !isIdentifier(sessionId)) return undefined
+      if (!isIdentifier(requestId) || !isIdentifier(sessionId)) return { status: "malformed" }
       const kind = await classify(sessionId)
-      return kind
-        ? { type: "permission-asked", requestId, sessionId, kind }
-        : undefined
+      if (!kind) return { status: "malformed" }
+      return { status: "adapted", event: { type: "permission-asked", requestId, sessionId, kind } }
     }
     if (event.type === "permission.replied") {
       const requestId = properties.requestID ?? properties.permissionID
-      return isIdentifier(requestId) ? { type: "permission-replied", requestId } : undefined
+      if (!isIdentifier(requestId)) return { status: "malformed" }
+      return { status: "adapted", event: { type: "permission-replied", requestId } }
     }
     if (event.type === "session.error") {
       const sessionId = properties.sessionID
-      if (!isIdentifier(sessionId)) return undefined
+      if (!isIdentifier(sessionId)) return { status: "malformed" }
       const kind = await classify(sessionId)
-      if (!kind) return undefined
+      if (!kind) return { status: "malformed" }
       const message = errorMessage(properties.error)
-      return message
-        ? { type: "session-error", sessionId, kind, message }
-        : { type: "session-error", sessionId, kind }
+      return {
+        status: "adapted",
+        event: message
+          ? { type: "session-error", sessionId, kind, message }
+          : { type: "session-error", sessionId, kind },
+      }
     }
     if (event.type === "message.updated") {
       const info = properties.info
       if (!isRecord(info) || !isIdentifier(info.id) || !isIdentifier(info.sessionID)) {
-        return undefined
+        return { status: "malformed" }
       }
       const kind = await classify(info.sessionID)
-      if (!kind) return undefined
+      if (!kind) return { status: "malformed" }
       if (info.role === "user") {
-        return { type: "user-message", sessionId: info.sessionID, kind, messageId: info.id }
+        return {
+          status: "adapted",
+          event: { type: "user-message", sessionId: info.sessionID, kind, messageId: info.id },
+        }
       }
-      if (!isTerminalAssistant(info, info.sessionID)) return undefined
-      return kind
-        ? {
-            type: "terminal-assistant-message",
-            sessionId: info.sessionID,
-            kind,
-            messageId: info.id,
-            ...(typeof info.finish === "string" ? { finish: info.finish } : {}),
-          }
-        : undefined
+      if (!isTerminalAssistant(info, info.sessionID)) return { status: "unknown" }
+      return {
+        status: "adapted",
+        event: {
+          type: "terminal-assistant-message",
+          sessionId: info.sessionID,
+          kind,
+          messageId: info.id,
+          ...(typeof info.finish === "string" ? { finish: info.finish } : {}),
+        },
+      }
     }
-    return undefined
+    return { status: "unknown" }
   }
 
   return {
