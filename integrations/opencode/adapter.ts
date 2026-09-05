@@ -93,18 +93,22 @@ export function createEventAdapter(dependencies: EventAdapterDependencies): Even
     }
     if (event.type === "message.updated") {
       const info = properties.info
+      if (!isRecord(info) || !isIdentifier(info.id) || !isIdentifier(info.sessionID)) {
+        return undefined
+      }
+      const kind = await classify(info.sessionID)
+      if (!kind) return undefined
+      if (info.role === "user") {
+        return { type: "user-message", sessionId: info.sessionID, kind }
+      }
       if (
-        !isRecord(info)
-        || info.role !== "assistant"
+        info.role !== "assistant"
         || info.summary === true
-        || !isIdentifier(info.id)
-        || !isIdentifier(info.sessionID)
         || !isRecord(info.time)
         || typeof info.time.completed !== "number"
       ) {
         return undefined
       }
-      const kind = await classify(info.sessionID)
       return kind
         ? {
             type: "terminal-assistant-message",

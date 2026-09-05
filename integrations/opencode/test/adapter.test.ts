@@ -84,6 +84,20 @@ describe("OpenCode event adapter", () => {
       type: "message.updated",
       properties: {
         info: {
+          id: "user-a",
+          sessionID: "root-a",
+          role: "user",
+        },
+      },
+    })).resolves.toEqual({
+      type: "user-message",
+      sessionId: "root-a",
+      kind: "root",
+    })
+    await expect(adapter.adapt({
+      type: "message.updated",
+      properties: {
+        info: {
           id: "message-a",
           sessionID: "root-a",
           role: "assistant",

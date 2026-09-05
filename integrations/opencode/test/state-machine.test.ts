@@ -72,6 +72,16 @@ describe("root session activity", () => {
           { type: "completion-eligible", sessionId: "root-a", messageId: "message-a" },
         ],
       },
+      {
+        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+        paneState: "idle",
+        effects: [],
+      },
+      {
+        event: { type: "user-message", sessionId: "root-a", kind: "root" },
+        paneState: "running",
+        effects: [{ type: "pane-state", state: "running" }],
+      },
     ])
   })
 
