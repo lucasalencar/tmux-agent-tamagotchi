@@ -27,7 +27,7 @@ export type CompletionScheduler = Readonly<{
   dispose(): void
 }>
 
-const COMPLETION_DELAY_MS = 10_000
+const COMPLETION_DELAY_MS = 5_000
 const LOOKUP_DEADLINE_MS = 2_000
 const GENERIC_COMPLETION = "OpenCode finished its turn"
 const NOTIFICATION_TEXT_MAX = 500

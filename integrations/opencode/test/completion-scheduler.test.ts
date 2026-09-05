@@ -8,7 +8,7 @@ import {
 import { FakeClock } from "./fake-clock"
 
 describe("completion scheduler", () => {
-  test("notifies with the exact visible response ten seconds after eligible completion", async () => {
+  test("notifies with the exact visible response five seconds after eligible completion", async () => {
     const clock = new FakeClock()
     const notifications: string[] = []
     const lookups: Array<{ sessionId: string; messageId: string }> = []
@@ -26,7 +26,7 @@ describe("completion scheduler", () => {
     })
 
     scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
-    await clock.advance(9_999)
+    await clock.advance(4_999)
     expect(notifications).toEqual([])
 
     await clock.advance(1)
@@ -34,7 +34,7 @@ describe("completion scheduler", () => {
     expect(notifications).toEqual(["Finished **safely**."])
   })
 
-  test("new pane activity at 9.9 seconds cancels the pending completion", async () => {
+  test("new pane activity at 4.9 seconds cancels the pending completion", async () => {
     const clock = new FakeClock()
     const notifications: string[] = []
     const scheduler = createScheduler({
@@ -48,9 +48,9 @@ describe("completion scheduler", () => {
     })
 
     scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
-    await clock.advance(9_900)
+    await clock.advance(4_900)
     scheduler.handle({ type: "pane-state", state: "running" })
-    await clock.advance(10_000)
+    await clock.advance(5_000)
 
     expect(notifications).toEqual([])
   })
@@ -73,9 +73,9 @@ describe("completion scheduler", () => {
       sessionId: "root-a",
       messageId: "message-old",
     })
-    await clock.advance(5_000)
+    await clock.advance(2_500)
     scheduler.handle({ type: "pane-state", state: "running" })
-    await clock.advance(10_000)
+    await clock.advance(5_000)
     expect(notifications).toEqual([])
 
     scheduler.handle({
@@ -83,15 +83,15 @@ describe("completion scheduler", () => {
       sessionId: "root-a",
       messageId: "message-new",
     })
-    await clock.advance(9_999)
+    await clock.advance(4_999)
     expect(notifications).toEqual([])
     await clock.advance(1)
-    await clock.advance(10_000)
+    await clock.advance(5_000)
 
     expect(notifications).toEqual(["fresh completion"])
   })
 
-  test("a subagent starting at 9.9 seconds cancels the pending completion", async () => {
+  test("a subagent starting at 4.9 seconds cancels the pending completion", async () => {
     const clock = new FakeClock()
     const notifications: string[] = []
     const scheduler = createScheduler({
@@ -105,9 +105,9 @@ describe("completion scheduler", () => {
     })
 
     scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
-    await clock.advance(9_900)
+    await clock.advance(4_900)
     scheduler.handle({ type: "subagent-start", sessionId: "child-a" })
-    await clock.advance(10_000)
+    await clock.advance(5_000)
 
     expect(notifications).toEqual([])
   })
@@ -126,9 +126,9 @@ describe("completion scheduler", () => {
     })
 
     scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
-    await clock.advance(5_000)
+    await clock.advance(2_500)
     scheduler.handle({ type: "pane-state", state: "idle" })
-    await clock.advance(4_999)
+    await clock.advance(2_499)
     expect(notifications).toEqual([])
     await clock.advance(1)
 
@@ -148,7 +148,7 @@ describe("completion scheduler", () => {
     })
 
     scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
-    await clock.advance(9_999)
+    await clock.advance(4_999)
     expect(notifications).toEqual([])
     await clock.advance(1)
 
@@ -173,7 +173,7 @@ describe("completion scheduler", () => {
     scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(1_999)
     lookup.resolve(message("root-a", "message-a", [{ type: "text", text: "just in time" }]))
-    await clock.advance(8_001)
+    await clock.advance(3_001)
 
     expect(notifications).toEqual(["just in time"])
   })
@@ -200,7 +200,7 @@ describe("completion scheduler", () => {
     })
 
     scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
-    await clock.advance(10_000)
+    await clock.advance(5_000)
 
     expect(notifications).toEqual(["First **visible** line\nSecond\tline"])
   })
@@ -235,7 +235,7 @@ describe("completion scheduler", () => {
     })
 
     scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
-    await clock.advance(10_000)
+    await clock.advance(5_000)
 
     expect(notifications).toEqual(["OpenCode finished its turn"])
   })
@@ -255,7 +255,7 @@ describe("completion scheduler", () => {
     })
 
     scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
-    await clock.advance(10_000)
+    await clock.advance(5_000)
 
     const [notification] = notifications
     expect(notification).toStartWith("✅ **result**\nword ")
@@ -282,7 +282,7 @@ describe("completion scheduler", () => {
     await clock.advance(1_000)
     scheduler.handle({ type: "completion-eligible", sessionId: "root-b", messageId: "message-b" })
     firstLookup.resolve(message("root-a", "message-a", [{ type: "text", text: "stale result" }]))
-    await clock.advance(9_999)
+    await clock.advance(4_999)
     expect(notifications).toEqual([])
     await clock.advance(1)
 
@@ -307,7 +307,7 @@ describe("completion scheduler", () => {
     })
 
     scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
-    await clock.advance(10_000)
+    await clock.advance(5_000)
     expect(admitted).toHaveLength(1)
 
     scheduler.handle({ type: "pane-state", state: "running" })

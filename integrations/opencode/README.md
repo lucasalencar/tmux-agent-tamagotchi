@@ -75,7 +75,7 @@ be recovered are ignored. Unknown or malformed events and operational failures a
 
 ## Completion notifications
 
-An eligible successful turn sets the pane to `idle` immediately, then waits ten seconds before
+An eligible successful turn sets the pane to `idle` immediately, then waits five seconds before
 raising its completion banner. A terminal assistant message with `finish: "stop"` is accepted as
 the completion signal when no idle event follows; `session.status idle` and `session.idle` remain
 supported as alternate signals. Duplicate idle events do not restart that delay. New root

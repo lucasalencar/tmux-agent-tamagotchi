@@ -70,7 +70,7 @@ describe("wired plugin", () => {
     ])
   })
 
-  test("looks up the eligible terminal message and notifies through tama after ten idle seconds", async () => {
+  test("looks up the eligible terminal message and notifies through tama after five idle seconds", async () => {
     const clock = new FakeClock()
     const clientCalls: unknown[] = []
     const commandCalls: string[][] = []
@@ -122,7 +122,7 @@ describe("wired plugin", () => {
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
     ])
-    await clock.advance(9_999)
+    await clock.advance(4_999)
     expect(tamaCalls(commandCalls)).toHaveLength(2)
     await clock.advance(1)
 
@@ -186,7 +186,7 @@ describe("wired plugin", () => {
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
     ])
-    await clock.advance(10_000)
+    await clock.advance(5_000)
 
     expect(tamaCalls(commandCalls)).toContainEqual([
       "/plugin/bin/tama", "notify", "--", "OpenCode", "Finished without an idle event.",
@@ -234,7 +234,7 @@ describe("wired plugin", () => {
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
     ])
-    await clock.advance(10_000)
+    await clock.advance(5_000)
 
     expect(tamaCalls(commandCalls)).toContainEqual([
       "/plugin/bin/tama", "notify", "--", "OpenCode", "Still finished.",
@@ -278,7 +278,7 @@ describe("wired plugin", () => {
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
     ])
-    await clock.advance(10_000)
+    await clock.advance(5_000)
 
     expect(tamaCalls(commandCalls)).toContainEqual([
       "/plugin/bin/tama", "notify", "--", "OpenCode", "Recovered from the session.",
@@ -368,9 +368,9 @@ describe("wired plugin", () => {
       } as never,
     })
     await hooks.event?.({ event: statusEvent("root-a", "idle") as never })
-    await clock.advance(9_900)
+    await clock.advance(4_900)
     await hooks.event?.({ event: statusEvent("root-b", "busy") as never })
-    await clock.advance(10_000)
+    await clock.advance(5_000)
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
@@ -400,7 +400,7 @@ describe("wired plugin", () => {
     ))
 
     await completeTurn(hooks, "root-a", "message-a")
-    await clock.advance(9_900)
+    await clock.advance(4_900)
     await hooks.event?.({
       event: {
         type: "session.created",
@@ -408,7 +408,7 @@ describe("wired plugin", () => {
       } as never,
     })
     await hooks.event?.({ event: statusEvent("child-a", "busy") as never })
-    await clock.advance(10_000)
+    await clock.advance(5_000)
     await hooks.event?.({ event: statusEvent("child-a", "idle") as never })
 
     expect(tamaCalls(commandCalls)).toEqual([
@@ -445,7 +445,7 @@ describe("wired plugin", () => {
     ))
 
     await completeTurn(hooks, "root-a", "message-a")
-    await clock.advance(10_000)
+    await clock.advance(5_000)
     expect(tamaCalls(commandCalls).at(-1)).toEqual([
       "/plugin/bin/tama", "notify", "--", "OpenCode", "finished",
     ])
@@ -488,7 +488,7 @@ describe("wired plugin", () => {
     ))
 
     await completeTurn(hooks, "root-a", "message-a")
-    await clock.advance(10_000)
+    await clock.advance(5_000)
     expect(tamaCalls(commandCalls).at(-1)?.[1]).toBe("notify")
     await notificationStarted.promise
 
