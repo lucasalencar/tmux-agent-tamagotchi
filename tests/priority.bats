@@ -86,6 +86,13 @@ teardown() {
   assert_window_option_unset "$first" window_priority
   assert_window_option_unset "$shared" window_priority
   assert_equal "$(tmux_test_server_run show -wqv -t "$unrelated" @tama_window_priority)" on
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" clear-priorities --session "$session"
+
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+  assert_equal "$(tmux_test_server_run show -wqv -t "$unrelated" @tama_window_priority)" on
 }
 
 @test "clear-priorities reports a partial failure after clearing the remaining snapshot" {
