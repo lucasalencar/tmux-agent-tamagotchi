@@ -55,9 +55,13 @@ export function createEventAdapter(dependencies: EventAdapterDependencies): Even
         kind,
       }
     }
-    if (event.type === "session.status") {
+    if (event.type === "session.status" || event.type === "session.idle") {
       const sessionId = properties.sessionID
-      const status = isRecord(properties.status) ? properties.status.type : undefined
+      const status = event.type === "session.idle"
+        ? "idle"
+        : isRecord(properties.status)
+          ? properties.status.type
+          : undefined
       if (!isIdentifier(sessionId) || (status !== "busy" && status !== "retry" && status !== "idle")) {
         return undefined
       }
@@ -107,6 +111,7 @@ export function createEventAdapter(dependencies: EventAdapterDependencies): Even
             sessionId: info.sessionID,
             kind,
             messageId: info.id,
+            ...(typeof info.finish === "string" ? { finish: info.finish } : {}),
           }
         : undefined
     }

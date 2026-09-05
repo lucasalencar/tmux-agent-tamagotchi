@@ -18,6 +18,7 @@ type SdkLifecycleEvent = WithEventId<
         | "message.updated"
         | "session.created"
         | "session.deleted"
+        | "session.idle"
         | "session.error"
         | "session.status"
     }

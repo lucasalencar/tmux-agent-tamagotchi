@@ -88,6 +88,7 @@ describe("OpenCode event adapter", () => {
           sessionID: "root-a",
           role: "assistant",
           time: { created: 1, completed: 2 },
+          finish: "stop",
         },
       },
     })).resolves.toEqual({
@@ -95,6 +96,7 @@ describe("OpenCode event adapter", () => {
       sessionId: "root-a",
       kind: "root",
       messageId: "message-a",
+      finish: "stop",
     })
     await expect(adapter.adapt({
       type: "message.updated",
@@ -108,6 +110,22 @@ describe("OpenCode event adapter", () => {
         },
       },
     })).resolves.toBeUndefined()
+  })
+
+  test("normalizes the standalone session idle event", async () => {
+    const adapter = createEventAdapter({
+      lookupSession: async () => ({ id: "root-a" }),
+    })
+
+    await expect(adapter.adapt({
+      type: "session.idle",
+      properties: { sessionID: "root-a" },
+    })).resolves.toEqual({
+      type: "session-status",
+      sessionId: "root-a",
+      kind: "root",
+      status: "idle",
+    })
   })
 
   test("ignores unavailable or invalid session metadata and invalidates a deleted session", async () => {

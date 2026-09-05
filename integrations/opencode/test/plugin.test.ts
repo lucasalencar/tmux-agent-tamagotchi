@@ -146,6 +146,53 @@ describe("wired plugin", () => {
     ])
   })
 
+  test("notifies from a stopped assistant message when OpenCode emits no idle status", async () => {
+    const clock = new FakeClock()
+    const commandCalls: string[][] = []
+    const plugin = createTmuxAgentTamagotchiPlugin({
+      clock,
+      execute: async (argv) => {
+        commandCalls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+    const hooks = await plugin(fakePluginInput(
+      async ({ path }) => ({ id: path.id }),
+      async ({ path }) => ({
+        info: { id: path.messageID, sessionID: path.id, role: "assistant" },
+        parts: [{ type: "text", text: "Finished without an idle event." }],
+      }),
+    ))
+
+    await hooks.event?.({ event: statusEvent("root-a", "busy") as never })
+    await hooks.event?.({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-a",
+            sessionID: "root-a",
+            role: "assistant",
+            time: { completed: 1 },
+            finish: "stop",
+          },
+        },
+      } as never,
+    })
+
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+    ])
+    await clock.advance(10_000)
+
+    expect(tamaCalls(commandCalls)).toContainEqual([
+      "/plugin/bin/tama", "notify", "--", "OpenCode", "Finished without an idle event.",
+    ])
+  })
+
   test("disposal clears the pane without allowing pending message work to notify", async () => {
     const clock = new FakeClock()
     const commandCalls: string[][] = []

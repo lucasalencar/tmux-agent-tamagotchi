@@ -51,6 +51,30 @@ describe("root session activity", () => {
     ])
   })
 
+  test("a completed root assistant message ends a turn without a later idle status", () => {
+    run(createLifecycleState(), [
+      {
+        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+        paneState: "running",
+        effects: [{ type: "pane-state", state: "running" }],
+      },
+      {
+        event: {
+          type: "terminal-assistant-message",
+          sessionId: "root-a",
+          kind: "root",
+          messageId: "message-a",
+          finish: "stop",
+        },
+        paneState: "idle",
+        effects: [
+          { type: "pane-state", state: "idle" },
+          { type: "completion-eligible", sessionId: "root-a", messageId: "message-a" },
+        ],
+      },
+    ])
+  })
+
   test("a root error clears when the session reports any status after resuming", () => {
     run(createLifecycleState(), [
       {

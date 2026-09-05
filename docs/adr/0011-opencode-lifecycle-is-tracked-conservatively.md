@@ -10,12 +10,13 @@ missing lookup must not turn a delegated or unknown event into a root-session no
 Errors from delegated sessions only stop their subagent tracking, and errors without a session
 are ignored rather than attributed to an arbitrary root.
 
-`session.status` is the source of activity, while outstanding permission request ids form a
-separate waiting overlay across root and delegated sessions. The pane becomes idle immediately
-when a root session is created or the aggregate does. Creation establishes that the agent is
-present but does not represent a completed turn. Completion is notified only after an eligible
-turn — one with an observed terminal assistant message — leaves the aggregate idle for ten
-seconds; leaving idle cancels the timer, and duplicate idle events do not postpone it.
+`session.status` and terminal assistant messages are the sources of activity, while outstanding
+permission request ids form a separate waiting overlay across root and delegated sessions. The
+pane becomes idle immediately when a root session is created, the aggregate does, or a stopped
+terminal assistant message is observed without a later idle event. Creation establishes that the
+agent is present but does not represent a completed turn. Completion is notified only after an
+eligible turn — one with an observed terminal assistant message — leaves the aggregate idle for
+ten seconds; leaving idle cancels the timer, and duplicate idle events do not postpone it.
 A live delegated session suppresses completion eligibility even when every root is idle, and a
 delegated session that starts during the ten-second delay cancels the pending notification. Its
 later stop does not resurrect that completion: a future root turn must become independently

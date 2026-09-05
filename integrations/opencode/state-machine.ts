@@ -12,6 +12,7 @@ export type LifecycleEvent =
       sessionId: string
       kind: SessionKind
       messageId: string
+      finish?: string
     }
   | { type: "permission-asked"; requestId: string; sessionId: string; kind: SessionKind }
   | { type: "permission-replied"; requestId: string }
@@ -102,7 +103,26 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
       delegatedEffect = { type: "subagent-stop", sessionId: event.sessionId }
     }
   } else if (event.type === "terminal-assistant-message") {
-    terminalAssistantMessages.set(event.sessionId, event.messageId)
+    const current = roots.get(event.sessionId)
+    if (
+      event.kind === "root"
+      && current === "running"
+      && event.finish === "stop"
+      && permissions.size === 0
+      && activeDelegatedSessions.size === 0
+      && !Array.from(roots).some(([sessionId, rootState]) =>
+        sessionId !== event.sessionId && (rootState === "running" || rootState === "error"))
+    ) {
+      roots.set(event.sessionId, "idle")
+      terminalAssistantMessages.delete(event.sessionId)
+      completionEffect = {
+        type: "completion-eligible",
+        sessionId: event.sessionId,
+        messageId: event.messageId,
+      }
+    } else {
+      terminalAssistantMessages.set(event.sessionId, event.messageId)
+    }
   } else if (event.type === "session-created") {
     const current = roots.get(event.sessionId)
     if (current === undefined || current === "error") roots.set(event.sessionId, "idle")

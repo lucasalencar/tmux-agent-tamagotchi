@@ -59,7 +59,7 @@ pane state with the precedence `waiting > error > running > idle`:
 | --- | --- |
 | Root session created | Sets the pane to `idle`, showing that OpenCode is present. |
 | Root `busy` or `retry` | Sets that root to `running`; retry is not reported as failure. |
-| Root `idle` | Sets that root to `idle`, unless its last attributed error is still active. |
+| Root `idle` or terminal assistant message | Sets that root to `idle`, unless its last attributed error is still active. The terminal message is a fallback for OpenCode versions or modes that do not emit an idle event. |
 | Permission asked | Sets the pane to `waiting`, including requests from delegated sessions. Concurrent requests remain independent. |
 | Permission replied | Removes only that request and recomputes the aggregate state. |
 | Attributed root error | Sets that root to persistent `error` and raises an error notification. A later `busy` or `retry`, or deleting the root, clears the error. |
@@ -76,10 +76,12 @@ be recovered are ignored. Unknown or malformed events and operational failures a
 ## Completion notifications
 
 An eligible successful turn sets the pane to `idle` immediately, then waits ten seconds before
-raising its completion banner. Duplicate idle events do not restart that delay. New root activity,
-permission attention, or a delegated/background session starting cancels the pending completion;
-a subagent's later stop does not resurrect it. This prevents a root completion from announcing
-that the pane is finished while delegated work is still running.
+raising its completion banner. A terminal assistant message with `finish: "stop"` is accepted as
+the completion signal when no idle event follows; `session.status idle` and `session.idle` remain
+supported as alternate signals. Duplicate idle events do not restart that delay. New root
+activity, permission attention, or a delegated/background session starting cancels the pending
+completion; a subagent's later stop does not resurrect it. This prevents a root completion from
+announcing that the pane is finished while delegated work is still running.
 
 Only a terminal, non-compaction assistant message qualifies. The integration retrieves that exact
 message with a two-second bound and includes only its ordered, non-empty visible text parts. It
