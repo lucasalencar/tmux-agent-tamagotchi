@@ -10,10 +10,16 @@ TAMA_PRIORITY_COUNTS_READY='no'
 # Snapshots all unique tmux window ids and whether their Priority value is nonempty.
 # The marker keeps arbitrary option data, including newlines, outside the record format.
 # Resolve a failed tmux read before sorting so a missing server cannot look empty.
-tama_priority_records() {
+tama_priority_records() { # [session_id]
+  local session="${1:-}"
   local records
-  records="$(tmux_run list-windows -a \
-    -F "#{window_id} #{!=:#{${TAMA_WINDOW_PRIORITY_OPTION}},}" 2>/dev/null)" || return 1
+  if [ -n "$session" ]; then
+    records="$(tmux_run list-windows -t "$session" \
+      -F "#{window_id} #{!=:#{${TAMA_WINDOW_PRIORITY_OPTION}},}" 2>/dev/null)" || return 1
+  else
+    records="$(tmux_run list-windows -a \
+      -F "#{window_id} #{!=:#{${TAMA_WINDOW_PRIORITY_OPTION}},}" 2>/dev/null)" || return 1
+  fi
   printf '%s\n' "$records" | LC_ALL=C sort -u
 }
 
@@ -24,7 +30,7 @@ tama_priority_counts() {
   [ "$TAMA_PRIORITY_COUNTS_READY" = no ] || return 0
   TAMA_TOTAL_WINDOW_COUNT=0
   TAMA_PRIORITY_WINDOW_COUNT=0
-  records="$(tama_priority_records)" || records=''
+  records="$(tama_priority_records '')" || records=''
 
   while IFS= read -r record; do
     [ -n "$record" ] || continue
