@@ -205,21 +205,27 @@ tama_log_effect() { # <event> <operation> <effect-id> <outcome> [start] [reason]
     --arg operation "$operation" --arg outcome "$outcome" --arg reason "$reason"
 }
 
-tama_log_attention_decision() { # <pane> <window> <priority> <flag> <notification> <eligible>
+tama_log_attention_decision() { # <pane> <window> <priority> <flag> <notification> <eligible> [flag-active] [notification-pending]
   local pane_id="$1" window_id="$2" priority="$3" flag="$4" notification="$5"
   local priority_json=false flag_json=false notification_json=false outcome=skipped reason=attention_not_eligible
+  local flag_active_json=false notification_pending_json=false
   [ -n "$priority" ] && priority_json=true
   [ "$flag" = yes ] && flag_json=true
   [ "$notification" = yes ] && notification_json=true
+  [ -n "${7:-}" ] && flag_active_json=true
+  [ -n "${8:-}" ] && notification_pending_json=true
   if [ "$6" = yes ]; then outcome=applied; reason=''; fi
   # shellcheck disable=SC2016 # jq variables expand inside jq, not the shell
   tama_log_emit decision.made "${TAMA_LOG_OPERATION_ID:-o-$$-${RANDOM:-0}}" \
     "${TAMA_LOG_PARENT_OPERATION_ID:-}" '' '
       {operation: "attention_policy", outcome: $outcome,
        pane_id: $pane_id, window_id: $window_id, priority: $priority,
-       flag_eligible: $flag_eligible, notification_eligible: $notification_eligible} +
+       flag_eligible: $flag_eligible, notification_eligible: $notification_eligible,
+       flag_active: $flag_active, notification_pending: $notification_pending} +
       (if $reason == "" then {} else {reason: $reason} end)' \
     --arg pane_id "$pane_id" --arg window_id "$window_id" --argjson priority "$priority_json" \
     --arg outcome "$outcome" --arg reason "$reason" --argjson flag_eligible "$flag_json" \
-    --argjson notification_eligible "$notification_json"
+    --argjson notification_eligible "$notification_json" \
+    --argjson flag_active "$flag_active_json" \
+    --argjson notification_pending "$notification_pending_json"
 }

@@ -32,7 +32,8 @@ deliver() { # <target> <agent_name> <message>
 
   tama_attention_is_eligible "$flag" "$notification" && eligible=yes
   tama_log_attention_decision "$TAMA_WINDOW_PANE_ID" "$TAMA_WINDOW_ID" \
-    "$TAMA_WINDOW_PRIORITY" "$flag" "$notification" "$eligible"
+    "$TAMA_WINDOW_PRIORITY" "$flag" "$notification" "$eligible" \
+    "$TAMA_WINDOW_FLAG" "$TAMA_WINDOW_NOTIFICATION_PENDING"
 
   if [ "$eligible" != yes ]; then
     tama_log_command_result skipped
