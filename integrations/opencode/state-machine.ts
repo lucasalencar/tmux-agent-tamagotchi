@@ -6,7 +6,7 @@ export type LifecycleEvent =
   | { type: "session-created"; sessionId: string; kind: SessionKind }
   | { type: "session-deleted"; sessionId: string; kind: SessionKind }
   | { type: "session-status"; sessionId: string; kind: SessionKind; status: SessionStatus }
-  | { type: "user-message"; sessionId: string; kind: SessionKind }
+  | { type: "user-message"; sessionId: string; kind: SessionKind; messageId: string }
   | { type: "session-error"; sessionId: string; kind: SessionKind; message?: string }
   | {
       type: "terminal-assistant-message"
@@ -34,6 +34,7 @@ export type LifecycleState = Readonly<{
   activeDelegatedSessions: ReadonlySet<string>
   terminalAssistantMessages: ReadonlyMap<string, string>
   completedRootMessages: ReadonlyMap<string, string>
+  rootUserMessages: ReadonlyMap<string, string>
   paneStatePublished: boolean
 }>
 
@@ -50,6 +51,7 @@ export function createLifecycleState(): LifecycleState {
     activeDelegatedSessions: new Set(),
     terminalAssistantMessages: new Map(),
     completedRootMessages: new Map(),
+    rootUserMessages: new Map(),
     paneStatePublished: false,
   }
 }
@@ -76,6 +78,7 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
   const activeDelegatedSessions = new Set(state.activeDelegatedSessions)
   const terminalAssistantMessages = new Map(state.terminalAssistantMessages)
   const completedRootMessages = new Map(state.completedRootMessages)
+  const rootUserMessages = new Map(state.rootUserMessages)
   let delegatedEffect: StateMachineEffect | undefined
   let completionEffect: StateMachineEffect | undefined
   if (event.type === "permission-asked") {
@@ -89,6 +92,7 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
       roots.delete(event.sessionId)
       terminalAssistantMessages.delete(event.sessionId)
       completedRootMessages.delete(event.sessionId)
+      rootUserMessages.delete(event.sessionId)
     } else if (activeDelegatedSessions.delete(event.sessionId)) {
       delegatedEffect = { type: "subagent-stop", sessionId: event.sessionId }
     }
@@ -110,9 +114,13 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
     }
   } else if (event.type === "user-message") {
     if (event.kind === "root") {
-      roots.set(event.sessionId, "running")
-      terminalAssistantMessages.delete(event.sessionId)
-      completedRootMessages.delete(event.sessionId)
+      const duplicate = rootUserMessages.get(event.sessionId) === event.messageId
+      rootUserMessages.set(event.sessionId, event.messageId)
+      if (!duplicate) {
+        roots.set(event.sessionId, "running")
+        terminalAssistantMessages.delete(event.sessionId)
+        completedRootMessages.delete(event.sessionId)
+      }
     }
   } else if (event.type === "terminal-assistant-message") {
     const current = roots.get(event.sessionId)
@@ -188,6 +196,7 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
       activeDelegatedSessions,
       terminalAssistantMessages,
       completedRootMessages,
+      rootUserMessages,
       paneStatePublished: state.paneStatePublished || shouldPublish,
     },
     effects,

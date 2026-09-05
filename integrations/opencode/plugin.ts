@@ -41,7 +41,19 @@ export function createTmuxAgentTamagotchiPlugin(dependencies: PluginDependencies
                 ? { parentID: session.parentID }
                 : {}),
             }
-          : undefined
+            : undefined
+      },
+      lookupLatestMessage: async (sessionId) => {
+        const response = await input.client.session.messages({
+          path: { id: sessionId },
+          query: { directory: input.directory, limit: 50 },
+        })
+        const messages = response.data ?? []
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+          const info = messages[index]?.info as { role?: string } | undefined
+          if (info?.role === "assistant") return info as never
+        }
+        return undefined
       },
       runEffect: async (effect) => {
         scheduler.handle(effect)

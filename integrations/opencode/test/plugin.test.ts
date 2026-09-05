@@ -241,6 +241,50 @@ describe("wired plugin", () => {
     ])
   })
 
+  test("recovers completion from the latest message when idle has no message event", async () => {
+    const clock = new FakeClock()
+    const commandCalls: string[][] = []
+    const plugin = createTmuxAgentTamagotchiPlugin({
+      clock,
+      execute: async (argv) => {
+        commandCalls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+    const hooks = await plugin(fakePluginInput(
+      async ({ path }) => ({ id: path.id }),
+      async ({ path }) => ({
+        info: { id: path.messageID, sessionID: path.id, role: "assistant" },
+        parts: [{ type: "text", text: "Recovered from the session." }],
+      }),
+      async () => [{
+        info: {
+          id: "message-a",
+          sessionID: "root-a",
+          role: "assistant",
+          time: { completed: 2 },
+          finish: "stop",
+        },
+        parts: [],
+      }],
+    ))
+
+    await hooks.event?.({ event: statusEvent("root-a", "busy") as never })
+    await hooks.event?.({ event: statusEvent("root-a", "idle") as never })
+
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+    ])
+    await clock.advance(10_000)
+
+    expect(tamaCalls(commandCalls)).toContainEqual([
+      "/plugin/bin/tama", "notify", "--", "OpenCode", "Recovered from the session.",
+    ])
+  })
+
   test("disposal clears the pane without allowing pending message work to notify", async () => {
     const clock = new FakeClock()
     const commandCalls: string[][] = []
@@ -466,6 +510,10 @@ function fakePluginInput(
     path: { id: string; messageID: string }
     query: { directory: string }
   }) => Promise<unknown> = async () => undefined,
+  lookupMessages: (options: {
+    path: { id: string }
+    query: { directory: string; limit?: number }
+  }) => Promise<unknown> = async () => [],
 ): PluginInput {
   return {
     directory: "/workspace",
@@ -479,6 +527,12 @@ function fakePluginInput(
           query: { directory: string }
         }) => ({
           data: await lookupMessage(options),
+        }),
+        messages: async (options: {
+          path: { id: string }
+          query: { directory: string; limit?: number }
+        }) => ({
+          data: await lookupMessages(options),
         }),
       },
     },

@@ -78,11 +78,41 @@ describe("root session activity", () => {
         effects: [],
       },
       {
-        event: { type: "user-message", sessionId: "root-a", kind: "root" },
+        event: { type: "user-message", sessionId: "root-a", kind: "root", messageId: "user-a" },
         paneState: "running",
         effects: [{ type: "pane-state", state: "running" }],
       },
     ])
+  })
+
+  test("a duplicate user message update after idle does not restart the root", () => {
+    const created = reduceLifecycle(createLifecycleState(), {
+      type: "user-message",
+      sessionId: "root-a",
+      kind: "root",
+      messageId: "user-a",
+    })
+    const busy = reduceLifecycle(created.state, {
+      type: "session-status",
+      sessionId: "root-a",
+      kind: "root",
+      status: "busy",
+    })
+    const idle = reduceLifecycle(busy.state, {
+      type: "session-status",
+      sessionId: "root-a",
+      kind: "root",
+      status: "idle",
+    })
+    const duplicate = reduceLifecycle(idle.state, {
+      type: "user-message",
+      sessionId: "root-a",
+      kind: "root",
+      messageId: "user-a",
+    } as LifecycleEvent)
+
+    expect(duplicate.state.paneState).toBe("idle")
+    expect(duplicate.effects).toEqual([])
   })
 
   test("a root error clears when the session reports any status after resuming", () => {

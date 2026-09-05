@@ -93,6 +93,7 @@ describe("OpenCode event adapter", () => {
       type: "user-message",
       sessionId: "root-a",
       kind: "root",
+      messageId: "user-a",
     })
     await expect(adapter.adapt({
       type: "message.updated",
@@ -139,6 +140,30 @@ describe("OpenCode event adapter", () => {
       sessionId: "root-a",
       kind: "root",
       status: "idle",
+    })
+  })
+
+  test("recovers the completed assistant message when idle has no message event", async () => {
+    const adapter = createEventAdapter({
+      lookupSession: async () => ({ id: "root-a" }),
+      lookupLatestMessage: async () => ({
+        id: "message-a",
+        sessionID: "root-a",
+        role: "assistant",
+        time: { completed: 2 },
+        finish: "stop",
+      }),
+    })
+
+    await expect(adapter.adapt({
+      type: "session.status",
+      properties: { sessionID: "root-a", status: { type: "idle" } },
+    })).resolves.toEqual({
+      type: "terminal-assistant-message",
+      sessionId: "root-a",
+      kind: "root",
+      messageId: "message-a",
+      finish: "stop",
     })
   })
 

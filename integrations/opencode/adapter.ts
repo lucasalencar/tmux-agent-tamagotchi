@@ -5,8 +5,18 @@ export type SessionInfo = Readonly<{
   parentID?: string
 }>
 
+export type SessionMessageInfo = Readonly<{
+  id: string
+  sessionID: string
+  role: string
+  summary?: boolean
+  time?: Readonly<{ completed?: number }>
+  finish?: string
+}>
+
 export type EventAdapterDependencies = Readonly<{
   lookupSession(sessionId: string): Promise<SessionInfo | undefined>
+  lookupLatestMessage?(sessionId: string): Promise<SessionMessageInfo | undefined>
 }>
 
 export type EventAdapter = Readonly<{
@@ -66,6 +76,22 @@ export function createEventAdapter(dependencies: EventAdapterDependencies): Even
         return undefined
       }
       const kind = await classify(sessionId)
+      if (kind === "root" && status === "idle") {
+        try {
+          const latest = await dependencies.lookupLatestMessage?.(sessionId)
+          if (latest && isTerminalAssistant(latest, sessionId)) {
+            return {
+              type: "terminal-assistant-message",
+              sessionId,
+              kind,
+              messageId: latest.id,
+              ...(typeof latest.finish === "string" ? { finish: latest.finish } : {}),
+            }
+          }
+        } catch {
+          // An optional message lookup cannot block lifecycle state updates.
+        }
+      }
       return kind ? { type: "session-status", sessionId, kind, status } : undefined
     }
     if (event.type === "permission.asked" || event.type === "permission.updated") {
@@ -99,16 +125,9 @@ export function createEventAdapter(dependencies: EventAdapterDependencies): Even
       const kind = await classify(info.sessionID)
       if (!kind) return undefined
       if (info.role === "user") {
-        return { type: "user-message", sessionId: info.sessionID, kind }
+        return { type: "user-message", sessionId: info.sessionID, kind, messageId: info.id }
       }
-      if (
-        info.role !== "assistant"
-        || info.summary === true
-        || !isRecord(info.time)
-        || typeof info.time.completed !== "number"
-      ) {
-        return undefined
-      }
+      if (!isTerminalAssistant(info, info.sessionID)) return undefined
       return kind
         ? {
             type: "terminal-assistant-message",
@@ -151,4 +170,16 @@ function errorMessage(value: unknown): string | undefined {
   if (!isRecord(value)) return undefined
   if (isIdentifier(value.message)) return value.message
   return isRecord(value.data) && isIdentifier(value.data.message) ? value.data.message : undefined
+}
+
+function isTerminalAssistant(
+  info: SessionMessageInfo | Record<string, unknown>,
+  sessionId: string,
+): info is SessionMessageInfo {
+  return info.role === "assistant"
+    && isIdentifier(info.id)
+    && info.sessionID === sessionId
+    && info.summary !== true
+    && isRecord(info.time)
+    && typeof info.time.completed === "number"
 }
