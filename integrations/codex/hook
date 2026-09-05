@@ -3,14 +3,16 @@
 
 set -o nounset
 
+# Checked before logger loading so a direct invocation with TAMA_LOG_FILE set
+# cannot abort on an unset TAMA_PLUGIN_DIR under nounset instead of staying silent.
+[ -n "${TAMA_BIN:-}" ] || exit 0
+
 if [ -n "${TAMA_LOG_FILE:-}" ]; then
   # shellcheck source=lib/log.sh
   . "$TAMA_PLUGIN_DIR/lib/log.sh"
 else
   tama_log_integration() { :; }
 fi
-
-[ -n "${TAMA_BIN:-}" ] || exit 0
 
 TAMA_CODEX_AGENT='codex'
 TAMA_CODEX_PAYLOAD=''

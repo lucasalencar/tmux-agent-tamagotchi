@@ -17,17 +17,19 @@
 
 set -o nounset
 
+# Exported by bin/tama, which is the only thing that runs this file. Missing means
+# something invoked the adapter directly, which is not a user's mistake to be
+# shouted about from inside a turn. Checked before logger loading so a direct
+# invocation with TAMA_LOG_FILE set cannot abort on an unset TAMA_PLUGIN_DIR
+# under nounset instead of staying silent.
+[ -n "${TAMA_BIN:-}" ] || exit 0
+
 if [ -n "${TAMA_LOG_FILE:-}" ]; then
   # shellcheck source=lib/log.sh
   . "$TAMA_PLUGIN_DIR/lib/log.sh"
 else
   tama_log_integration() { :; }
 fi
-
-# Exported by bin/tama, which is the only thing that runs this file. Missing means
-# something invoked the adapter directly, which is not a user's mistake to be
-# shouted about from inside a turn.
-[ -n "${TAMA_BIN:-}" ] || exit 0
 
 TAMA_CC_AGENT='claude-code'
 
