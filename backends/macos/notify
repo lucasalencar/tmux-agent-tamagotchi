@@ -9,12 +9,8 @@
 # `$TAMA_CLICK`, which the core composed (ADR-0006) and this file must not add to
 # beyond making it runnable — see the `PATH` note below.
 #
-# Backgrounded, deliberately. This runs inside an agent's hook, on the turn the user is
-# waiting for, and there is no timeout to save them: `terminal-notifier` talks to the
-# notification server and has been seen to take the better part of a second the first
-# time it runs after a login. The banner is worth nothing if it costs the turn, and
-# nothing here has an answer anybody waits for — the exit status of `notify` is
-# discarded by the contract.
+# The core watchdog bounds terminal-notifier while keeping notify ordered before a
+# later dismiss.
 
 set -o nounset
 
@@ -59,7 +55,7 @@ main() {
       "export PATH='/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin'; $TAMA_CLICK"
   fi
 
-  "$TAMA_MACOS_NOTIFIER" "$@" >/dev/null 2>&1 &
+  "$TAMA_MACOS_NOTIFIER" "$@" >/dev/null 2>&1
 }
 
 main "$@"

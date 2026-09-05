@@ -18,6 +18,11 @@
 # naming the files after the flags is what makes them readable from a test.
 
 tama_previous=''
+[ -z "${TAMA_NOTIFIER_GATE:-}" ] || {
+  : >"$TAMA_NOTIFIER_GATE.started"
+  while [ ! -e "$TAMA_NOTIFIER_GATE.release" ]; do sleep 0.05; done
+}
+[ -z "${TAMA_NOTIFIER_DELAY:-}" ] || sleep "$TAMA_NOTIFIER_DELAY"
 for tama_argument in "$@"; do
   case "$tama_previous" in
     -?*) printf '%s' "$tama_argument" >"$TAMA_NOTIFIER_DIR/${tama_previous#-}" ;;

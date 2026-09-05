@@ -78,9 +78,8 @@ notify_send_on_path() {
   export PATH
 }
 
-# The plugin backgrounds notify-send on purpose — a daemon that is slow to answer must
-# not cost an agent's turn — so every assertion about it has to be an eventual one or it
-# is timing noise.
+# Keep assertions tolerant of the desktop command recording its call near the end of
+# the bounded invocation.
 wait_for_notify_send() {
   local waited=0
   while [ "$(wc -l <"$TAMA_NOTIFY_SEND_DIR/calls")" -eq 0 ]; do
@@ -148,6 +147,21 @@ agent_pane_elsewhere() {
   # carries the core's per-window group — so "one banner per window" is the same promise
   # here as on a Mac.
   assert_notify_send_value hint.x-canonical-private-synchronous "tmux-window-$window"
+}
+
+@test "notify-send finishes before the notification command returns" {
+  use_libnotify_backend
+  export TAMA_NOTIFY_SEND_GATE="$BATS_TEST_TMPDIR/notify-send-gate"
+  local pane pid
+  pane="$(agent_pane_elsewhere)"
+
+  "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane" &
+  pid=$!
+  wait_until_file_exists "$TAMA_NOTIFY_SEND_GATE.started"
+  assert_process_running "$pid"
+  : >"$TAMA_NOTIFY_SEND_GATE.release"
+  assert_process_succeeds_within "$pid" 3 'notify waiting for notify-send'
+  [ -e "$TAMA_NOTIFY_SEND_DIR/message" ]
 }
 
 @test "banners replace per window: same window, same hint; another window, another" {

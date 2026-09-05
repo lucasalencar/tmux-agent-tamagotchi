@@ -18,11 +18,8 @@
 # — and `@tama_notify_command` is how a user whose desktop needs something else replaces
 # this capability wholesale.
 #
-# Backgrounded, deliberately. This runs inside an agent's hook, on the turn the user is
-# waiting for, and there is no timeout to save them: `notify-send` speaks D-Bus, and a
-# daemon that is slow, D-Bus-activated, or not running at all is a wait nobody set a
-# bound on. The banner is worth nothing if it costs the turn, and nothing here has an
-# answer anybody waits for — the exit status of `notify` is discarded by the contract.
+# The core watchdog bounds `notify-send` while keeping notify ordered before a later
+# dismiss.
 #
 # It needs a session bus to talk to: `notify-send` finds one through
 # `$DBUS_SESSION_BUS_ADDRESS`, which an agent's hook inherits from the agent, which
@@ -65,7 +62,7 @@ main() {
   # `--` first, then the two values: a message is arbitrary text an agent wrote and may
   # perfectly well begin with a dash, which without this would be read as a flag of
   # notify-send's own.
-  "$TAMA_LIBNOTIFY_SEND" "$@" -- "$title" "$message" >/dev/null 2>&1 &
+  "$TAMA_LIBNOTIFY_SEND" "$@" -- "$title" "$message" >/dev/null 2>&1
 }
 
 main "$@"

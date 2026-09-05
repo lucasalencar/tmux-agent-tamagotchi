@@ -8,9 +8,8 @@
 # group, which is exactly one here: the core groups per window and a newer banner
 # replaces the older one.
 #
-# Backgrounded for the same reason `notify` is — this runs from the user selecting a
-# window, through a tmux hook, and a hook that takes a quarter of a second is a tmux
-# that feels slow to move around in.
+# The core watchdog bounds this synchronous removal so a later sequential delivery
+# cannot be overtaken by work left behind here.
 
 set -o nounset
 
@@ -33,7 +32,7 @@ main() {
 
   tama_macos_notifier || exit 0
 
-  "$TAMA_MACOS_NOTIFIER" -remove "$group" >/dev/null 2>&1 &
+  "$TAMA_MACOS_NOTIFIER" -remove "$group" >/dev/null 2>&1
 }
 
 main "$@"
