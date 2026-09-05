@@ -42,6 +42,38 @@ describe("OpenCode runtime", () => {
     }))
   })
 
+  test("logs malformed known events as malformed rather than unknown", async () => {
+    const observations: unknown[] = []
+    const runtime = createOpenCodeRuntime({
+      loggingEnabled: true,
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      observeEvent: async (observation) => {
+        observations.push(observation)
+      },
+      runEffect: async () => undefined,
+      clearPane: async () => undefined,
+    })
+
+    await runtime.event({
+      type: "session.error",
+      properties: { error: { data: { message: "boom" } } },
+    })
+    await runtime.event({
+      type: "session.error",
+      properties: { sessionID: "root-a", error: { data: { message: "boom" } } },
+    })
+
+    expect(observations).toContainEqual(expect.objectContaining({
+      event: "session.error",
+      outcome: "skipped",
+      reason: "malformed_event",
+    }))
+    expect(observations).toContainEqual(expect.objectContaining({
+      event: "session.error",
+      outcome: "applied",
+    }))
+  })
+
   test("serializes fire-and-forget callbacks behind slow classification", async () => {
     const lookup = deferred<{ id: string } | undefined>()
     const effects: StateMachineEffect[] = []

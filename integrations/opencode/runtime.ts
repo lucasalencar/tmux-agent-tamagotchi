@@ -46,16 +46,17 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
         : undefined
       const eventName = context ? observableEventName(event) : ""
       try {
-        const lifecycleEvent = await adapter.adapt(event)
-        if (!lifecycleEvent) {
+        const adaptation = await adapter.adapt(event)
+        if (adaptation.status !== "adapted") {
           if (context) await settle(() => dependencies.observeEvent?.({
             ...context,
             event: eventName,
             outcome: "skipped",
-            reason: eventName === "malformed" ? "malformed_event" : "unknown_event",
+            reason: adaptation.status === "malformed" ? "malformed_event" : "unknown_event",
           }))
           return
         }
+        const lifecycleEvent = adaptation.event
         if (context) await settle(() => dependencies.observeEvent?.({
           ...context,
           event: eventName,
