@@ -178,6 +178,10 @@ order. Running, waiting, and idle remain visible at zero; background, error, and
 are hidden at zero. An unsupported nonempty reported state appears under unknown with `?`
 as its default icon. Empty reported states are not agent panes and remain excluded.
 
+When the selected scope is `all`, the summary starts with a global marker: `◎` for the
+default glyphs, `@` for ASCII, or `🌎` for pets. The marker is derived while rendering and
+does not add another tmux configuration option. The `current` scope has no marker.
+
 Each bucket's `@tama_summary_show_<state>` option accepts `always`, `nonzero`, or `never`.
 The defaults are `always` for running, waiting, and idle, and `nonzero` for background,
 error, and unknown. An invalid value falls back to that bucket's default and `doctor`
@@ -205,11 +209,11 @@ bind-key G run-shell '#{q:@tama_bin} summary-scope --session #{q:session_id} tog
 
 Select an icon preset with `@tama_icon_set`:
 
-| Preset | Priority | running | waiting | background | idle | error | Flag |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Default (`glyphs`) | `★` | `●` | `◐` | `⚙` | `○` | `✕` | `!` |
-| ASCII (`ascii`) | `*` | `*` | `?` | `+` | `.` | `!` | `!` |
-| Pets (`pets`) | `⭐` | `🐥` | `🍼` | `🥚` | `😴` | `💀` | `!` |
+| Preset | Priority | running | waiting | background | idle | error | Flag | Global summary |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Default (`glyphs`) | `★` | `●` | `◐` | `⚙` | `○` | `✕` | `!` | `◎` |
+| ASCII (`ascii`) | `*` | `*` | `?` | `+` | `.` | `!` | `!` | `@` |
+| Pets (`pets`) | `⭐` | `🐥` | `🍼` | `🥚` | `😴` | `💀` | `!` | `🌎` |
 
 For example:
 

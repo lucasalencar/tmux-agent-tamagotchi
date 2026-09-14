@@ -76,7 +76,7 @@ arrange_stale_agent_pane() { # <pane>
   assert_equal "$(grep -cx -- "$all_client" "$TAMA_FAKE_TMUX_LOG")" 1
   assert_equal "$(grep -cx -- "$current_client" "$TAMA_FAKE_TMUX_LOG")" 0
   assert_equal "$("$PLUGIN_ROOT/bin/tama" summary "$(session_id linked-current)")" '● 1 ◐ 0 ○ 0'
-  assert_equal "$("$PLUGIN_ROOT/bin/tama" summary "$(session_id all-view)")" '● 1 ◐ 0 ○ 0'
+  assert_equal "$("$PLUGIN_ROOT/bin/tama" summary "$(session_id all-view)")" '◎ ● 1 ◐ 0 ○ 0'
 }
 
 @test "subagent and clear events refresh summaries only when their rendered state changes" {

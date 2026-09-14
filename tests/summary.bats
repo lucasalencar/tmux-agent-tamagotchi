@@ -155,7 +155,42 @@ session_id() {
 
   run "$PLUGIN_ROOT/bin/tama" summary "$target"
   assert_success
-  assert_equal "$output" '● 1 ◐ 1 ○ 0'
+  assert_equal "$output" '◎ ● 1 ◐ 1 ○ 0'
+}
+
+@test "all-sessions summary shows the global glyph and current summary does not" {
+  local target
+  target="$(session_id t)"
+  tmux_test_server_run set-option -t "$target" @tama_summary_scope all
+
+  run "$PLUGIN_ROOT/bin/tama" summary "$target"
+  assert_success
+  assert_equal "$output" '◎ ● 0 ◐ 0 ○ 0'
+
+  tmux_test_server_run set-option -t "$target" @tama_summary_scope current
+  run "$PLUGIN_ROOT/bin/tama" summary "$target"
+  assert_success
+  assert_equal "$output" '● 0 ◐ 0 ○ 0'
+}
+
+@test "the global summary glyph follows the selected icon preset" {
+  local target
+  target="$(session_id t)"
+  tmux_test_server_run set-option -t "$target" @tama_summary_scope all
+
+  run "$PLUGIN_ROOT/bin/tama" summary "$target"
+  assert_success
+  assert_equal "$output" '◎ ● 0 ◐ 0 ○ 0'
+
+  tmux_test_server_run set -g @tama_icon_set ascii
+  run "$PLUGIN_ROOT/bin/tama" summary "$target"
+  assert_success
+  assert_equal "$output" '@ * 0 ? 0 . 0'
+
+  tmux_test_server_run set -g @tama_icon_set pets
+  run "$PLUGIN_ROOT/bin/tama" summary "$target"
+  assert_success
+  assert_equal "$output" '🌎 🐥 0 🍼 0 😴 0'
 }
 
 @test "summary scope is isolated per session and invalid values fall back to current" {
@@ -173,7 +208,7 @@ session_id() {
 
   run "$PLUGIN_ROOT/bin/tama" summary "$first"
   assert_success
-  assert_equal "$output" '● 1 ◐ 1 ○ 0'
+  assert_equal "$output" '◎ ● 1 ◐ 1 ○ 0'
 
   run "$PLUGIN_ROOT/bin/tama" summary "$second"
   assert_success

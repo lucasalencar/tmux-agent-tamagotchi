@@ -126,7 +126,7 @@ EOF
 
   run "$PLUGIN_ROOT/bin/tama" summary "$target"
   assert_success
-  assert_equal "$output" '● 1 ◐ 0 ○ 0'
+  assert_equal "$output" '◎ ● 1 ◐ 0 ○ 0'
 }
 
 @test "summary-scope rejects incomplete, reordered, extra, and invalid arguments" {
@@ -166,5 +166,5 @@ EOF
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" summary "$target"
   assert_success
   [ -z "$stderr" ]
-  assert_equal "$output" '● 1 ◐ 0 ○ 0'
+  assert_equal "$output" '◎ ● 1 ◐ 0 ○ 0'
 }

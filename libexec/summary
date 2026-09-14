@@ -36,12 +36,9 @@ EOF
   return 0
 }
 
-tama_summary_records() { # <session id>
-  local session_id scope sessions session windows window_id panes pane_id read_status
+tama_summary_records() { # <session id> <scope>
+  local session_id="$1" scope="$2" sessions session windows window_id panes pane_id read_status
   local seen=''
-  session_id="$(tama_inventory_session_id "$1")" || return 1
-  [ -n "$session_id" ] || return 1
-  scope="$(tama_summary_scope "$session_id")" || return 1
   if [ "$scope" = 'all' ]; then
     sessions="$(tama_inventory_sessions)" || return 1
   else
@@ -132,9 +129,22 @@ main() {
     -*) die_usage 'summary needs a session id' ;;
   esac
 
-  local records state running=0 waiting=0 idle=0 background=0 error=0 unknown=0 unknown_icon
+  local session_id scope records state running=0 waiting=0 idle=0 background=0 error=0 unknown=0
+  local unknown_icon
   local prefix suffix bucket bucket_icon bucket_count
-  records="$(tama_summary_records "$1")" || {
+  session_id="$(tama_inventory_session_id "$1")" || {
+    tama_log_command_result failed
+    return 0
+  }
+  [ -n "$session_id" ] || {
+    tama_log_command_result failed
+    return 0
+  }
+  scope="$(tama_summary_scope "$session_id")" || {
+    tama_log_command_result failed
+    return 0
+  }
+  records="$(tama_summary_records "$session_id" "$scope")" || {
     tama_log_command_result failed
     return 0
   }
@@ -158,6 +168,7 @@ EOF
   TAMA_SUMMARY_SEPARATOR="$(tama_opt tama_summary_separator ' ')"
   suffix="$(tama_opt tama_summary_suffix '')"
   TAMA_SUMMARY_OUTPUT=''
+  [ "$scope" = 'all' ] && TAMA_SUMMARY_OUTPUT="$TAMA_GLYPH_GLOBAL"
   while IFS= read -r bucket; do
     case "$bucket" in
       running) bucket_icon="$TAMA_GLYPH_RUNNING" bucket_count="$running" ;;
