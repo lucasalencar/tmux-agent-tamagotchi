@@ -17,14 +17,19 @@ mkdir -p "$config_dir"
 tmp="$(mktemp "$config_dir/.opencode.json.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 
+# The v1 `plugin` file entry and the v2 `plugins` directory entry resolve to
+# the same dual entrypoint (index.ts): v1 calls the named export while v2
+# loads the default definition. Both keys are kept so one helper configures
+# mixed fleets; each OpenCode line reads only the key it understands.
 if [ -f "$config" ]; then
-  jq --arg plugin "$plugin" \
-    '.plugin = (((.plugin // []) + [$plugin]) | unique)' \
+  jq --arg plugin "$plugin" --arg plugindir "$integration_dir" \
+    '.plugin = (((.plugin // []) + [$plugin]) | unique)
+     | .plugins = (((.plugins // []) + [$plugindir]) | unique)' \
     "$config" >"$tmp"
   cp "$config" "$config.backup"
 else
-  jq -n --arg plugin "$plugin" \
-    '{"$schema":"https://opencode.ai/config.json","plugin":[$plugin]}' \
+  jq -n --arg plugin "$plugin" --arg plugindir "$integration_dir" \
+    '{"$schema":"https://opencode.ai/config.json","plugin":[$plugin],"plugins":[$plugindir]}' \
     >"$tmp"
 fi
 

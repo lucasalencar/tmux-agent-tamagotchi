@@ -5,7 +5,7 @@ import { TESTED_VERSIONS, type OpenCodeLifecycleEvent } from "../contract"
 test("keeps the recorded toolchain synchronized with the package manifest", async () => {
   const manifest = (await Bun.file(new URL("../package.json", import.meta.url)).json()) as {
     packageManager: string
-    tamagotchi: { testedOpenCode: string }
+    tamagotchi: { testedOpenCode: string; testedOpenCodeV2: string }
     devDependencies: Record<string, string>
   }
   const recordedVersions: Record<keyof typeof TESTED_VERSIONS, string> = TESTED_VERSIONS
@@ -14,6 +14,8 @@ test("keeps the recorded toolchain synchronized with the package manifest", asyn
     opencode: manifest.tamagotchi.testedOpenCode,
     plugin: manifest.devDependencies["@opencode-ai/plugin"],
     sdk: manifest.devDependencies["@opencode-ai/sdk"],
+    opencodeV2: manifest.tamagotchi.testedOpenCodeV2,
+    pluginV2: manifest.devDependencies["@opencode/plugin"],
     bun: manifest.packageManager.replace("bun@", ""),
     typescript: manifest.devDependencies.typescript,
   })

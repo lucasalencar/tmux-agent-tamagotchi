@@ -7,7 +7,7 @@ through the same public `tama` CLI used by the shell adapters; it does not use a
 or require a generated JavaScript build (ADR-0010).
 
 The integration is best effort and outside the plugin's stable version promise. It was verified
-against OpenCode 1.18.18 with Bun 1.3.14. Other OpenCode versions are not rejected, but an upstream
+against OpenCode 1.18.18 and OpenCode v2 2.0.10 with Bun 1.3.14. Other OpenCode versions are not rejected, but an upstream
 event or plugin API change may require an integration update.
 
 ## Configure the global plugin
@@ -49,6 +49,50 @@ An absolute `file://` URL is also accepted; URL-encode spaces and other special 
 using that form. Restart OpenCode after changing its configuration. For a project-only setup, put
 the same absolute plugin entry in `opencode.json` at that project's root instead of the global
 file. The global configuration above is the canonical recipe and is the recommended setup.
+
+## OpenCode v2
+
+OpenCode 2 loads plugin directories through a default export with an `id` and a `setup` function,
+configured under the plural `plugins` key. The same `index.ts` serves both lines: v1 keeps calling
+the named `TmuxAgentTamagotchi` export while v2 loads the default definition, whose `setup`
+subscribes to `ctx.event.subscribe()` and reads sessions through the v2 domain client. The v2
+modules are imported lazily so v1 hosts, which only provide `@opencode-ai/plugin`, keep loading
+the entrypoint untouched.
+
+With `jq` installed, run:
+
+```sh
+"$(tmux show -gqv @tama_bin)" setup opencode
+```
+
+The helper writes both keys: the v1 `plugin` file entry and the v2 `plugins` directory entry, so
+one invocation configures mixed fleets. Each OpenCode line reads only the key it understands. To
+configure v2 manually instead, merge the directory entry below into the `plugins` array:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    "/absolute/path/to/tmux-agent-tamagotchi/integrations/opencode"
+  ]
+}
+```
+
+Event coverage mirrors v1 except for two renamed sources: `session.error` arrives as
+`session.execution.failed`, and completion text is read back through `session.context` instead of
+the removed `message.updated` event and per-message fetch. The five-second completion delay,
+permission tracking, delegated subagent tracking, and disposal clearing behave as described above.
+
+## Pane attribution under v2
+
+OpenCode v2 runs plugins in its background service, so the integration can no longer inherit the
+agent pane from its own process environment the way v1 did. Instead, v2 instantiates one plugin
+per location: each instance only tracks the sessions in its own directory and reports them to the
+tmux pane running OpenCode in that directory, passing an explicit `--pane` to every `tama`
+invocation. The first matching pane wins when several share a directory, and a plain shell sitting
+in the same directory never receives agent states. When no location is available or no OpenCode
+pane is found, the integration falls back to the process pane, which under a shared service is the
+pane the server started in.
 
 ## What it reports
 
@@ -113,6 +157,8 @@ toggle.
 | OpenCode | 1.18.18 |
 | `@opencode-ai/plugin` | 1.18.18 |
 | `@opencode-ai/sdk` | 1.18.18 |
+| OpenCode v2 | 2.0.10 |
+| `@opencode/plugin` | 2.0.10 |
 | Bun | 1.3.14 |
 | TypeScript | 5.8.2 |
 

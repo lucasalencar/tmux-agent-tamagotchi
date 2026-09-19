@@ -15,6 +15,7 @@ export type ProcessExecutor = (
 export type EffectRunnerDependencies = Readonly<{
   execute: ProcessExecutor
   onCompletionEligible?(completion: CompletionReference): Promise<void>
+  resolvePane?: () => Promise<string | undefined>
 }>
 
 export type EffectRunner = Readonly<{
@@ -36,24 +37,37 @@ const GENERIC_ERROR = "OpenCode session failed"
 const GENERIC_COMPLETION = "OpenCode finished its turn"
 
 export function createEffectRunner(dependencies: EffectRunnerDependencies): EffectRunner {
+  async function resolvePane(): Promise<string | undefined> {
+    try {
+      const pane = await dependencies.resolvePane?.()
+      return pane || undefined
+    } catch {
+      return undefined
+    }
+  }
+
   async function invokeTama(
     args: readonly string[],
     integrationEvent: string,
     context?: LogContext,
     classifyEffect = true,
+    pane?: string,
   ): Promise<void> {
     try {
       const resolved = await dependencies.execute(["tmux", "show", "-gqv", "@tama_bin"])
       if (resolved.exitCode !== 0) return
       const executable = parseExecutable(resolved.stdout)
       if (!executable) return
-      await dependencies.execute([executable, ...args], {
-        ...(classifyEffect ? {
-          TAMA_LOG_INTEGRATION: "opencode",
-          TAMA_LOG_INTEGRATION_EVENT: integrationEvent,
-        } : {}),
-        ...(context ? { TAMA_LOG_CORRELATION_ID: context.correlationId } : {}),
-      })
+      await dependencies.execute(
+        pane ? [executable, ...args, "--pane", pane] : [executable, ...args],
+        {
+          ...(classifyEffect ? {
+            TAMA_LOG_INTEGRATION: "opencode",
+            TAMA_LOG_INTEGRATION_EVENT: integrationEvent,
+          } : {}),
+          ...(context ? { TAMA_LOG_CORRELATION_ID: context.correlationId } : {}),
+        },
+      )
     } catch {
       // An integration must never make OpenCode fail because tmux or tama is unavailable.
     }
@@ -61,9 +75,10 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
 
   async function run(effect: StateMachineEffect, context?: LogContext): Promise<void> {
     try {
+      const pane = await resolvePane()
       switch (effect.type) {
         case "pane-state":
-          await invokeTama(["state", effect.state, AGENT_NAME], effect.type, context)
+          await invokeTama(["state", effect.state, AGENT_NAME], effect.type, context, true, pane)
           break
         case "root-error":
           await invokeTama([
@@ -71,11 +86,11 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
             "--",
             AGENT_NAME,
             sanitizeNotificationText(effect.message ?? "") ?? GENERIC_ERROR,
-          ], effect.type, context)
+          ], effect.type, context, true, pane)
           break
         case "subagent-start":
         case "subagent-stop":
-          await invokeTama(["state", effect.type, "--", effect.sessionId], effect.type, context)
+          await invokeTama(["state", effect.type, "--", effect.sessionId], effect.type, context, true, pane)
           break
         case "completion-eligible":
           await dependencies.onCompletionEligible?.({
@@ -99,13 +114,19 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
       ...(observation.reason ? [observation.reason] : []),
     ], observation.event, observation, false),
     run,
-    notify: (message, context) => invokeTama([
-      "notify",
-      "--",
-      AGENT_NAME,
-      sanitizeNotificationText(message) ?? GENERIC_COMPLETION,
-    ], "completion-notification", context),
-    clearPane: () => invokeTama(["state", "clear"], "dispose"),
+    notify: async (message, context) => {
+      const pane = await resolvePane()
+      await invokeTama([
+        "notify",
+        "--",
+        AGENT_NAME,
+        sanitizeNotificationText(message) ?? GENERIC_COMPLETION,
+      ], "completion-notification", context, true, pane)
+    },
+    clearPane: async () => {
+      const pane = await resolvePane()
+      await invokeTama(["state", "clear"], "dispose", undefined, true, pane)
+    },
   }
 }
 

@@ -62,6 +62,9 @@ PY
   run jq -e --arg plugin "$PROJECT_ROOT/integrations/opencode/index.ts" \
     '.plugin == [$plugin]' "$config"
   assert_success
+  run jq -e --arg plugindir "$PROJECT_ROOT/integrations/opencode" \
+    '.plugins == [$plugindir]' "$config"
+  assert_success
   [ -f "$config.backup" ]
 }
 

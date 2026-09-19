@@ -4,10 +4,10 @@ import type { Plugin, PluginInput } from "@opencode-ai/plugin"
 import { createTmuxAgentTamagotchiPlugin } from "../plugin"
 import { FakeClock } from "./fake-clock"
 
-test("the entrypoint exposes exactly one loadable plugin function", async () => {
+test("the entrypoint exposes the v1 plugin function and the v2 default definition", async () => {
   const entrypoint = await import("../index")
 
-  expect(Object.keys(entrypoint)).toEqual(["TmuxAgentTamagotchi"])
+  expect(Object.keys(entrypoint).sort()).toEqual(["TmuxAgentTamagotchi", "default"])
   expect(typeof entrypoint.TmuxAgentTamagotchi).toBe("function")
 
   const plugin: Plugin = entrypoint.TmuxAgentTamagotchi
@@ -16,6 +16,9 @@ test("the entrypoint exposes exactly one loadable plugin function", async () => 
   expect(Object.keys(hooks).sort()).toEqual(["dispose", "event"])
   await expect(hooks.event?.({ event: { type: "server.connected", properties: {} } })).resolves.toBeUndefined()
   await expect(hooks.dispose?.()).resolves.toBeUndefined()
+
+  expect(entrypoint.default.id).toBe("tmux-agent-tamagotchi")
+  expect(typeof entrypoint.default.setup).toBe("function")
 })
 
 describe("wired plugin", () => {

@@ -3,20 +3,21 @@ export type SessionKind = "root" | "delegated"
 export type SessionStatus = "busy" | "retry" | "idle"
 
 export type LifecycleEvent =
-  | { type: "session-created"; sessionId: string; kind: SessionKind }
-  | { type: "session-deleted"; sessionId: string; kind: SessionKind }
-  | { type: "session-status"; sessionId: string; kind: SessionKind; status: SessionStatus }
-  | { type: "user-message"; sessionId: string; kind: SessionKind; messageId: string }
-  | { type: "session-error"; sessionId: string; kind: SessionKind; message?: string }
+  | { type: "session-created"; sessionId: string; kind: SessionKind; directory?: string }
+  | { type: "session-deleted"; sessionId: string; kind: SessionKind; directory?: string }
+  | { type: "session-status"; sessionId: string; kind: SessionKind; status: SessionStatus; directory?: string }
+  | { type: "user-message"; sessionId: string; kind: SessionKind; messageId: string; directory?: string }
+  | { type: "session-error"; sessionId: string; kind: SessionKind; message?: string; directory?: string }
   | {
       type: "terminal-assistant-message"
       sessionId: string
       kind: SessionKind
       messageId: string
       finish?: string
+      directory?: string
     }
-  | { type: "permission-asked"; requestId: string; sessionId: string; kind: SessionKind }
-  | { type: "permission-replied"; requestId: string }
+  | { type: "permission-asked"; requestId: string; sessionId: string; kind: SessionKind; directory?: string }
+  | { type: "permission-replied"; requestId: string; directory?: string }
 
 export type StateMachineEffect =
   | { type: "pane-state"; state: PaneState }

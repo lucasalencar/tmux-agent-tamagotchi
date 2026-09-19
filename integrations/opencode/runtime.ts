@@ -1,9 +1,10 @@
-import { createEventAdapter, type EventAdapterDependencies } from "./adapter"
+import { createEventAdapter, type EventAdapter, type EventAdapterDependencies } from "./adapter"
 import { createLifecycleState, reduceLifecycle, type StateMachineEffect } from "./state-machine"
 import type { LogContext, LogObservation } from "./effect-runner"
 
 export type OpenCodeRuntimeDependencies = EventAdapterDependencies & Readonly<{
   loggingEnabled?: boolean
+  createAdapter?: (dependencies: EventAdapterDependencies) => EventAdapter
   observeEvent?(observation: LogObservation): Promise<void>
   runEffect(effect: StateMachineEffect, context?: LogContext): Promise<void>
   clearPane(): Promise<void>
@@ -19,7 +20,7 @@ export type OpenCodeRuntime = Readonly<{
 type Phase = "active" | "draining" | "disposed"
 
 export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies): OpenCodeRuntime {
-  const adapter = createEventAdapter(dependencies)
+  const adapter = (dependencies.createAdapter ?? createEventAdapter)(dependencies)
   let state = createLifecycleState()
   let phase: Phase = "active"
   let tail = Promise.resolve()

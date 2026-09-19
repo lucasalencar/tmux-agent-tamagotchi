@@ -147,4 +147,46 @@ describe("tama effect runner", () => {
     expect(Array.from(messages[0]).length).toBeLessThanOrEqual(500)
     expect(messages[1]).toBe("OpenCode session failed")
   })
+
+  test("targets an explicitly resolved pane and falls back when resolution fails", async () => {
+    const calls: string[][] = []
+    const runner = createEffectRunner({
+      execute: async (argv) => {
+        calls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+      resolvePane: async () => "%pane-a",
+    })
+
+    await runner.run({ type: "pane-state", state: "running" })
+    await runner.notify("Done.")
+    await runner.clearPane()
+
+    expect(calls.filter((argv) => argv[0] !== "tmux")).toEqual([
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", "%pane-a"],
+      ["/plugin/bin/tama", "notify", "--", "OpenCode", "Done.", "--pane", "%pane-a"],
+      ["/plugin/bin/tama", "state", "clear", "--pane", "%pane-a"],
+    ])
+
+    const fallbackCalls: string[][] = []
+    const fallback = createEffectRunner({
+      execute: async (argv) => {
+        fallbackCalls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+      resolvePane: async () => {
+        throw new Error("tmux unavailable")
+      },
+    })
+
+    await fallback.run({ type: "pane-state", state: "running" })
+
+    expect(fallbackCalls.filter((argv) => argv[0] !== "tmux")).toEqual([
+      ["/plugin/bin/tama", "state", "running", "OpenCode"],
+    ])
+  })
 })
