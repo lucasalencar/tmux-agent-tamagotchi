@@ -46,6 +46,39 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
     return undefined
   }
 
+  async function adaptSessionStatus(
+    sessionId: string,
+    status: "busy" | "retry" | "idle",
+    provenance: { directory?: string },
+  ): Promise<Adaptation> {
+    const kind = await classify(sessionId)
+    if (!kind) return { status: "malformed" }
+    if (kind === "root" && status === "idle") {
+      try {
+        const latest = await dependencies.lookupLatestMessage?.(sessionId)
+        if (latest && isTerminalAssistant(latest, sessionId)) {
+          return {
+            status: "adapted",
+            event: {
+              type: "terminal-assistant-message",
+              sessionId,
+              kind,
+              messageId: latest.id,
+              ...(typeof latest.finish === "string" ? { finish: latest.finish } : {}),
+              ...provenance,
+            },
+          }
+        }
+      } catch {
+        // An optional message lookup cannot block lifecycle state updates.
+      }
+    }
+    return {
+      status: "adapted",
+      event: { type: "session-status", sessionId, kind, status, ...provenance },
+    }
+  }
+
   async function adapt(event: unknown): Promise<Adaptation> {
     if (!isRecord(event) || typeof event.type !== "string" || !isRecord(event.data)) {
       return { status: "malformed" }
@@ -87,32 +120,19 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
       if (status !== "busy" && status !== "retry" && status !== "idle") {
         return { status: "unknown" }
       }
-      const kind = await classify(data.sessionID)
-      if (!kind) return { status: "malformed" }
-      if (kind === "root" && status === "idle") {
-        try {
-          const latest = await dependencies.lookupLatestMessage?.(data.sessionID)
-          if (latest && isTerminalAssistant(latest, data.sessionID)) {
-            return {
-              status: "adapted",
-              event: {
-                type: "terminal-assistant-message",
-                sessionId: data.sessionID,
-                kind,
-                messageId: latest.id,
-                ...(typeof latest.finish === "string" ? { finish: latest.finish } : {}),
-                ...provenance,
-              },
-            }
-          }
-        } catch {
-          // An optional message lookup cannot block lifecycle state updates.
-        }
-      }
-      return {
-        status: "adapted",
-        event: { type: "session-status", sessionId: data.sessionID, kind, status, ...provenance },
-      }
+      return adaptSessionStatus(data.sessionID, status, provenance)
+    }
+    if (
+      event.type === "session.execution.started"
+      || event.type === "session.execution.succeeded"
+      || event.type === "session.execution.interrupted"
+    ) {
+      // Successful v2 turns run on execution events without session.status or
+      // session.idle transitions: started means the turn is running while
+      // succeeded and interrupted both leave the session idle.
+      if (!isIdentifier(data.sessionID)) return { status: "malformed" }
+      const status = event.type === "session.execution.started" ? "busy" : "idle"
+      return adaptSessionStatus(data.sessionID, status, provenance)
     }
     if (event.type === "permission.asked") {
       if (!isIdentifier(data.id) || !isIdentifier(data.sessionID)) return { status: "malformed" }

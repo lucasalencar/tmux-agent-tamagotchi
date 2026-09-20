@@ -29,6 +29,25 @@ describe("v2 setup", () => {
     ])
   })
 
+  test("reports running then idle from execution events without status transitions", async () => {
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const events: unknown[] = [
+      { type: "session.created", data: { sessionID: "root-a" } },
+      { type: "session.execution.started", data: { sessionID: "root-a" } },
+      { type: "session.execution.succeeded", data: { sessionID: "root-a" } },
+    ]
+    const cleanup = await setup(fakeContextV2(events, { "root-a": {} }, {}))
+    await settle()
+
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+    ])
+    await cleanup()
+  })
+
   test("notifies completion text looked up over the v2 client after five idle seconds", async () => {
     const clock = new FakeClock()
     const commandCalls: string[][] = []

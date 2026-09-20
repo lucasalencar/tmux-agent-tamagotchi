@@ -112,6 +112,64 @@ describe("v2 flat events", () => {
     })
   })
 
+  test("maps execution started, succeeded, and interrupted onto the running and idle states", async () => {
+    const adapter = createEventAdapterV2({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+    })
+
+    expect(await adapter.adapt({
+      type: "session.execution.started",
+      data: { sessionID: "root-a" },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+    })
+    expect(await adapter.adapt({
+      type: "session.execution.succeeded",
+      data: { sessionID: "root-a" },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-status", sessionId: "root-a", kind: "root", status: "idle" },
+    })
+    expect(await adapter.adapt({
+      type: "session.execution.interrupted",
+      data: { sessionID: "root-a" },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-status", sessionId: "root-a", kind: "root", status: "idle" },
+    })
+    expect(await adapter.adapt({ type: "session.execution.started", data: {} })).toEqual({
+      status: "malformed",
+    })
+  })
+
+  test("reports a terminal assistant message on execution succeeded for a root session", async () => {
+    const adapter = createEventAdapterV2({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      lookupLatestMessage: async () => ({
+        id: "message-a",
+        sessionID: "root-a",
+        role: "assistant",
+        time: { completed: 2 },
+        finish: "stop",
+      }),
+    })
+
+    expect(await adapter.adapt({
+      type: "session.execution.succeeded",
+      data: { sessionID: "root-a" },
+    })).toEqual({
+      status: "adapted",
+      event: {
+        type: "terminal-assistant-message",
+        sessionId: "root-a",
+        kind: "root",
+        messageId: "message-a",
+        finish: "stop",
+      },
+    })
+  })
+
   test("adapts permission and failure events", async () => {
     const adapter = createEventAdapterV2({
       lookupSession: async (sessionId) => ({ id: sessionId }),

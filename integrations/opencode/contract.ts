@@ -79,6 +79,18 @@ export type OpenCodeV2Event = Readonly<
     data: { sessionID: string }
   }
   | {
+    type: "session.execution.started"
+    data: { sessionID: string }
+  }
+  | {
+    type: "session.execution.succeeded"
+    data: { sessionID: string }
+  }
+  | {
+    type: "session.execution.interrupted"
+    data: { sessionID: string }
+  }
+  | {
     type: "session.execution.failed"
     data: { sessionID: string; error?: { message?: string } }
   }

@@ -78,9 +78,12 @@ configure v2 manually instead, merge the directory entry below into the `plugins
 }
 ```
 
-Event coverage mirrors v1 except for two renamed sources: `session.error` arrives as
+Event coverage mirrors v1 except for renamed sources: `session.error` arrives as
 `session.execution.failed`, and completion text is read back through `session.context` instead of
-the removed `message.updated` event and per-message fetch. The five-second completion delay,
+the removed `message.updated` event and per-message fetch. Successful turns run on execution
+events without `session.status` or `session.idle` transitions, so `session.execution.started`
+reports `running` while `session.execution.succeeded` and `session.execution.interrupted` report
+`idle` with the same completion lookup. The five-second completion delay,
 permission tracking, delegated subagent tracking, and disposal clearing behave as described above.
 
 ## Pane attribution under v2
