@@ -237,6 +237,87 @@ describe("v2 flat events", () => {
     })
   })
 
+  test("falls back to plain idle without a terminal assistant message", async () => {
+    for (const latest of [
+      undefined,
+      { id: "message-a", sessionID: "root-a", role: "user", time: { completed: 2 } },
+      { id: "message-a", sessionID: "root-a", role: "assistant", time: { created: 1 } },
+      {
+        id: "message-a",
+        sessionID: "root-a",
+        role: "assistant",
+        time: { completed: 2 },
+        summary: true,
+      },
+      { id: "message-a", sessionID: "other", role: "assistant", time: { completed: 2 } },
+    ]) {
+      const adapter = createEventAdapterV2({
+        lookupSession: async (sessionId) => ({ id: sessionId }),
+        lookupLatestMessage: async () => latest,
+      })
+      expect(await adapter.adapt({ type: "session.idle", data: { sessionID: "root-a" } })).toEqual({
+        status: "adapted",
+        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "idle" },
+      })
+    }
+  })
+
+  test("reports plain idle when the message lookup fails or the session is delegated", async () => {
+    const throwing = createEventAdapterV2({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      lookupLatestMessage: async () => {
+        throw new Error("client unavailable")
+      },
+    })
+    expect(await throwing.adapt({ type: "session.idle", data: { sessionID: "root-a" } })).toEqual({
+      status: "adapted",
+      event: { type: "session-status", sessionId: "root-a", kind: "root", status: "idle" },
+    })
+
+    const delegated = createEventAdapterV2({
+      lookupSession: async (sessionId) => ({ id: sessionId, parentID: "root-a" }),
+      lookupLatestMessage: async () => ({
+        id: "message-a",
+        sessionID: "child-a",
+        role: "assistant",
+        time: { completed: 2 },
+        finish: "stop",
+      }),
+    })
+    expect(await delegated.adapt({ type: "session.idle", data: { sessionID: "child-a" } })).toEqual({
+      status: "adapted",
+      event: { type: "session-status", sessionId: "child-a", kind: "delegated", status: "idle" },
+    })
+  })
+
+  test("maps retry onto running and failure without a message onto plain error", async () => {
+    const adapter = createEventAdapterV2({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+    })
+
+    expect(await adapter.adapt({
+      type: "session.status",
+      data: { sessionID: "root-a", status: { type: "retry" } },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-status", sessionId: "root-a", kind: "root", status: "retry" },
+    })
+    expect(await adapter.adapt({
+      type: "session.execution.failed",
+      data: { sessionID: "root-a", error: { type: "boom" } },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-error", sessionId: "root-a", kind: "root" },
+    })
+    expect(await adapter.adapt({
+      type: "session.execution.failed",
+      data: { sessionID: "root-a" },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-error", sessionId: "root-a", kind: "root" },
+    })
+  })
+
   test("adapts permission and failure events", async () => {
     const adapter = createEventAdapterV2({
       lookupSession: async (sessionId) => ({ id: sessionId }),

@@ -14,15 +14,23 @@ import type { LifecycleEvent, SessionKind } from "./state-machine"
 export function createEventAdapterV2(dependencies: EventAdapterDependencies): EventAdapter {
   const classifications = new Map<string, { kind: SessionKind; directory?: string }>()
 
+  function store(sessionId: string, kind: SessionKind, directory?: string): void {
+    // Never let a directory-less write clobber a known directory: the next
+    // location-less event would otherwise pay for another lookup.
+    const cached = classifications.get(sessionId)
+    const resolved = directory ?? cached?.directory
+    classifications.set(sessionId, {
+      kind,
+      ...(resolved !== undefined ? { directory: resolved } : {}),
+    })
+  }
+
   function remember(info: SessionInfo): SessionKind | undefined {
     if (!isIdentifier(info.id)) return undefined
     const parent = readParentId(info)
     if (parent === undefined) return undefined
     const kind = parent === null ? "root" : "delegated"
-    classifications.set(info.id, {
-      kind,
-      ...(typeof info.directory === "string" ? { directory: info.directory } : {}),
-    })
+    store(info.id, kind, typeof info.directory === "string" ? info.directory : undefined)
     return kind
   }
 
@@ -38,14 +46,18 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
     }
   }
 
-  function classifyInline(sessionId: string, parentID: unknown): SessionKind | undefined {
+  function classifyInline(
+    sessionId: string,
+    parentID: unknown,
+    directory?: string,
+  ): SessionKind | undefined {
     if (typeof parentID === "string") {
       if (!isIdentifier(parentID)) return undefined
-      classifications.set(sessionId, { kind: "delegated" })
+      store(sessionId, "delegated", directory)
       return "delegated"
     }
     if (parentID === undefined) {
-      classifications.set(sessionId, { kind: "root" })
+      store(sessionId, "root", directory)
       return "root"
     }
     return undefined
@@ -125,7 +137,7 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
       // parent while delegated sessions always name theirs.
       const kind = !("parentID" in data)
         ? remember({ id: data.sessionID, ...(directory ? { directory } : {}) })
-        : classifyInline(data.sessionID, data.parentID) ?? (await classify(data.sessionID))
+        : classifyInline(data.sessionID, data.parentID, directory) ?? (await classify(data.sessionID))
       if (!kind) return { status: "malformed" }
       return {
         status: "adapted",

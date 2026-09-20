@@ -68,7 +68,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
       const executable = parseExecutable(resolved.stdout)
       if (!executable) return
       await dependencies.execute(
-        pane ? [executable, ...args, "--pane", pane] : [executable, ...args],
+        [executable, ...withPane(args, pane)],
         {
           ...(classifyEffect ? {
             TAMA_LOG_INTEGRATION: "opencode",
@@ -84,13 +84,15 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
 
   async function run(effect: StateMachineEffect, context?: LogContext): Promise<void> {
     try {
-      const pane = await resolvePane()
       switch (effect.type) {
-        case "pane-state":
+        case "pane-state": {
+          const pane = await resolvePane()
           if (!pane && strictPane) return
           await invokeTama(["state", effect.state, AGENT_NAME], effect.type, context, true, pane)
           break
-        case "root-error":
+        }
+        case "root-error": {
+          const pane = await resolvePane()
           await invokeTama([
             "notify",
             "--",
@@ -98,11 +100,14 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
             sanitizeNotificationText(effect.message ?? "") ?? GENERIC_ERROR,
           ], effect.type, context, true, pane)
           break
+        }
         case "subagent-start":
-        case "subagent-stop":
+        case "subagent-stop": {
+          const pane = await resolvePane()
           if (!pane && strictPane) return
           await invokeTama(["state", effect.type, "--", effect.sessionId], effect.type, context, true, pane)
           break
+        }
         case "completion-eligible":
           await dependencies.onCompletionEligible?.({
             sessionId: effect.sessionId,
@@ -160,4 +165,13 @@ function parseExecutable(stdout: string): string | undefined {
   const executable = stdout.replace(/\r?\n$/, "")
   if (!executable || /[\0\r\n]/.test(executable)) return undefined
   return executable
+}
+
+// Pane options precede the `--` separator: everything after it is a positional
+// value, so appending `--pane` there makes the CLI reject the invocation.
+function withPane(args: readonly string[], pane: string | undefined): string[] {
+  if (!pane) return [...args]
+  const separator = args.indexOf("--")
+  if (separator === -1) return [...args, "--pane", pane]
+  return [...args.slice(0, separator), "--pane", pane, ...args.slice(separator)]
 }

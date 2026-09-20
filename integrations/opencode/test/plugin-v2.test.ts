@@ -105,9 +105,106 @@ describe("v2 setup", () => {
     await clock.advance(1)
 
     expect(tamaCalls(commandCalls)).toContainEqual([
-      "/plugin/bin/tama", "notify", "--", "OpenCode", "Delivered over v2.", "--pane", PANE,
+      "/plugin/bin/tama", "notify", "--pane", PANE, "--", "OpenCode", "Delivered over v2.",
     ])
     await cleanup()
+  })
+
+  test("notifies completion for execution-driven turns after five idle seconds", async () => {
+    const clock = new FakeClock()
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({
+      clock,
+      execute: fakeExecute(commandCalls),
+    })
+    const assistant = {
+      id: "message-a",
+      type: "assistant",
+      time: { created: 1, completed: 2 },
+      finish: "stop",
+      content: [{ type: "text", text: "Executed over v2." }],
+    }
+    const events: unknown[] = [
+      { type: "session.created", data: { sessionID: "root-a" } },
+      { type: "session.execution.started", data: { sessionID: "root-a" } },
+      { type: "session.execution.succeeded", data: { sessionID: "root-a" } },
+    ]
+    const cleanup = await setup(fakeContextV2(events, { "root-a": {} }, { "root-a": [assistant] }))
+    await settle()
+
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+    ])
+    await clock.advance(5_000)
+
+    expect(tamaCalls(commandCalls)).toContainEqual([
+      "/plugin/bin/tama", "notify", "--pane", PANE, "--", "OpenCode", "Executed over v2.",
+    ])
+    await cleanup()
+  })
+
+  test("skips pane resolution failures without breaking later effects", async () => {
+    const commandCalls: string[][] = []
+    let listCalls = 0
+    const setup = createTmuxAgentTamagotchiPluginV2({
+      execute: async (argv) => {
+        commandCalls.push([...argv])
+        if (argv.includes("list-panes")) {
+          listCalls += 1
+          if (listCalls === 1) return { exitCode: 1, stdout: "" }
+          return { exitCode: 0, stdout: `${PANE}\topencode\t${DIRECTORY}\n` }
+        }
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+    const events: unknown[] = [
+      { type: "session.created", data: { sessionID: "root-a" } },
+      { type: "session.execution.started", data: { sessionID: "root-a" } },
+    ]
+    const cleanup = await setup(fakeContextV2(events, { "root-a": {} }, {}))
+    await settle()
+
+    // The first resolution fails, so the idle write is skipped; the second
+    // succeeds and the running write carries the pane.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
+    ])
+    await cleanup()
+  })
+
+  test("survives client lookup failures without dropping later lifecycle", async () => {
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const events: unknown[] = [
+      { type: "session.execution.started", data: { sessionID: "root-a" } },
+      { type: "session.execution.succeeded", data: { sessionID: "root-a" } },
+    ]
+    const context = fakeContextV2(events, { "root-a": {} }, {})
+    const throwing = {
+      ...context,
+      session: {
+        get: async () => {
+          throw new Error("service unavailable")
+        },
+        context: async () => {
+          throw new Error("service unavailable")
+        },
+      },
+    }
+    const cleanup = await setup(throwing)
+    await settle()
+
+    // Classification lookups fail with no cached classification to fall back
+    // on, so both events are skipped and nothing rejects into the host.
+    expect(tamaCalls(commandCalls)).toEqual([])
+    await cleanup()
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "clear", "--pane", PANE],
+    ])
   })
 
   test("tracks delegated sessions from the inline parentID and cancels the pending completion", async () => {
@@ -144,8 +241,8 @@ describe("v2 setup", () => {
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "subagent-start", "--", "child-a", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "subagent-stop", "--", "child-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "subagent-start", "--pane", PANE, "--", "child-a"],
+      ["/plugin/bin/tama", "state", "subagent-stop", "--pane", PANE, "--", "child-a"],
     ])
     await cleanup()
   })
@@ -176,7 +273,7 @@ describe("v2 setup", () => {
       ["/plugin/bin/tama", "state", "waiting", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "error", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "notify", "--", "OpenCode", "Blew up.", "--pane", PANE],
+      ["/plugin/bin/tama", "notify", "--pane", PANE, "--", "OpenCode", "Blew up."],
     ])
     await cleanup()
   })

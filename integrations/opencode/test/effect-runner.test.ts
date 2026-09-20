@@ -166,7 +166,7 @@ describe("tama effect runner", () => {
 
     expect(calls.filter((argv) => argv[0] !== "tmux")).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", "%pane-a"],
-      ["/plugin/bin/tama", "notify", "--", "OpenCode", "Done.", "--pane", "%pane-a"],
+      ["/plugin/bin/tama", "notify", "--pane", "%pane-a", "--", "OpenCode", "Done."],
       ["/plugin/bin/tama", "state", "clear", "--pane", "%pane-a"],
     ])
 
