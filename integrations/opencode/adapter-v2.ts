@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs"
+
 import {
   type EventAdapter,
   type EventAdapterDependencies,
@@ -10,20 +12,23 @@ import type { LifecycleEvent, SessionKind } from "./state-machine"
 // Session and message lookups reuse the v1 dependency shapes; plugin-v2
 // synthesizes those shapes from the v2 client responses at the boundary.
 export function createEventAdapterV2(dependencies: EventAdapterDependencies): EventAdapter {
-  const classifications = new Map<string, SessionKind>()
+  const classifications = new Map<string, { kind: SessionKind; directory?: string }>()
 
   function remember(info: SessionInfo): SessionKind | undefined {
     if (!isIdentifier(info.id)) return undefined
     const parent = readParentId(info)
     if (parent === undefined) return undefined
     const kind = parent === null ? "root" : "delegated"
-    classifications.set(info.id, kind)
+    classifications.set(info.id, {
+      kind,
+      ...(typeof info.directory === "string" ? { directory: info.directory } : {}),
+    })
     return kind
   }
 
   async function classify(sessionId: string): Promise<SessionKind | undefined> {
     const cached = classifications.get(sessionId)
-    if (cached) return cached
+    if (cached) return cached.kind
     try {
       const info = await dependencies.lookupSession(sessionId)
       if (!info || info.id !== sessionId) return undefined
@@ -36,14 +41,35 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
   function classifyInline(sessionId: string, parentID: unknown): SessionKind | undefined {
     if (typeof parentID === "string") {
       if (!isIdentifier(parentID)) return undefined
-      classifications.set(sessionId, "delegated")
+      classifications.set(sessionId, { kind: "delegated" })
       return "delegated"
     }
     if (parentID === undefined) {
-      classifications.set(sessionId, "root")
+      classifications.set(sessionId, { kind: "root" })
       return "root"
     }
     return undefined
+  }
+
+  // Location-less events (execution transitions carry no directory) reach every
+  // per-directory plugin instance. Each instance only owns the sessions in its
+  // own directory, verified here against the looked-up session location, so one
+  // session's turn cannot light up every pane on the server. Unverifiable cases
+  // stay lenient and flow into the regular classification below.
+  async function ownsSession(sessionId: string): Promise<boolean> {
+    if (!dependencies.directory) return true
+    const cached = classifications.get(sessionId)
+    if (cached?.directory !== undefined) {
+      return sameDirectory(cached.directory, dependencies.directory)
+    }
+    try {
+      const info = await dependencies.lookupSession(sessionId)
+      if (!info || info.id !== sessionId || typeof info.directory !== "string") return true
+      remember(info)
+      return sameDirectory(info.directory, dependencies.directory)
+    } catch {
+      return true
+    }
   }
 
   async function adaptSessionStatus(
@@ -51,6 +77,9 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
     status: "busy" | "retry" | "idle",
     provenance: { directory?: string },
   ): Promise<Adaptation> {
+    if (provenance.directory === undefined && !(await ownsSession(sessionId))) {
+      return { status: "unknown" }
+    }
     const kind = await classify(sessionId)
     if (!kind) return { status: "malformed" }
     if (kind === "root" && status === "idle") {
@@ -89,10 +118,13 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
 
     if (event.type === "session.created") {
       if (!isIdentifier(data.sessionID)) return { status: "malformed" }
+      if (directory === undefined && !(await ownsSession(data.sessionID))) {
+        return { status: "unknown" }
+      }
       // A created event without a parentID is a root session; roots carry no
       // parent while delegated sessions always name theirs.
       const kind = !("parentID" in data)
-        ? remember({ id: data.sessionID })
+        ? remember({ id: data.sessionID, ...(directory ? { directory } : {}) })
         : classifyInline(data.sessionID, data.parentID) ?? (await classify(data.sessionID))
       if (!kind) return { status: "malformed" }
       return {
@@ -102,7 +134,10 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
     }
     if (event.type === "session.deleted") {
       if (!isIdentifier(data.sessionID)) return { status: "malformed" }
-      const kind = classifications.get(data.sessionID) ?? (await classify(data.sessionID))
+      if (directory === undefined && !(await ownsSession(data.sessionID))) {
+        return { status: "unknown" }
+      }
+      const kind = classifications.get(data.sessionID)?.kind ?? (await classify(data.sessionID))
       classifications.delete(data.sessionID)
       if (!kind) return { status: "malformed" }
       return {
@@ -136,6 +171,9 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
     }
     if (event.type === "permission.asked") {
       if (!isIdentifier(data.id) || !isIdentifier(data.sessionID)) return { status: "malformed" }
+      if (directory === undefined && !(await ownsSession(data.sessionID))) {
+        return { status: "unknown" }
+      }
       const kind = await classify(data.sessionID)
       if (!kind) return { status: "malformed" }
       return {
@@ -158,6 +196,9 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
     }
     if (event.type === "session.execution.failed") {
       if (!isIdentifier(data.sessionID)) return { status: "malformed" }
+      if (directory === undefined && !(await ownsSession(data.sessionID))) {
+        return { status: "unknown" }
+      }
       const kind = await classify(data.sessionID)
       if (!kind) return { status: "malformed" }
       const message = isRecord(data.error) && isIdentifier(data.error.message)
@@ -211,6 +252,25 @@ function readDirectory(event: Record<string, unknown>, data: Record<string, unkn
 
 function isIdentifier(value: unknown): value is string {
   return typeof value === "string" && value.length > 0
+}
+
+// Compares working directories with symlinks resolved, so /tmp and
+// /private/tmp compare equal on macOS.
+function sameDirectory(left: string, right: string): boolean {
+  if (left === right) return true
+  try {
+    return canonicalize(left) === canonicalize(right)
+  } catch {
+    return false
+  }
+}
+
+function canonicalize(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
 }
 
 function readParentId(info: SessionInfo): string | null | undefined {

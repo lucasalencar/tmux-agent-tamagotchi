@@ -55,6 +55,7 @@ export function createTmuxAgentTamagotchiPluginV2(
     let scheduler: CompletionScheduler
     const runtime = createOpenCodeRuntime({
       createAdapter: createEventAdapterV2,
+      directory,
       loggingEnabled: Boolean(Bun.env.TAMA_LOG_FILE),
       lookupSession: async (sessionId) => {
         const session = await getSession(ctx, sessionId)
@@ -64,6 +65,7 @@ export function createTmuxAgentTamagotchiPluginV2(
           ...(Object.prototype.hasOwnProperty.call(session, "parentID")
             ? { parentID: session.parentID }
             : {}),
+          ...(typeof session.directory === "string" ? { directory: session.directory } : {}),
         }
       },
       lookupLatestMessage: async (sessionId) => {
@@ -149,15 +151,19 @@ function shapeMessage(message: AssistantMessage, sessionId: string) {
 async function getSession(
   ctx: PluginContextV2,
   sessionId: string,
-): Promise<{ id: string; parentID?: string } | undefined> {
+): Promise<{ id: string; parentID?: string; directory?: string } | undefined> {
   try {
     const response = await ctx.session.get({ sessionID: sessionId })
     const session = unwrapData(response)
     if (!isRecord(session) || typeof session.id !== "string" || !session.id) return undefined
+    const location = session.location
     return {
       id: session.id,
       ...(typeof session.parentID === "string" || session.parentID === undefined
         ? { parentID: session.parentID as string | undefined }
+        : {}),
+      ...(isRecord(location) && typeof location.directory === "string"
+        ? { directory: location.directory as string }
         : {}),
     }
   } catch {

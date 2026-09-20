@@ -170,6 +170,73 @@ describe("v2 flat events", () => {
     })
   })
 
+  test("ignores location-less events for sessions outside the instance directory", async () => {
+    let lookups = 0
+    const adapter = createEventAdapterV2({
+      directory: "/workspace",
+      lookupSession: async (sessionId) => {
+        lookups += 1
+        return sessionId === "root-foreign"
+          ? { id: sessionId, directory: "/elsewhere" }
+          : { id: sessionId, directory: "/workspace" }
+      },
+    })
+
+    expect(await adapter.adapt({
+      type: "session.execution.started",
+      data: { sessionID: "root-foreign" },
+    })).toEqual({ status: "unknown" })
+    expect(await adapter.adapt({
+      type: "session.execution.succeeded",
+      data: { sessionID: "root-foreign" },
+    })).toEqual({ status: "unknown" })
+    expect(await adapter.adapt({
+      type: "session.execution.failed",
+      data: { sessionID: "root-foreign", error: { message: "boom" } },
+    })).toEqual({ status: "unknown" })
+    expect(await adapter.adapt({
+      type: "session.created",
+      data: { sessionID: "root-foreign" },
+    })).toEqual({ status: "unknown" })
+    expect(await adapter.adapt({
+      type: "session.execution.started",
+      data: { sessionID: "root-a" },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+    })
+    expect(lookups).toBeGreaterThan(0)
+  })
+
+  test("keeps attributing every session without an instance directory", async () => {
+    const adapter = createEventAdapterV2({
+      lookupSession: async (sessionId) => ({ id: sessionId, directory: "/elsewhere" }),
+    })
+
+    expect(await adapter.adapt({
+      type: "session.execution.started",
+      data: { sessionID: "root-foreign" },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-status", sessionId: "root-foreign", kind: "root", status: "busy" },
+    })
+  })
+
+  test("stays lenient when the session location cannot be recovered", async () => {
+    const adapter = createEventAdapterV2({
+      directory: "/workspace",
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+    })
+
+    expect(await adapter.adapt({
+      type: "session.execution.started",
+      data: { sessionID: "root-a" },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+    })
+  })
+
   test("adapts permission and failure events", async () => {
     const adapter = createEventAdapterV2({
       lookupSession: async (sessionId) => ({ id: sessionId }),

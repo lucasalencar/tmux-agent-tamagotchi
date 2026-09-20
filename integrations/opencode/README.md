@@ -99,6 +99,14 @@ shared service that environment belongs to whatever spawned the server, so attri
 stamp agent states onto an unrelated pane. Notifications still go out, and the process-pane
 fallback remains only when no location is available at all.
 
+Some v2 events carry no directory at all: execution transitions arrive as bare
+`{ sessionID }` payloads and therefore reach every per-directory instance. Each
+instance attributes those events through the session's own location, looked up
+from the v2 client, and ignores sessions that live in another directory — so one
+session's turn lights up only the pane running OpenCode in its directory instead
+of every pane on the server. Sessions whose location cannot be recovered stay
+lenient and are processed as before.
+
 ## What it reports
 
 The plugin tracks every root session observed by one OpenCode instance and reduces them into the

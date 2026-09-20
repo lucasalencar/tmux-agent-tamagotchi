@@ -3,6 +3,7 @@ import type { LifecycleEvent, SessionKind } from "./state-machine"
 export type SessionInfo = Readonly<{
   id: string
   parentID?: string
+  directory?: string
 }>
 
 export type SessionMessageInfo = Readonly<{
@@ -17,6 +18,9 @@ export type SessionMessageInfo = Readonly<{
 export type EventAdapterDependencies = Readonly<{
   lookupSession(sessionId: string): Promise<SessionInfo | undefined>
   lookupLatestMessage?(sessionId: string): Promise<SessionMessageInfo | undefined>
+  // Scopes location-less events to one instance directory. Callers without a
+  // directory keep the legacy behavior of attributing every session they see.
+  directory?: string
 }>
 
 export type EventAdapter = Readonly<{

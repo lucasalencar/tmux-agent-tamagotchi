@@ -48,6 +48,31 @@ describe("v2 setup", () => {
     await cleanup()
   })
 
+  test("ignores location-less events for sessions outside the instance directory", async () => {
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const events: unknown[] = [
+      { type: "session.created", data: { sessionID: "root-a" } },
+      { type: "session.execution.started", data: { sessionID: "root-foreign" } },
+      { type: "session.execution.failed", data: { sessionID: "root-foreign", error: { message: "boom" } } },
+      { type: "session.execution.started", data: { sessionID: "root-a" } },
+    ]
+    const cleanup = await setup(fakeContextV2(
+      events,
+      { "root-a": {}, "root-foreign": { location: { directory: "/elsewhere" } } },
+      {},
+    ))
+    await settle()
+
+    // Only the local session reaches tama; the foreign turn and its failure
+    // never touch this instance's pane.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
+    ])
+    await cleanup()
+  })
+
   test("notifies completion text looked up over the v2 client after five idle seconds", async () => {
     const clock = new FakeClock()
     const commandCalls: string[][] = []
@@ -207,7 +232,7 @@ function fakeExecute(commandCalls: string[][]) {
 
 function fakeContextV2(
   events: unknown[],
-  sessions: Record<string, { parentID?: string }>,
+  sessions: Record<string, { parentID?: string; location?: { directory: string } }>,
   messages: Record<string, Array<Record<string, unknown>>>,
 ): PluginContextV2 {
   return {
