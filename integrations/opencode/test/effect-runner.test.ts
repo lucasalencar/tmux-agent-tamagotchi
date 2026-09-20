@@ -183,10 +183,38 @@ describe("tama effect runner", () => {
       },
     })
 
+    // With an explicit resolver (v2 knows its directory) an unresolvable pane
+    // skips state writes instead of leaking them onto the process pane, while
+    // notifications still go out unattributed.
     await fallback.run({ type: "pane-state", state: "running" })
+    await fallback.run({ type: "subagent-start", sessionId: "child-a" })
+    await fallback.run({ type: "root-error", sessionId: "root-a", message: "boom" })
+    await fallback.notify("Done.")
+    await fallback.clearPane()
 
     expect(fallbackCalls.filter((argv) => argv[0] !== "tmux")).toEqual([
+      ["/plugin/bin/tama", "notify", "--", "OpenCode", "boom"],
+      ["/plugin/bin/tama", "notify", "--", "OpenCode", "Done."],
+    ])
+  })
+
+  test("keeps the legacy process-pane fallback without an explicit resolver", async () => {
+    const calls: string[][] = []
+    const runner = createEffectRunner({
+      execute: async (argv) => {
+        calls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+
+    await runner.run({ type: "pane-state", state: "running" })
+    await runner.clearPane()
+
+    expect(calls.filter((argv) => argv[0] !== "tmux")).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "clear"],
     ])
   })
 })

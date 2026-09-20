@@ -93,9 +93,11 @@ agent pane from its own process environment the way v1 did. Instead, v2 instanti
 per location: each instance only tracks the sessions in its own directory and reports them to the
 tmux pane running OpenCode in that directory, passing an explicit `--pane` to every `tama`
 invocation. The first matching pane wins when several share a directory, and a plain shell sitting
-in the same directory never receives agent states. When no location is available or no OpenCode
-pane is found, the integration falls back to the process pane, which under a shared service is the
-pane the server started in.
+in the same directory never receives agent states. When the directory is known but no OpenCode
+pane matches it, state writes are skipped instead of falling back to the process pane: under the
+shared service that environment belongs to whatever spawned the server, so attributing there would
+stamp agent states onto an unrelated pane. Notifications still go out, and the process-pane
+fallback remains only when no location is available at all.
 
 ## What it reports
 

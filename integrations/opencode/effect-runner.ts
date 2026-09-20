@@ -37,6 +37,15 @@ const GENERIC_ERROR = "OpenCode session failed"
 const GENERIC_COMPLETION = "OpenCode finished its turn"
 
 export function createEffectRunner(dependencies: EffectRunnerDependencies): EffectRunner {
+  // Under v2 the plugin runs in the shared background service, so the process
+  // environment carries no agent pane of its own: callers pass resolvePane
+  // exactly when the instance directory is known. When the directory is known
+  // but no OpenCode pane matches it, state writes are skipped instead of
+  // falling back to the process pane, which under a shared service is
+  // whatever pane the server happened to start in. Notifications still go out:
+  // an alert without attribution is more useful than a silent turn.
+  const strictPane = dependencies.resolvePane !== undefined
+
   async function resolvePane(): Promise<string | undefined> {
     try {
       const pane = await dependencies.resolvePane?.()
@@ -78,6 +87,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
       const pane = await resolvePane()
       switch (effect.type) {
         case "pane-state":
+          if (!pane && strictPane) return
           await invokeTama(["state", effect.state, AGENT_NAME], effect.type, context, true, pane)
           break
         case "root-error":
@@ -90,6 +100,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
           break
         case "subagent-start":
         case "subagent-stop":
+          if (!pane && strictPane) return
           await invokeTama(["state", effect.type, "--", effect.sessionId], effect.type, context, true, pane)
           break
         case "completion-eligible":
@@ -125,6 +136,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
     },
     clearPane: async () => {
       const pane = await resolvePane()
+      if (!pane && strictPane) return
       await invokeTama(["state", "clear"], "dispose", undefined, true, pane)
     },
   }

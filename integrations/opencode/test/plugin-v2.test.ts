@@ -184,14 +184,12 @@ describe("v2 setup", () => {
     const cleanup = await setup(fakeContextV2(events, { "root-a": {} }, {}))
     await settle()
 
-    // The foreign session never reaches the lifecycle; the local one reports
-    // without --pane because no opencode pane was listed for the directory.
-    expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "idle", "OpenCode"],
-      ["/plugin/bin/tama", "state", "running", "OpenCode"],
-    ])
+    // The foreign session never reaches the lifecycle; the local one resolves
+    // no pane, so its states are skipped instead of leaking onto the
+    // process pane, and disposal clears nothing.
+    expect(tamaCalls(commandCalls)).toEqual([])
     await cleanup()
-    expect(tamaCalls(commandCalls).at(-1)).toEqual(["/plugin/bin/tama", "state", "clear"])
+    expect(tamaCalls(commandCalls)).toEqual([])
   })
 })
 
