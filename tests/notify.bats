@@ -138,7 +138,7 @@ run_click() { # <click command line>
   assert_not_flagged "$window"
 }
 
-@test "an agent in an inactive pane is notified even when its window is visible" {
+@test "an agent in an inactive pane is not notified when its window is visible" {
   tama_attach_client_without_attachment_hooks t
   export TAMA_FAKE_FOCUSED=0
 
@@ -154,9 +154,9 @@ run_click() { # <click command line>
   run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
   assert_success
 
-  refute_backend_called focused
-  assert_backend_called notify
-  assert_flagged "$window"
+  assert_backend_called focused
+  refute_backend_called notify
+  assert_not_flagged "$window"
 }
 
 @test "a terminal behind a browser is notified while its observed window stays unflagged" {
