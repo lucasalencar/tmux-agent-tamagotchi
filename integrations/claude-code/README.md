@@ -105,7 +105,7 @@ third, and `tests/readme.bats` asserts that it keeps doing so.
 | `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure` | running | |
 | `PermissionRequest` | waiting, and the window is flagged if you are looking elsewhere | no — the `Notification` below is the banner for it |
 | `Notification` | waiting, for the types that mean you are wanted; `idle_prompt` is ignored | yes, carrying the message Claude Code wrote |
-| `Stop` | idle | yes, carrying the agent's last message |
+| `Stop` | idle, or background while subagents are live | never |
 | `StopFailure` | error — the turn ended on an API error | yes |
 | `SubagentStart`, `SubagentStop` | the pane's subagent count, which is what renders an idle agent with live subagents as working in the background | never |
 | `SessionEnd` | cleared — no trace left in tmux | |
@@ -118,9 +118,18 @@ banners off while leaving the independent Flags and icons.
 
 ## Which events interrupt you, and which only move an icon
 
-Three events raise a banner: `Notification`, `Stop` and `StopFailure`. A question and a
-finished turn are the two things you can miss; everything else is visible in the status line
-if you are looking at it and forgotten if you are not.
+Only actionable `Notification` events and `StopFailure` raise a banner. The actionable
+notification types are `permission_prompt`, `agent_needs_input`, `elicitation_dialog`,
+and `elicitation_url_dialog`: permission prompts, requests for input, and MCP elicitation.
+`StopFailure` reports errors.
+
+**Keep `Stop` wired for state, not notifications.** It records `idle` (rendered as
+`background` while subagents are live) and reconciles subagent tracking. Claude Code
+also emits it after intermediate responses to subagent updates; a finished response
+is not necessarily a finished task or a request for user input. The adapter never
+sends a banner for `Stop`, including the final response. Removing this hook from
+`settings.json` would leave the pane's state stale. Use the hook configuration above
+without adding a separate completion notifier to `Stop` or `SubagentStop`.
 
 **`PermissionRequest` deliberately does not banner**, even though it is the event that turns
 the pane `waiting`. Claude Code raises `Notification` for the same interruption a few seconds
@@ -135,9 +144,8 @@ still fires with `preferredNotifChannel: notifications_disabled`.
 **The idle prompt is ignored.** Sixty seconds after every turn ends — measured at exactly
 +60s on three consecutive turns of a 2.1.228 session — Claude Code raises a `Notification`
 of type `idle_prompt` whose message is always `Claude is waiting for your input`. `Stop` has
-already recorded `idle` and bannered the agent's actual last message. Treating this routine
-reminder as an interruption would both replace that useful banner and turn a completed session
-into `waiting`.
+already recorded `idle`. Treating this routine reminder as an interruption would
+turn a completed session into `waiting` and generate an unnecessary banner.
 
 **Nothing a delegated run is attributed to raises a banner.** A subagent finishing is not
 your session finishing, and a payload carrying `agent_id` is Claude Code telling the adapter
@@ -159,7 +167,7 @@ Claude Code sends the hook on stdin, and nothing else is:
   `Notification`, the only thing separating a permission prompt or a question from routine
   noise like `auth_success`. A type this version has not seen is treated as routine.
 - **What a banner says** is `message` on `Notification` and `last_assistant_message` on
-  `Stop`. This is the one value in the payload a model wrote rather than a machine, so the
+  `StopFailure`. This is the one value in the payload a model wrote rather than a machine, so the
   adapter decodes JSON escaping for it — a message with a quote in it is ordinary — and
   hands the result to the plugin's CLI as a single argument that nothing expands, splits or
   reads as shell. It is cut to 500 characters, which is more than a desktop banner draws.

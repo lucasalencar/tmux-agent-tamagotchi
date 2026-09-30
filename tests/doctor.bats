@@ -1059,7 +1059,7 @@ PROVIDER
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains 'the Stop event is not wired: no banner when a turn ends'
+  assert_output_contains 'the Stop event is not wired: no idle state update when a response ends'
   assert_output_contains 'the SubagentStop event is not wired: no background icon'
 }
 

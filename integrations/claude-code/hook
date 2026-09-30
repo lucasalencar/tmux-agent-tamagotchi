@@ -446,16 +446,10 @@ main() {
       ;;
     Stop)
       tama_log_integration integration.classified claude-code "$event" applied
-      # The turn is over, and what the agent last said is what the user missed. A
-      # delegated run cannot reach here — Claude Code converts its end into
-      # SubagentStop — but the check costs nothing on a payload already read, and it
-      # is the one that would have to be right if that ever changed.
+      # A response can end while the session awaits subagent updates. Stop owns
+      # state bookkeeping; only actionable Notification events request attention.
       cc_reconcile_subagents_if_authoritative "$@"
-      if cc_is_delegated; then
-        cc_state idle "$@"
-      fi
-      cc_message last_assistant_message 'finished its turn'
-      cc_state_and_notify idle "$TAMA_CC_TEXT" "$@"
+      cc_state idle "$@"
       ;;
     StopFailure)
       tama_log_integration integration.classified claude-code "$event" applied

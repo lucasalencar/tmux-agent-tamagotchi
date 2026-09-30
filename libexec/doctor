@@ -1407,7 +1407,7 @@ doctor_cc_cost() { # <event>
     PermissionRequest)
       printf '%s' 'the icon and the mark wait for the banner instead of arriving first'
       ;;
-    Stop) printf '%s' 'no banner when a turn ends, which is what most people install this for' ;;
+    Stop) printf '%s' 'no idle state update when a response ends' ;;
     StopFailure) printf '%s' 'no banner when a turn dies on an API error' ;;
     SubagentStart | SubagentStop)
       printf '%s' 'no background icon: an idle agent with live subagents reads as finished'

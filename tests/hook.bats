@@ -639,13 +639,13 @@ PAYLOAD
   assert_contains "$(tama_backend_value notify argv1)" 'claude-code - ' 'the title'
 }
 
-@test "a turn that ends banners with what the agent last said" {
+@test "a turn that ends updates state without requesting attention" {
   hook SessionStart
   hook Stop <<<"$(payload Stop ',"stop_hook_active":false,"last_assistant_message":"I have finished the migration"')"
   assert_success
 
   assert_pane_option "$PANE" state_main idle
-  assert_backend_value notify argv2 'I have finished the migration'
+  refute_backend_called notify
 }
 
 @test "a turn that died on an error banners as well" {
@@ -687,38 +687,24 @@ PAYLOAD
   refute_backend_called notify
 }
 
-@test "the idle prompt leaves a finished turn idle without interrupting the user" {
-  # Claude Code raises this routine reminder 60s after a turn ends. It must not
-  # overwrite the state recorded by Stop or repeat its banner.
+@test "a completed response and its idle reminder stay silent" {
   hook SessionStart
-  hook Stop <<<"$(payload Stop ',"last_assistant_message":"I have finished the migration"')"
+  hook Stop <<<"$(payload Stop ',"last_assistant_message":"done"')"
   assert_success
-  hook Notification \
-    <<<"$(payload Notification ',"notification_type":"idle_prompt","message":"Claude is waiting for your input"')"
+  hook Notification <<<"$(payload Notification ',"notification_type":"idle_prompt"')"
   assert_success
-
   assert_pane_option "$PANE" state_main idle
-  assert_equal "$(tama_backend_calls notify)" 1
-  assert_backend_value notify argv2 'I have finished the migration'
+  refute_backend_called notify
 }
 
-@test "the idle prompt does not replace what the agent said with a sentence that says nothing" {
-  # The regression, with a name. `Stop` banners the agent's own words; a minute later
-  # the idle prompt arrives, and because banners are grouped per window a second one
-  # would replace the first — leaving the user with `Claude is waiting for your
-  # input` where they had been told what happened.
+@test "an intermediate response with live subagents stays in background without a banner" {
   hook SessionStart
-  hook Stop <<<"$(payload Stop ',"last_assistant_message":"I have finished the migration"')"
+  hook SubagentStart <<<"$(payload SubagentStart ',"agent_id":"live"')"
+  hook Stop <<<"$(payload Stop ',"background_tasks":[{"type":"subagent","id":"task"}],"last_assistant_message":"Still waiting"')"
   assert_success
-  assert_backend_value notify argv2 'I have finished the migration'
-
-  hook Notification \
-    <<<"$(payload Notification ',"notification_type":"idle_prompt","message":"Claude is waiting for your input"')"
-  assert_success
-
-  # One banner for one finished turn, and it still says what the agent said.
-  assert_equal "$(tama_backend_calls notify)" 1
-  assert_backend_value notify argv2 'I have finished the migration'
+  assert_pane_option "$PANE" state_main idle
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+  refute_backend_called notify
 }
 
 @test "a banner leaves the window marked, so the user finds it later" {
@@ -729,7 +715,7 @@ PAYLOAD
   assert_success
 
   hook SessionStart
-  hook Stop <<<"$(payload Stop ',"last_assistant_message":"the tests pass"')"
+  hook Notification <<<"$(payload Notification ',"notification_type":"permission_prompt","message":"Approve this tool"')"
   assert_success
 
   assert_backend_called notify
@@ -796,8 +782,8 @@ PAYLOAD
 
 @test "a message that begins with a dash is a message and not an option" {
   hook SessionStart
-  hook Stop <<'PAYLOAD'
-{"hook_event_name":"Stop","last_assistant_message":"--force is what you asked for"}
+  hook StopFailure <<'PAYLOAD'
+{"hook_event_name":"StopFailure","last_assistant_message":"--force is what you asked for"}
 PAYLOAD
   assert_success
   [ -z "$stderr" ]
@@ -809,8 +795,8 @@ PAYLOAD
   hook SessionStart
   # A tab, a backslash, an escaped solidus, and a `\u` sequence — which is not
   # decoded, because the only ones a JSON writer emits are control characters.
-  hook Stop <<'PAYLOAD'
-{"hook_event_name":"Stop","last_assistant_message":"a\tb \\ c \/ d \u0007e\n\n"}
+  hook StopFailure <<'PAYLOAD'
+{"hook_event_name":"StopFailure","last_assistant_message":"a\tb \\ c \/ d \u0007e\n\n"}
 PAYLOAD
   assert_success
 
@@ -824,20 +810,20 @@ PAYLOAD
   # `tama notify` refuses an empty message — it is what a hook that failed to
   # interpolate its variable looks like — so an unreadable payload must not be
   # allowed to turn into a usage error inside somebody's turn.
-  hook Stop <<<"$(payload Stop)"
+  hook StopFailure <<<"$(payload StopFailure)"
   assert_success
   [ -z "$stderr" ]
-  assert_backend_value notify argv2 'finished its turn'
+  assert_backend_value notify argv2 'stopped on an error'
 
-  hook Stop <<<'{"last_assistant_message":"cut off in the mid'
+  hook StopFailure <<<'{"last_assistant_message":"cut off in the mid'
   assert_success
   [ -z "$stderr" ]
-  assert_backend_value notify argv2 'finished its turn'
+  assert_backend_value notify argv2 'stopped on an error'
 
-  hook Stop </dev/null
+  hook StopFailure </dev/null
   assert_success
   [ -z "$stderr" ]
-  assert_backend_value notify argv2 'finished its turn'
+  assert_backend_value notify argv2 'stopped on an error'
 
   # And the same for the other message field, on a type that does banner — the idle
   # prompt no longer does, so it cannot stand in for one here.
@@ -855,7 +841,7 @@ PAYLOAD
     i=$((i + 1))
   done
 
-  hook Stop <<<"{\"last_assistant_message\":\"$long\"}"
+  hook StopFailure <<<"{\"last_assistant_message\":\"$long\"}"
   assert_success
 
   local got
