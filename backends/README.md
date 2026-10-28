@@ -55,6 +55,7 @@ present-and-empty.** Do not add one to make a directory look complete.
 | --- | --- | --- |
 | `macos` | `terminal-notifier`, a terminal whose window titles carry the session name | all four |
 | `libnotify` | `notify-send`, a running freedesktop notification daemon | `notify` only |
+| `remote` | `curl`, a receiver running on the computer that shows the banners | `notify`, `dismiss` |
 | `none` | nothing | `notify`, `dismiss`, both no-ops |
 
 With the `macos` backend, `ALL` is reserved by terminal-notifier to remove every
@@ -78,6 +79,8 @@ banner in place rather than dismissing notifications that do not belong to it.
    notifier, where every macOS capability would be a process started to fail.
 
 `tama doctor` is what explains which one was chosen and why the others were not.
+`remote` is never picked by `auto`: forwarding banners across the network is a
+choice, not a platform fact, so it runs only when named explicitly.
 
 ### The libnotify backend, and the three capabilities it does not have
 
@@ -108,6 +111,44 @@ It also needs a session bus: `notify-send` finds one through
 `$DBUS_SESSION_BUS_ADDRESS`, which an agent's hook inherits from the desktop session it
 was started in. Where that does not reach — a systemd unit, `ssh` without it, a tmux
 server that outlived the session — there are no banners and nothing fails.
+
+### The remote backend, and the two capabilities it does not have
+
+`remote` forwards banners to another computer: `notify` POSTs the title, message,
+per-window group, terminal bundle id and click action as JSON to
+`@tama_remote_url/notify`, and `dismiss` POSTs the group to
+`@tama_remote_url/dismiss`. Both travel by `curl` (`@tama_remote_curl` overrides
+which one), backgrounded so the hook never waits on the network, bounded by
+`@tama_remote_timeout` seconds (default 5), and authenticated with
+`@tama_remote_token` as a bearer token when configured. A missing `curl`, a
+missing URL, or a URL that is not `http(s)://` is silence rather than a failed
+turn; `tama doctor` fails on the configuration instead.
+
+The other side runs `backends/remote/receiver.py` (standard library only, so any
+Python 3.7 or newer will do):
+
+```sh
+python3 backends/remote/receiver.py --port 8765 --token 'a-shared-secret'
+```
+
+It draws each banner natively — `terminal-notifier` when installed,
+`display notification` otherwise — grouped per window like every backend, and
+removes it on `dismiss`. Probe it with `curl http://THAT-COMPUTER:8765/health`
+before blaming the plugin for a silent desktop.
+
+* **No `focused`.** Nothing here can say which terminal window is in front of a
+  screen on another computer, and asking would mean a synchronous network round
+  trip inside every hook. Its absence means notifications are never suppressed
+  there — noise, never silence, the direction ADR-0004 fails in on purpose.
+* **No `focus`, so a click only brings the terminal forward by default.** The
+  click action names tmux paths on the sending machine, where the showing
+  computer cannot reach them. Start the receiver with `--ssh-target user@vm`
+  and the click runs back over SSH instead, landing on the pane that spoke —
+  provided that computer can SSH there without a passphrase prompt.
+
+With the `remote` backend, `ALL` is refused by `dismiss` just like on macOS:
+the receiver removes with `terminal-notifier -remove`, where `ALL` would take
+down notifications that do not belong to it.
 
 The macOS backend needs to know your terminal, since neither tmux nor this plugin can
 tell which application is displaying a session: `@tama_terminal_app` is the process

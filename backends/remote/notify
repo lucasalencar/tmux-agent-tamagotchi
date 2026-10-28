@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+#
+# The remote backend's notify: forward the banner to another computer over HTTP.
+#
+#   notify <title> <message>
+#
+# The receiver on the other side draws a native banner with them. The payload also
+# carries the per-window group, the terminal to activate, and the click action the
+# core composed (ADR-0006): what the receiver does with each is its own business —
+# showing the banner needs only the first two, and the click needs an SSH target
+# back, which is the receiver's configuration, not this machine's.
+#
+# Backgrounded, deliberately. This runs inside an agent's hook, on the turn the user
+# is waiting for, and there is no timeout to save them: a forward crosses the
+# network, and DNS, TCP and TLS each have their own idea of how long that takes.
+# `--max-time` bounds the backgrounded request so a dead receiver cannot pile up a
+# hung `curl` per banner; the exit status of `notify` is discarded by the contract.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local title="${1-}" message="${2-}" token payload
+
+  # A banner with nothing to say would only be a request started to say it. The core
+  # does not send one; a user's own caller might.
+  [ -n "$message" ] || exit 0
+
+  # No `curl`, no receiver URL, no banner, and no complaint: this is the machine state
+  # `auto` never selects — the backend runs only when named — reached here because the
+  # binary went away or the URL was never configured. `doctor` is what says so loudly.
+  tama_remote_curl || exit 0
+  tama_remote_url || exit 0
+  tama_remote_timeout
+
+  # One object, every value escaped: a message is arbitrary text an agent wrote and
+  # may hold quotes, backslashes and newlines. `printf` keeps values as arguments so
+  # nothing in them is ever read as format.
+  # shellcheck disable=SC2059  # the format is fixed; the data is in the arguments
+  payload="$(printf '{"title":"%s","message":"%s","group":"%s","activate":"%s","click":"%s"}' \
+    "$(tama_remote_json_escape "$title")" \
+    "$(tama_remote_json_escape "$message")" \
+    "$(tama_remote_json_escape "${TAMA_GROUP:-}")" \
+    "$(tama_remote_json_escape "${TAMA_TERMINAL_BUNDLE_ID:-}")" \
+    "$(tama_remote_json_escape "${TAMA_CLICK:-}")")"
+
+  # `--data-binary`, not `--data`: the latter strips newlines, which a payload must
+  # survive byte-for-byte. `-o /dev/null` rather than a redirect, because the point is
+  # to receive nothing, not to print it somewhere else.
+  set -- -s -o /dev/null --max-time "$TAMA_REMOTE_TIMEOUT" -X POST \
+    -H 'Content-Type: application/json' --data-binary "$payload"
+
+  # Optional, and the only secret here: when configured it travels as a bearer token,
+  # which the receiver checks before drawing anything.
+  token="$(tama_opt tama_remote_token '')"
+  [ -z "$token" ] || set -- "$@" -H "Authorization: Bearer $token"
+
+  "$TAMA_REMOTE_CURL" "$@" "$TAMA_REMOTE_URL/notify" >/dev/null 2>&1 &
+}
+
+main "$@"

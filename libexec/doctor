@@ -794,7 +794,77 @@ doctor_backend_named() { # <how it was named>
       fi
       doctor_backend_session_bus
       ;;
+    "$TAMA_PLUGIN_DIR/backends/$TAMA_BACKEND_REMOTE")
+      if tama_remote_curl; then
+        doctor_binary tama_remote_curl "$TAMA_REMOTE_CURL_NAME" \
+          "$TAMA_REMOTE_CURL_DIRS"
+      else
+        doctor_backend_binary_missing \
+          "you named the $TAMA_BACKEND_REMOTE backend and its curl is missing"
+        doctor_binary tama_remote_curl "$TAMA_REMOTE_CURL_NAME" \
+          "$TAMA_REMOTE_CURL_DIRS"
+        doctor_backend_binary_cost 'banner'
+      fi
+      doctor_remote_receiver
+      ;;
   esac
+}
+
+# Where the remote backend sends its banners, and whether that conversation is
+# authenticated. A missing or malformed URL is broken: the backend was named
+# explicitly and has nowhere to send. A missing token is only a warning: banners
+# still arrive, but so could anybody else's.
+doctor_remote_receiver() {
+  local configured
+  if tama_remote_url; then
+    doctor_ok "receiver: $TAMA_REMOTE_URL — banners are forwarded there over HTTP"
+    doctor_more 'That computer draws them natively once its receiver runs:'
+    doctor_more '  python3 backends/remote/receiver.py --port 8765 --token TOKEN'
+    doctor_more 'run from this plugin directory on that computer. Probe it with'
+    doctor_more '  curl http://THAT-COMPUTER:8765/health'
+    doctor_more 'before blaming the plugin for a silent desktop.'
+  else
+    configured="$(tama_opt tama_remote_url '')"
+    case "$configured" in
+      '')
+        doctor_fail '@tama_remote_url is unset, so the remote backend has nowhere to send'
+        ;;
+      *)
+        doctor_fail "@tama_remote_url is '$configured'; expected the receiver's http(s):// URL"
+        ;;
+    esac
+    doctor_more 'Point it at the receiver on the computer that shows the banners:'
+    doctor_more '  @tama_remote_url http://THAT-COMPUTER:8765'
+    doctor_more 'The line above is the value, not tmux syntax — quote it inside set -g.'
+  fi
+
+  if [ -n "$(tama_opt tama_remote_token '')" ]; then
+    doctor_ok '@tama_remote_token is configured, and travels as a bearer token'
+    doctor_more 'Its value is never printed here: this output is meant to be pasted'
+    doctor_more 'somewhere, and a notification token is a credential. The receiver needs'
+    doctor_more 'the same token, passed as --token or TAMA_REMOTE_TOKEN.'
+  else
+    doctor_warn '@tama_remote_token is empty: anyone reaching the receiver may raise banners'
+    doctor_more 'Set the same token on both sides — @tama_remote_token here, --token or'
+    doctor_more 'TAMA_REMOTE_TOKEN there — unless the network already limits who can reach it.'
+  fi
+
+  doctor_remote_timeout
+}
+
+# How long a forward may take, and whether the configured value survived. An
+# invalid one fails safe to the default rather than to a `curl` flag it refuses.
+doctor_remote_timeout() {
+  local configured effective
+  configured="$(tama_opt tama_remote_timeout "$TAMA_REMOTE_TIMEOUT_DEFAULT")"
+  tama_remote_timeout
+  effective="$TAMA_REMOTE_TIMEOUT"
+  if [ "$configured" = "$effective" ]; then
+    doctor_ok "@tama_remote_timeout is ${effective}s"
+  else
+    doctor_warn "@tama_remote_timeout is '$configured'; expected a positive number of seconds"
+    doctor_more "Forwarding waits up to ${effective}s instead."
+  fi
 }
 
 # A named backend whose binary is not here: broken, unless nothing will ever reach that

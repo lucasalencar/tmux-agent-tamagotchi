@@ -36,6 +36,24 @@ TAMA_LIBNOTIFY_SEND_NAME='notify-send'
 # not a login shell's, and a `PATH` somebody trimmed is not a reason to go silent.
 TAMA_LIBNOTIFY_SEND_DIRS='/usr/bin /usr/local/bin'
 
+# The remote backend, which forwards banners to a receiver running on another
+# computer over HTTP. It needs `curl` to send with and the receiver's URL to
+# send to; both are configuration rather than platform facts, so `auto` never
+# picks it — it runs only when named explicitly.
+# shellcheck disable=SC2034  # read by libexec/doctor, which names the backend
+TAMA_BACKEND_REMOTE='remote'
+TAMA_REMOTE_CURL_NAME='curl'
+
+# Where a package manager puts `curl`. Searched only after `PATH`, for the same
+# reason the notifier directories are: a hook inherits an agent's environment,
+# not a login shell's.
+TAMA_REMOTE_CURL_DIRS='/opt/homebrew/bin /usr/local/bin /usr/bin'
+
+# How long a forward may take before `curl` gives up, in seconds. The backend
+# backgrounds the request so the hook never waits, but an unbounded one leaves
+# a hung `curl` behind for every banner.
+TAMA_REMOTE_TIMEOUT_DEFAULT='5'
+
 # The status for "this capability does not exist here". 127 is what a shell reports
 # for a command it could not find, which is exactly what happened.
 TAMA_BACKEND_UNSUPPORTED=127
@@ -163,6 +181,74 @@ tama_libnotify_send() {
   tama_resolve_binary tama_notify_send "$TAMA_LIBNOTIFY_SEND_NAME" \
     "$TAMA_LIBNOTIFY_SEND_DIRS" || return 1
   TAMA_LIBNOTIFY_SEND="$TAMA_BINARY"
+}
+
+# The `curl` to use, in TAMA_REMOTE_CURL; non-zero when there is none. `@tama_remote_curl`
+# is a name or an absolute path. backends/remote calls this.
+# shellcheck disable=SC2034  # TAMA_REMOTE_CURL is read by the caller
+tama_remote_curl() {
+  TAMA_REMOTE_CURL=''
+  tama_resolve_binary tama_remote_curl "$TAMA_REMOTE_CURL_NAME" \
+    "$TAMA_REMOTE_CURL_DIRS" || return 1
+  TAMA_REMOTE_CURL="$TAMA_BINARY"
+}
+
+# The receiver's base URL, in TAMA_REMOTE_URL; non-zero when `@tama_remote_url` is
+# unset, empty, or not an `http(s)://` URL. A misconfigured URL is silence here and a
+# failure in `doctor`: hooks must never fail an agent turn over configuration.
+# shellcheck disable=SC2034  # TAMA_REMOTE_URL is read by the caller
+tama_remote_url() {
+  TAMA_REMOTE_URL="$(tama_opt tama_remote_url '')"
+  case "$TAMA_REMOTE_URL" in
+    http://* | https://*) ;;
+    *)
+      TAMA_REMOTE_URL=''
+      return 1
+      ;;
+  esac
+  # Trailing slashes go, so that appending `/notify` cannot produce `//notify`. The
+  # loop can only stop at the scheme itself, which the case below refuses.
+  while [ "$TAMA_REMOTE_URL" != "${TAMA_REMOTE_URL%/}" ]; do
+    TAMA_REMOTE_URL="${TAMA_REMOTE_URL%/}"
+  done
+  case "$TAMA_REMOTE_URL" in
+    http:// | https://)
+      TAMA_REMOTE_URL=''
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+# How long a forward may take, in TAMA_REMOTE_TIMEOUT. Always succeeds: an empty or
+# non-numeric `@tama_remote_timeout` falls back to the default rather than handing
+# `curl` a flag value it would refuse. Zero means no timeout to `curl`, which is a
+# hung process per banner, so it falls back too.
+# shellcheck disable=SC2034  # TAMA_REMOTE_TIMEOUT is read by the caller
+tama_remote_timeout() {
+  TAMA_REMOTE_TIMEOUT="$(tama_opt tama_remote_timeout "$TAMA_REMOTE_TIMEOUT_DEFAULT")"
+  case "$TAMA_REMOTE_TIMEOUT" in
+    '' | *[!0-9]* | 0) TAMA_REMOTE_TIMEOUT="$TAMA_REMOTE_TIMEOUT_DEFAULT" ;;
+  esac
+  return 0
+}
+
+# Escapes an arbitrary value for use inside JSON double quotes, on stdout. A message
+# is text an agent wrote and may hold quotes, backslashes and newlines; without this
+# the payload would be malformed JSON or, worse, a second object the receiver decodes
+# as fields nobody sent.
+#
+# Control characters below U+0020 are forbidden literally in JSON strings. The three
+# with a short escape are rewritten; what remains of that range is deleted, which is
+# byte-safe for UTF-8 because every byte of a multibyte sequence is above 0x7F.
+tama_remote_json_escape() { # <value>
+  local escaped="$1"
+  escaped="${escaped//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  escaped="${escaped//$'\n'/\\n}"
+  escaped="${escaped//$'\r'/\\r}"
+  escaped="${escaped//$'\t'/\\t}"
+  printf '%s' "$escaped" | tr -d '\000-\037'
 }
 
 # Runs <capability>, with the caller's arguments, and returns its exit status —

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# The remote backend's dismiss: take the window's banner down on the other computer.
+#
+#   dismiss <group>
+#
+# The receiver removes the banner it raised under that group. Backgrounded for the
+# same reason `notify` is — this runs from the user selecting a window, through a
+# tmux hook, and a hook that waits on the network is a tmux that feels slow.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local token payload
+
+  # argv first, the environment as the fallback: the contract puts the group in both,
+  # so that a backend which handles notify and dismiss together can read it one way.
+  local group="${1-}"
+  [ -n "$group" ] || group="${TAMA_GROUP:-}"
+
+  # An empty group names an ungrouped banner, which nothing can take back; `ALL` is
+  # what terminal-notifier calls removing everything, and dismissing a banner must
+  # never take down somebody else's — on either computer.
+  if [ -z "$group" ] || [ "$group" = 'ALL' ]; then
+    exit 0
+  fi
+
+  tama_remote_curl || exit 0
+  tama_remote_url || exit 0
+  tama_remote_timeout
+
+  # shellcheck disable=SC2059  # the format is fixed; the data is in the arguments
+  payload="$(printf '{"group":"%s"}' "$(tama_remote_json_escape "$group")")"
+
+  set -- -s -o /dev/null --max-time "$TAMA_REMOTE_TIMEOUT" -X POST \
+    -H 'Content-Type: application/json' --data-binary "$payload"
+
+  token="$(tama_opt tama_remote_token '')"
+  [ -z "$token" ] || set -- "$@" -H "Authorization: Bearer $token"
+
+  "$TAMA_REMOTE_CURL" "$@" "$TAMA_REMOTE_URL/dismiss" >/dev/null 2>&1 &
+}
+
+main "$@"

@@ -1,0 +1,669 @@
+#!/usr/bin/env bats
+
+bats_require_minimum_version 1.7.0
+
+load helper
+
+# The remote backend, driven through `bin/tama` like everything else, with the
+# computer that shows the banners replaced by a fixture HTTP server that records
+# what it was POSTed.
+#
+# What that covers: the JSON payload (title, message, per-window group, terminal
+# and click), the bearer token, the dismiss half naming the group raising used,
+# and every misconfiguration degrading to silence rather than a failed agent
+# turn. What it cannot cover is a banner on a real Mac — there is no Notification
+# Center on a CI runner — so the receiver half is asserted against a fake
+# `terminal-notifier` instead, and the whole path end to end through both.
+setup() {
+  command -v python3 >/dev/null 2>&1 || skip 'the remote backend tests need python3'
+  command -v curl >/dev/null 2>&1 || skip 'the remote backend tests need curl'
+
+  # Before the server boots: the backend is reached from tmux hooks too, and a
+  # hook's `run-shell` inherits the environment the server was started with.
+  export TAMA_REMOTE_DIR="$BATS_TEST_TMPDIR/remote"
+  mkdir -p "$TAMA_REMOTE_DIR"
+  : >"$TAMA_REMOTE_DIR/requests"
+
+  tama_start_server
+  run "$PLUGIN_ROOT/tamagotchi.tmux"
+  assert_success
+}
+
+teardown() {
+  [ -z "${TAMA_REMOTE_SERVER_PID:-}" ] || kill "$TAMA_REMOTE_SERVER_PID" 2>/dev/null || true
+  TAMA_REMOTE_SERVER_PID=''
+  tama_detach_client
+  tmux_test_server_stop
+}
+
+# A port nothing else in this test owns. Bound and released, so a parallel test
+# could in principle take it first — the wait below turns that into a slow test
+# rather than a wrong one.
+free_port() {
+  python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
+}
+
+# The fixture server, and the plugin pointed at it — which is also how a user
+# points at their own receiver, so this exercises that resolution.
+start_fake_remote_server() {
+  local port
+  port="$(free_port)"
+  TAMA_REMOTE_URL="http://127.0.0.1:$port"
+  export TAMA_REMOTE_URL
+  python3 "$PLUGIN_ROOT/tests/fixtures/fake-remote-server.py" "$TAMA_REMOTE_DIR" "$port" \
+    >/dev/null 2>&1 &
+  TAMA_REMOTE_SERVER_PID=$!
+
+  local waited=0
+  while ! curl -s -o /dev/null "$TAMA_REMOTE_URL/"; do
+    waited=$((waited + 1))
+    if [ "$waited" -gt 200 ]; then
+      printf 'the fake receiver never answered on %s\n' "$TAMA_REMOTE_URL" >&2
+      return 1
+    fi
+    sleep 0.05
+  done
+
+  tmux_test_server_run set -g @tama_backend remote
+  tmux_test_server_run set -g @tama_remote_url "$TAMA_REMOTE_URL"
+}
+
+use_remote_backend_without_url() {
+  tmux_test_server_run set -g @tama_backend remote
+}
+
+# The plugin backgrounds curl on purpose — the network must not cost an agent's
+# turn — so every assertion about a request has to be an eventual one.
+wait_for_remote_requests() { # <count>
+  local waited=0
+  while [ "$(wc -l <"$TAMA_REMOTE_DIR/requests")" -lt "$1" ]; do
+    waited=$((waited + 1))
+    if [ "$waited" -gt 200 ]; then
+      printf 'the receiver was POSTed %s time(s), want %s; requests were:\n%s\n' \
+        "$(wc -l <"$TAMA_REMOTE_DIR/requests")" "$1" "$(cat "$TAMA_REMOTE_DIR/requests")" >&2
+      return 1
+    fi
+    sleep 0.05
+  done
+}
+
+remote_request_count() {
+  wc -l <"$TAMA_REMOTE_DIR/requests"
+}
+
+refute_remote_request() {
+  # No waiting to do: this asserts the *absence* of a request, and the only honest
+  # way to do that is to give a request that was going to happen the time to happen.
+  sleep 0.5
+  if [ "$(remote_request_count)" -ne 0 ]; then
+    printf 'expected no request at all, got:\n%s\n' "$(cat "$TAMA_REMOTE_DIR/requests")" >&2
+    return 1
+  fi
+}
+
+assert_remote_request() { # <number> <method-path>
+  local actual
+  actual="$(sed -n "${1}p" "$TAMA_REMOTE_DIR/requests")"
+  assert_equal "$actual" "$2"
+}
+
+# One field of the last POST to <path>, decoded from JSON: byte-exact, whatever an
+# agent put in the message.
+remote_json_value() { # <path> <field>
+  python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))' \
+    "$TAMA_REMOTE_DIR/$1.json" "$2"
+}
+
+assert_remote_json_value() { # <path> <field> <expected>
+  local actual
+  actual="$(remote_json_value "$1" "$2")" || return 1
+  assert_equal "$actual" "$3"
+}
+
+# An agent pane in a second window, so the user is somewhere else — the ordinary
+# case for a notification. Prints the pane id.
+agent_pane_elsewhere() {
+  tmux_test_server_run new-window -t t: -d -P -F '#{pane_id}'
+}
+
+@test "a banner is forwarded with its title, message and per-window group" {
+  start_fake_remote_server
+  local pane window
+  pane="$(agent_pane_elsewhere)"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$pane"
+  assert_success
+  [ -z "$stderr" ]
+
+  wait_for_remote_requests 1
+  assert_remote_request 1 'POST /notify'
+  assert_contains "$(remote_json_value notify title)" 'claude-code - ' 'the title'
+  assert_remote_json_value notify message 'permission needed'
+  assert_remote_json_value notify group "tmux-window-$window"
+}
+
+@test "the terminal to activate and the click travel with the banner" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
+  local pane
+  pane="$(agent_pane_elsewhere)"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+
+  wait_for_remote_requests 1
+  assert_remote_json_value notify activate net.kovidgoyal.kitty
+  # The click action the core composed, for the receiver to run back over SSH.
+  assert_contains "$(remote_json_value notify click)" 'select-window' 'the click'
+  assert_contains "$(remote_json_value notify click)" 'focus-window' 'the click'
+}
+
+@test "a message with quotes, backslashes and newlines arrives intact" {
+  start_fake_remote_server
+  local message
+  message="don't \"quote\" \\ $(printf 'newline\nnewline') ❄ end"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code "$message" \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+
+  wait_for_remote_requests 1
+  assert_remote_json_value notify message "$message"
+}
+
+@test "dismissing removes the group that raising used" {
+  start_fake_remote_server
+  local pane window
+  pane="$(agent_pane_elsewhere)"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  wait_for_remote_requests 1
+  local group
+  group="$(remote_json_value notify group)"
+
+  run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
+  assert_success
+  wait_for_remote_requests 2
+
+  assert_remote_request 2 'POST /dismiss'
+  assert_remote_json_value dismiss group "$group"
+}
+
+@test "a group named ALL is shown but never removed" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_group_format ALL
+  local pane window
+  pane="$(agent_pane_elsewhere)"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  wait_for_remote_requests 1
+  assert_remote_json_value notify group 'ALL'
+
+  # The receiver removes with `terminal-notifier -remove`, where ALL would take down
+  # notifications that do not belong to it — so dismissing one is a quiet nothing.
+  run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
+  assert_success
+  sleep 0.5
+  assert_equal "$(remote_request_count)" '1'
+}
+
+@test "an empty message forwards nothing" {
+  start_fake_remote_server
+
+  run env TAMA_PLUGIN_DIR="$PLUGIN_ROOT" \
+    "$PLUGIN_ROOT/backends/remote/notify" 'a title' ''
+  assert_success
+  refute_remote_request
+}
+
+@test "no receiver URL is silence, not a failed turn" {
+  use_remote_backend_without_url
+  local pane window
+  pane="$(agent_pane_elsewhere)"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$pane"
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+  # The rest of the pipeline still ran: the window is marked even though nothing was
+  # forwarded, which is the whole of "degrade quietly".
+  assert_flagged "$window"
+  refute_remote_request
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" dismiss "$window"
+  assert_success
+  [ -z "$stderr" ]
+}
+
+@test "a URL that is not http(s) is silence, not a failed turn" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_url 'macbook.local:8765'
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  [ -z "$stderr" ]
+  refute_remote_request
+}
+
+@test "a curl that is not installed is silence, not a failed turn" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_curl /nonexistent/curl
+
+  local pane window
+  pane="$(agent_pane_elsewhere)"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$pane"
+  assert_success
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+  assert_flagged "$window"
+  refute_remote_request
+}
+
+@test "the bearer token travels when configured and never otherwise" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_token 's3cr3t-token'
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+  assert_equal "$(cat "$TAMA_REMOTE_DIR/auth")" 'Bearer s3cr3t-token'
+
+  tmux_test_server_run set -g @tama_remote_token ''
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed again' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 2
+  assert_equal "$(cat "$TAMA_REMOTE_DIR/auth")" ''
+}
+
+@test "an invalid timeout falls back instead of failing" {
+  start_fake_remote_server
+  local invalid
+  for invalid in 0 soon -3 ''; do
+    tmux_test_server_run set -g @tama_remote_timeout "$invalid"
+    : >"$TAMA_REMOTE_DIR/requests"
+
+    run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' \
+      --pane "$(agent_pane_elsewhere)"
+    assert_success || return 1
+    [ -z "$stderr" ] || return 1
+    wait_for_remote_requests 1 || return 1
+  done
+}
+
+@test "a trailing slash on the URL does not double the slash" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_url "$TAMA_REMOTE_URL///"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+  assert_remote_request 1 'POST /notify'
+}
+
+@test "the remote backend runs under the bash macOS ships" {
+  # bash 3.2.57 is /bin/bash on every Mac, and the machine showing these banners is
+  # one; the code that builds the JSON must parse and run there too.
+  tama_use_bash_32_or_skip
+  start_fake_remote_server
+
+  local pane window
+  pane="$(agent_pane_elsewhere)"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code "it's waiting" \
+    --pane "$pane"
+  assert_success
+  [ -z "$stderr" ]
+  wait_for_remote_requests 1
+  assert_remote_json_value notify message "it's waiting"
+  assert_flagged "$window"
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" dismiss "$window"
+  assert_success
+  [ -z "$stderr" ]
+  wait_for_remote_requests 2
+  assert_remote_request 2 'POST /dismiss'
+}
+
+# --- doctor --------------------------------------------------------------------
+
+healthy_remote_server() {
+  tmux_test_server_run set -g window-status-format '#I:#{E:@tama_priority}#W#{E:@tama_icons}#{E:@tama_flag}'
+  tmux_test_server_run set -g window-status-current-format '#I:#{E:@tama_priority}#W#{E:@tama_icons}#{E:@tama_flag}'
+  tmux_test_server_run set -g @tama_backend remote
+  tmux_test_server_run set -g @tama_remote_url 'http://macbook.local:8765'
+  tmux_test_server_run set -g @tama_remote_token 's3cr3t-token'
+  export CLAUDE_CONFIG_DIR="$BATS_TEST_TMPDIR/claude"
+  mkdir -p "$CLAUDE_CONFIG_DIR"
+  cd "$BATS_TEST_TMPDIR" || return 1
+}
+
+@test "doctor reports the receiver, its capabilities and the token policy" {
+  healthy_remote_server
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'receiver: http://macbook.local:8765'
+  assert_output_contains 'capabilities: notify dismiss'
+  assert_output_contains 'no focused: nothing is ever suppressed'
+  assert_output_contains 'no focus: a click selects the window and the pane but does not'
+  assert_output_contains '@tama_remote_token is configured'
+  assert_output_contains '@tama_remote_timeout is 5s'
+  assert_output_contains 'no problems and no warnings'
+}
+
+@test "doctor never prints the token" {
+  healthy_remote_server
+  tmux_test_server_run set -g @tama_remote_token 's3cr3t-token-value'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  refute_output_contains 's3cr3t'
+}
+
+@test "doctor fails when the receiver has no URL" {
+  healthy_remote_server
+  tmux_test_server_run set -g @tama_remote_url ''
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_status 1
+  assert_output_contains '@tama_remote_url is unset'
+}
+
+@test "doctor fails on a URL that is not the receiver's http(s) address" {
+  healthy_remote_server
+  tmux_test_server_run set -g @tama_remote_url 'macbook.local:8765'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_status 1
+  assert_output_contains "expected the receiver's http(s):// URL"
+}
+
+@test "doctor warns without a token rather than failing" {
+  healthy_remote_server
+  tmux_test_server_run set -g @tama_remote_token ''
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_remote_token is empty'
+  assert_output_contains 'may raise banners'
+}
+
+@test "doctor warns on a timeout that falls back" {
+  healthy_remote_server
+  tmux_test_server_run set -g @tama_remote_timeout 'soon'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains "@tama_remote_timeout is 'soon'"
+  assert_output_contains 'up to 5s instead'
+}
+
+@test "doctor fails when curl is missing while any capability still needs it" {
+  healthy_remote_server
+  tmux_test_server_run set -g @tama_remote_curl "$BATS_TEST_TMPDIR/no-such-curl"
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_status 1
+  assert_output_contains 'named the remote backend and its curl is missing'
+}
+
+@test "a remote backend every capability of which is replaced is not broken" {
+  # The backend ships notify and dismiss and nothing else, so two overrides really
+  # do cover everything it can do — the same grading the other backends get.
+  healthy_remote_server
+  tmux_test_server_run set -g @tama_remote_curl "$BATS_TEST_TMPDIR/no-such-curl"
+  tmux_test_server_run set -g @tama_notify_command '/bin/echo'
+  tmux_test_server_run set -g @tama_dismiss_command '/bin/echo'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'named the remote backend and its curl is missing'
+  assert_output_contains 'every capability this backend ships is replaced'
+}
+
+# --- the receiver ---------------------------------------------------------------
+
+# The real receiver, with the notifier replaced by the fixture that records the
+# command line — the whole showing half, without a banner appearing anywhere.
+start_real_receiver() { # [extra args…]
+  export TAMA_NOTIFIER_DIR="$BATS_TEST_TMPDIR/notifier"
+  mkdir -p "$TAMA_NOTIFIER_DIR"
+  : >"$TAMA_NOTIFIER_DIR/calls"
+  local port
+  port="$(free_port)"
+  TAMA_RECEIVER_URL="http://127.0.0.1:$port"
+  export TAMA_RECEIVER_URL
+  python3 "$PLUGIN_ROOT/backends/remote/receiver.py" --host 127.0.0.1 --port "$port" \
+    --terminal-notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier" "$@" \
+    >/dev/null 2>&1 &
+  TAMA_REMOTE_SERVER_PID=$!
+
+  local waited=0
+  while ! curl -s -o /dev/null "$TAMA_RECEIVER_URL/health"; do
+    waited=$((waited + 1))
+    if [ "$waited" -gt 200 ]; then
+      printf 'the receiver never answered on %s\n' "$TAMA_RECEIVER_URL" >&2
+      return 1
+    fi
+    sleep 0.05
+  done
+}
+
+notifier_flag() { # <flag>
+  local file="$TAMA_NOTIFIER_DIR/$1"
+  if [ ! -e "$file" ]; then
+    printf 'the notifier was given no -%s\n' "$1" >&2
+    return 1
+  fi
+  cat "$file"
+}
+
+assert_notifier_flag() { # <flag> <expected>
+  local actual
+  actual="$(notifier_flag "$1")" || return 1
+  assert_equal "$actual" "$2"
+}
+
+@test "the receiver draws what it is sent, natively" {
+  start_real_receiver
+  local payload
+  payload='{"title":"claude-code - api","message":"permission needed","group":"tmux-window-@7","activate":"com.mitchellh.ghostty"}'
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    --data-binary "$payload"
+  assert_success
+  assert_equal "$output" '200'
+
+  local waited=0
+  while [ "$(wc -l <"$TAMA_NOTIFIER_DIR/calls")" -eq 0 ]; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || {
+      printf 'the notifier was never started\n' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  assert_notifier_flag title 'claude-code - api'
+  assert_notifier_flag message 'permission needed'
+  assert_notifier_flag group 'tmux-window-@7'
+  assert_notifier_flag activate 'com.mitchellh.ghostty'
+}
+
+@test "the receiver removes the group raising used" {
+  start_real_receiver
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/dismiss" \
+    --data-binary '{"group":"tmux-window-@7"}'
+  assert_success
+  assert_equal "$output" '200'
+
+  local waited=0
+  while [ ! -e "$TAMA_NOTIFIER_DIR/remove" ]; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || {
+      printf 'the notifier was never asked to remove anything\n' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  assert_notifier_flag remove 'tmux-window-@7'
+}
+
+@test "the receiver refuses without the token it was started with" {
+  start_real_receiver --token 's3cr3t-token'
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    --data-binary '{"title":"t","message":"m"}'
+  assert_success
+  assert_equal "$output" '401'
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    -H 'Authorization: Bearer wrong' --data-binary '{"title":"t","message":"m"}'
+  assert_success
+  assert_equal "$output" '401'
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    -H 'Authorization: Bearer s3cr3t-token' --data-binary '{"title":"t","message":"m"}'
+  assert_success
+  assert_equal "$output" '200'
+}
+
+@test "a click without an SSH target only activates the terminal" {
+  start_real_receiver
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    --data-binary '{"title":"t","message":"m","click":"tmux select-window"}'
+  assert_success
+  assert_equal "$output" '200'
+
+  local waited=0
+  while [ "$(wc -l <"$TAMA_NOTIFIER_DIR/calls")" -eq 0 ]; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || {
+      printf 'the notifier was never started\n' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  # No -execute: the click names tmux paths on the sending machine, where this
+  # computer cannot reach them, so running it would only fail.
+  if [ -e "$TAMA_NOTIFIER_DIR/execute" ]; then
+    printf 'expected no click action, got: %s\n' "$(cat "$TAMA_NOTIFIER_DIR/execute")" >&2
+    return 1
+  fi
+}
+
+@test "a click with an SSH target runs back over SSH" {
+  start_real_receiver --ssh-target 'user@vm'
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    --data-binary '{"title":"t","message":"m","click":"tmux select-window -t X"}'
+  assert_success
+  assert_equal "$output" '200'
+
+  local waited=0
+  while [ ! -e "$TAMA_NOTIFIER_DIR/execute" ]; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || {
+      printf 'the notifier was never given a click action\n' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  assert_contains "$(notifier_flag execute)" 'user@vm' 'the ssh target'
+  assert_contains "$(notifier_flag execute)" 'tmux select-window -t X' 'the click'
+}
+
+@test "the receiver falls back to osascript without terminal-notifier" {
+  export TAMA_OSASCRIPT_DIR="$BATS_TEST_TMPDIR/osascript"
+  mkdir -p "$TAMA_OSASCRIPT_DIR"
+  : >"$TAMA_OSASCRIPT_DIR/calls"
+  local bin="$BATS_TEST_TMPDIR/osabin"
+  mkdir -p "$bin"
+  cp "$PLUGIN_ROOT/tests/fixtures/fake-osascript" "$bin/osascript"
+
+  local port
+  port="$(free_port)"
+  TAMA_RECEIVER_URL="http://127.0.0.1:$port"
+  # A notifier path that is not there forces the fallback deterministically, on any
+  # machine — including a developer Mac that really has terminal-notifier.
+  PATH="$bin:/usr/bin:/bin" python3 "$PLUGIN_ROOT/backends/remote/receiver.py" \
+    --host 127.0.0.1 --port "$port" --terminal-notifier "$BATS_TEST_TMPDIR/no-such-notifier" \
+    >/dev/null 2>&1 &
+  TAMA_REMOTE_SERVER_PID=$!
+  local waited=0
+  while ! curl -s -o /dev/null "$TAMA_RECEIVER_URL/health"; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || return 1
+    sleep 0.05
+  done
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    --data-binary '{"title":"t","message":"say \"hi\""}'
+  assert_success
+  assert_equal "$output" '200'
+
+  waited=0
+  while [ "$(wc -l <"$TAMA_OSASCRIPT_DIR/calls")" -eq 0 ]; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || {
+      printf 'osascript was never started\n' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  assert_contains "$(cat "$TAMA_OSASCRIPT_DIR/script")" 'display notification' 'the script'
+  assert_contains "$(cat "$TAMA_OSASCRIPT_DIR/script")" 'say \"hi\"' 'the escaped message'
+}
+
+@test "tama notify through the real receiver draws the banner end to end" {
+  # The objective itself: a notification raised on this machine, forwarded by the
+  # backend, drawn natively on the other side — then taken down on arrival.
+  start_real_receiver
+  tmux_test_server_run set -g @tama_backend remote
+  tmux_test_server_run set -g @tama_remote_url "$TAMA_RECEIVER_URL"
+
+  local pane window
+  pane="$(agent_pane_elsewhere)"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+
+  local waited=0
+  while [ "$(wc -l <"$TAMA_NOTIFIER_DIR/calls")" -eq 0 ]; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || {
+      printf 'the banner never reached the other computer\n' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  assert_notifier_flag message 'permission needed'
+  assert_notifier_flag group "tmux-window-$window"
+
+  run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
+  assert_success
+  waited=0
+  while [ ! -e "$TAMA_NOTIFIER_DIR/remove" ]; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || {
+      printf 'the dismissal never reached the other computer\n' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  assert_notifier_flag remove "tmux-window-$window"
+}
