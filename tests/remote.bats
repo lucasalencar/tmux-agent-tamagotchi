@@ -142,6 +142,10 @@ agent_pane_elsewhere() {
   assert_contains "$(remote_json_value notify title)" 'claude-code - ' 'the title'
   assert_remote_json_value notify message 'permission needed'
   assert_remote_json_value notify group "tmux-window-$window"
+  # The payload shape is a cross-machine contract: the receiver reads exactly
+  # these keys, so a renamed or added one must update both sides at once.
+  assert_equal "$(python3 -c 'import json, sys; print(" ".join(sorted(json.load(open(sys.argv[1])))))' \
+    "$TAMA_REMOTE_DIR/notify.json")" 'activate click group message title'
 }
 
 @test "the terminal to activate and the click travel with the banner" {
@@ -191,6 +195,8 @@ agent_pane_elsewhere() {
 
   assert_remote_request 2 'POST /dismiss'
   assert_remote_json_value dismiss group "$group"
+  assert_equal "$(python3 -c 'import json, sys; print(" ".join(sorted(json.load(open(sys.argv[1])))))' \
+    "$TAMA_REMOTE_DIR/dismiss.json")" 'group'
 }
 
 @test "a group named ALL is shown but never removed" {
@@ -278,7 +284,7 @@ agent_pane_elsewhere() {
   # never deliver, and a bare scheme is not an address at all.
   start_fake_remote_server
   local url
-  for url in 'http://' 'https://' 'http:///' 'http://127.0.0.1:9/prefix'; do
+  for url in 'http://' 'https://' 'http:///' 'http://127.0.0.1:9/prefix' 'http://127.0.0.1:9?x=1' 'http://127.0.0.1:9#frag' 'http://127.0.0.1:9/a b'; do
     tmux_test_server_run set -g @tama_remote_url "$url"
     : >"$TAMA_REMOTE_DIR/requests"
 
@@ -398,19 +404,34 @@ healthy_remote_server() {
 
 @test "doctor reports the receiver, its capabilities and the token policy" {
   healthy_remote_server
-  # A live receiver, so the probe answers too and the verdict is clean.
-  start_fake_remote_server
+  # The real receiver, so the probe observes the true steady state: 400 for the
+  # messageless probe, and a named notifier on /health.
+  start_real_receiver --token 's3cr3t-token'
+  tmux_test_server_run set -g @tama_remote_url "$TAMA_RECEIVER_URL"
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains "receiver: $TAMA_REMOTE_URL"
+  assert_output_contains "receiver: $TAMA_RECEIVER_URL"
   assert_output_contains 'capabilities: notify dismiss'
   assert_output_contains 'no focused: nothing is ever suppressed'
   assert_output_contains 'no focus: a click selects the window and the pane but does not'
   assert_output_contains '@tama_remote_token is configured'
   assert_output_contains '@tama_remote_timeout is 5s'
   assert_output_contains 'receiver answers at'
+  assert_output_contains '(HTTP 400)'
   assert_output_contains 'no problems and no warnings'
+}
+
+@test "doctor warns when something that is not the receiver answers 200" {
+  healthy_remote_server
+  # The fixture answers 200 to every POST, which a real receiver never does for
+  # the messageless probe — so 200 means an impostor, not health.
+  start_fake_remote_server
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'answered HTTP 200'
+  assert_output_contains 'a receiver answers 400'
 }
 
 @test "doctor never prints the token" {
@@ -482,8 +503,16 @@ healthy_remote_server() {
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains "@tama_remote_timeout is 'soon'"
-  assert_output_contains 'up to 5s instead'
+  assert_output_contains "@tama_remote_timeout is 'soon'; using 5s instead"
+}
+
+@test "doctor clamps a timeout no forward should wait" {
+  healthy_remote_server
+  tmux_test_server_run set -g @tama_remote_timeout '60000'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains "@tama_remote_timeout is '60000'; using 300s instead"
 }
 
 @test "doctor fails when curl is missing while any capability still needs it" {
@@ -507,6 +536,18 @@ healthy_remote_server() {
   assert_success
   assert_output_contains 'named the remote backend and its curl is missing'
   assert_output_contains 'every capability this backend ships is replaced'
+}
+
+@test "a fully replaced backend is not failed over its unused URL either" {
+  healthy_remote_server
+  tmux_test_server_run set -g @tama_remote_url ''
+  tmux_test_server_run set -g @tama_notify_command '/bin/echo'
+  tmux_test_server_run set -g @tama_dismiss_command '/bin/echo'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'every capability this backend ships is replaced'
+  refute_output_contains 'something here is broken'
 }
 
 # --- the receiver ---------------------------------------------------------------
@@ -598,6 +639,45 @@ assert_notifier_flag() { # <flag> <expected>
   done
   sleep 0.5
   [ ! -e "$TAMA_NOTIFIER_DIR/remove" ]
+}
+
+@test "the receiver never groups a banner it must not" {
+  start_real_receiver
+
+  # The notify half of the same rule: ALL or empty must draw ungrouped, never as
+  # `-group ALL` (addressing unrelated banners together) or `-group ''`.
+  local group
+  for group in ALL ''; do
+    : >"$TAMA_NOTIFIER_DIR/calls"
+    rm -f "$TAMA_NOTIFIER_DIR/group"
+    run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+      --data-binary "{\"title\":\"t\",\"message\":\"m\",\"group\":\"$group\"}"
+    assert_success || return 1
+    assert_equal "$output" '200' || return 1
+    local waited=0
+    while [ "$(wc -l <"$TAMA_NOTIFIER_DIR/calls")" -eq 0 ]; do
+      waited=$((waited + 1))
+      [ "$waited" -le 200 ] || {
+        printf 'the notifier was never started\n' >&2
+        return 1
+      }
+      sleep 0.05
+    done
+    if [ -e "$TAMA_NOTIFIER_DIR/group" ]; then
+      printf 'expected no -group for %s, got: %s\n' "$group" "$(cat "$TAMA_NOTIFIER_DIR/group")" >&2
+      return 1
+    fi
+  done
+}
+
+@test "a messageless payload is the probe contract, not a banner" {
+  start_real_receiver
+
+  run curl -s -o "$BATS_TEST_TMPDIR/probe-body" -w '%{http_code}' \
+    -X POST "$TAMA_RECEIVER_URL/notify" --data-binary '{}'
+  assert_success
+  assert_equal "$output" '400'
+  assert_contains "$(cat "$BATS_TEST_TMPDIR/probe-body")" 'message is required' 'the error'
 }
 
 @test "the receiver removes the group raising used" {
@@ -694,8 +774,10 @@ assert_notifier_flag() { # <flag> <expected>
     }
     sleep 0.05
   done
-  assert_contains "$(notifier_flag execute)" 'user@vm' 'the ssh target'
-  assert_contains "$(notifier_flag execute)" 'tmux select-window -t X' 'the click'
+  # The exact command: quoting is the safety of this payload, and substrings
+  # would stay green while it broke.
+  assert_equal "$(notifier_flag execute)" \
+    "$(python3 -c 'import shlex, shutil; print(shlex.quote(shutil.which("ssh") or "ssh"), shlex.quote("user@vm"), shlex.quote("tmux select-window -t X"))')"
 }
 
 @test "the receiver refuses an SSH target without a token" {

@@ -24,7 +24,10 @@ main() {
 
   # An empty group names an ungrouped banner, which nothing can take back; `ALL` is
   # what terminal-notifier calls removing everything, and dismissing a banner must
-  # never take down somebody else's — on either computer.
+  # never take down somebody else's — on either computer. The receiver enforces the
+  # same rule (see removable_group in backends/remote/receiver.py) against senders
+  # that are not this backend; when one side learns a new reserved name, teach it
+  # to the other.
   if [ -z "$group" ] || [ "$group" = 'ALL' ]; then
     exit 0
   fi
@@ -32,7 +35,7 @@ main() {
   # shellcheck disable=SC2059  # the format is fixed; the data is in the arguments
   payload="$(printf '{"group":"%s"}' "$(tama_remote_json_escape "$group")")"
 
-  tama_remote_post /dismiss "$payload" || exit 0
+  tama_remote_post_backgrounded /dismiss "$payload" || exit 0
 }
 
 main "$@"

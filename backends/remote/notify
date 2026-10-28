@@ -43,7 +43,7 @@ main() {
   # No `curl`, no receiver URL, no banner, and no complaint: this is the machine state
   # `auto` never selects — the backend runs only when named — reached here because the
   # binary went away or the URL was never configured. `doctor` is what says so loudly.
-  tama_remote_post /notify "$payload" || exit 0
+  tama_remote_post_backgrounded /notify "$payload" || exit 0
 }
 
 main "$@"

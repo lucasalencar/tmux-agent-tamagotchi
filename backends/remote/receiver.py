@@ -88,7 +88,8 @@ def run_quiet(argv, timeout=30):
 def removable_group(group):
     """Whether dismissing may name this group. `ALL` is terminal-notifier's word
     for removing everything, and an empty group names an ungrouped banner that
-    nothing can take back."""
+    nothing can take back. backends/remote/dismiss enforces the same rule before
+    sending; when one side learns a new reserved name, teach it to the other."""
     return bool(group) and group != "ALL"
 
 
@@ -208,6 +209,12 @@ class ReceiverHandler(BaseHTTPRequestHandler):
                 "osascript" if self.server.osascript else "none"),
         })
 
+    def authorized_payload(self):
+        """The request body as a dict, or None after answering 401/400 for it."""
+        if not self.require_authorization():
+            return None
+        return self.read_json_or_respond()
+
     def do_POST(self):  # noqa: N802 (BaseHTTPRequestHandler API)
         path = self.path.split("?", 1)[0]
         if path == "/notify":
@@ -218,9 +225,7 @@ class ReceiverHandler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "unknown path"})
 
     def handle_notify(self):
-        if not self.require_authorization():
-            return
-        payload = self.read_json_or_respond()
+        payload = self.authorized_payload()
         if payload is None:
             return
         message = text_field(payload, "message")
@@ -234,17 +239,16 @@ class ReceiverHandler(BaseHTTPRequestHandler):
                 self.server.ssh_binary, self.server.ssh_target, click)
         if draw_banner(
                 self.server.notifier, self.server.osascript,
-                text_field(payload, "title"), message,
-                text_field(payload, "group"),
-                text_field(payload, "activate"), click_command):
+                title=text_field(payload, "title"), message=message,
+                group=text_field(payload, "group"),
+                activate=text_field(payload, "activate"),
+                click_command=click_command):
             self.send_json(200, {})
         else:
             self.send_json(500, {"error": "no notifier available"})
 
     def handle_dismiss(self):
-        if not self.require_authorization():
-            return
-        payload = self.read_json_or_respond()
+        payload = self.authorized_payload()
         if payload is None:
             return
         remove_banner(self.server.notifier, text_field(payload, "group"))

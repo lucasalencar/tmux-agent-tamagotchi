@@ -55,6 +55,7 @@ TAMA_REMOTE_CURL_DIRS='/opt/homebrew/bin /usr/local/bin /usr/bin'
 # backgrounds the request so the hook never waits, but an unbounded one leaves
 # a hung `curl` behind for every banner.
 TAMA_REMOTE_TIMEOUT_DEFAULT='5'
+TAMA_REMOTE_TIMEOUT_MAX='300'
 
 # The status for "this capability does not exist here". 127 is what a shell reports
 # for a command it could not find, which is exactly what happened.
@@ -216,11 +217,12 @@ tama_remote_url() {
   while [ "$rest" != "${rest%/}" ]; do
     rest="${rest%/}"
   done
-  # The receiver is root-mounted: a path it would answer 404 to, or no host at
-  # all, is a configuration that can never deliver. The loop above can only stop
-  # at the scheme itself, so the empty case is the bare `http://` spelled out.
+  # The receiver is root-mounted: a path, query or fragment it would answer 404
+  # to, or no host at all, is a configuration that can never deliver. The loop
+  # above can only stop at the scheme itself, so the empty case is the bare
+  # `http://` spelled out.
   case "$rest" in
-    '' | */*)
+    '' | */* | *'[?#]'* | *[[:space:]]*)
       TAMA_REMOTE_URL=''
       return 1
       ;;
@@ -230,15 +232,19 @@ tama_remote_url() {
 }
 
 # How long a forward may take, in TAMA_REMOTE_TIMEOUT. Always succeeds: an empty,
-# non-numeric or all-zero `@tama_remote_timeout` falls back to the default rather
-# than handing `curl` a flag value it would refuse. Zero means no timeout to `curl`,
-# which is a hung process per banner, so it falls back too.
+# non-numeric or leading-zero `@tama_remote_timeout` falls back to the default
+# rather than handing `curl` a flag value it would refuse. Zero means no timeout to
+# `curl`, which is a hung process per banner, so it falls back too. Above the
+# maximum it clamps: an unbounded forward is the same pile-up, one typo away.
 # shellcheck disable=SC2034  # TAMA_REMOTE_TIMEOUT is read by the caller
 tama_remote_timeout() {
   TAMA_REMOTE_TIMEOUT="$(tama_opt tama_remote_timeout "$TAMA_REMOTE_TIMEOUT_DEFAULT")"
   case "$TAMA_REMOTE_TIMEOUT" in
     '' | *[!0-9]* | 0*) TAMA_REMOTE_TIMEOUT="$TAMA_REMOTE_TIMEOUT_DEFAULT" ;;
   esac
+  if [ "$TAMA_REMOTE_TIMEOUT" -gt "$TAMA_REMOTE_TIMEOUT_MAX" ]; then
+    TAMA_REMOTE_TIMEOUT="$TAMA_REMOTE_TIMEOUT_MAX"
+  fi
   return 0
 }
 
@@ -260,10 +266,11 @@ tama_remote_json_escape() { # <value>
   printf '%s' "$escaped" | tr -d '\000-\037'
 }
 
-# POSTs <payload> to the receiver's <endpoint>, backgrounded. The caller composes
-# the payload and enforces its own guards; non-zero means there is nowhere to send
-# (no `curl`, no URL), which is silence to the caller rather than an error.
-tama_remote_post() { # <endpoint> <payload>
+# POSTs <payload> to the receiver's <endpoint>, backgrounded: fire and forget, so
+# the hook never waits on the network. The caller composes the payload and
+# enforces its own guards; non-zero means there is nowhere to send (no `curl`,
+# no URL), which is silence to the caller rather than an error.
+tama_remote_post_backgrounded() { # <endpoint> <payload>
   local endpoint="$1" payload="$2" token
   tama_remote_curl || return 1
   tama_remote_url || return 1

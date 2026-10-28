@@ -144,7 +144,15 @@ before blaming the plugin for a silent desktop.
   click action names tmux paths on the sending machine, where the showing
   computer cannot reach them. Start the receiver with `--ssh-target user@vm`
   and the click runs back over SSH instead, landing on the pane that spoke —
-  provided that computer can SSH there without a passphrase prompt.
+  provided that computer can SSH there without a passphrase prompt. Harden that
+  key on the tmux side: a dedicated key restricted with `command=` to the tmux
+  subcommands a click runs keeps a captured token from becoming a general shell
+  on that machine.
+
+A message the receiver cannot decode as UTF-8 (raw latin-1 tool output, for
+example) is refused with 400 and never drawn, while the local backends hand
+their bytes straight to the notifier. Rare, but a real divergence: keep agent
+messages UTF-8 where you can.
 
 With the `remote` backend, `ALL` is refused by `dismiss` just like on macOS:
 the receiver removes with `terminal-notifier -remove`, where `ALL` would take

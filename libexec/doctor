@@ -825,6 +825,14 @@ doctor_remote_receiver() {
     doctor_more 'before blaming the plugin for a silent desktop.'
   else
     configured="$(tama_opt tama_remote_url '')"
+    # A backend whose every shipped capability is replaced never reaches the
+    # receiver: failing its URL would fail a working setup (ADR-0007).
+    if doctor_backend_fully_overridden; then
+      doctor_warn "@tama_remote_url is '${configured:-unset}', but every capability this backend ships is replaced"
+      doctor_more 'Nothing is forwarded anywhere, so the URL costs nothing. Set it or set'
+      doctor_more '@tama_backend to the empty string to stop the message.'
+      return 0
+    fi
     case "$configured" in
       '')
         doctor_fail '@tama_remote_url is unset, so the remote backend has nowhere to send'
@@ -863,8 +871,8 @@ doctor_remote_timeout() {
   if [ "$configured" = "$effective" ]; then
     doctor_ok "@tama_remote_timeout is ${effective}s"
   else
-    doctor_warn "@tama_remote_timeout is '$configured'; expected a positive number of seconds"
-    doctor_more "Forwarding waits up to ${effective}s instead."
+    doctor_warn "@tama_remote_timeout is '$configured'; using ${effective}s instead"
+    doctor_more 'Expected a positive number of seconds, at most 300.'
   fi
 }
 
@@ -874,14 +882,21 @@ doctor_remote_timeout() {
 # is a token the two sides spell differently. An empty object is not a
 # notification: answered, it means 400 (message required); unauthorized, 401.
 doctor_remote_probe() {
-  local token status
+  local token status probe_timeout health
   # Only when the transport itself resolves: without `curl` or a URL there is
   # nothing to probe, and those states already have their own verdicts.
   tama_remote_curl || return 0
   tama_remote_url || return 0
   tama_remote_timeout
 
-  set -- -s -o /dev/null -w '%{http_code}' --max-time "$TAMA_REMOTE_TIMEOUT" \
+  # Capped: the forward timeout is for backgrounded delivery, while this probe
+  # runs in the foreground of an interactive diagnostic.
+  probe_timeout="$TAMA_REMOTE_TIMEOUT"
+  if [ "$probe_timeout" -gt 10 ]; then
+    probe_timeout=10
+  fi
+
+  set -- -s -o /dev/null -w '%{http_code}' --max-time "$probe_timeout" \
     -X POST -H 'Content-Type: application/json' --data-binary '{}'
   token="$(tama_opt tama_remote_token '')"
   [ -z "$token" ] || set -- "$@" -H "Authorization: Bearer $token"
@@ -891,23 +906,45 @@ doctor_remote_probe() {
   status="$("$TAMA_REMOTE_CURL" "$@" "$TAMA_REMOTE_URL/notify" 2>/dev/null)" ||
     status='000'
   case "$status" in
-    200 | 400)
-      doctor_ok "receiver answers at $TAMA_REMOTE_URL/notify (HTTP $status)"
+    400)
+      doctor_ok "receiver answers at $TAMA_REMOTE_URL/notify (HTTP 400)"
       doctor_more 'That verdict covers the token too: a mismatch answers 401.'
+      ;;
+    200)
+      doctor_warn "receiver answered HTTP 200 at $TAMA_REMOTE_URL/notify; a receiver answers 400"
+      doctor_more 'Something that is not this receiver is listening there. Check the URL.'
+      return 0
       ;;
     401)
       doctor_fail "receiver rejected this token (HTTP 401): @tama_remote_token does not match there"
       doctor_more 'Banners are forwarded but never drawn until both sides share the token.'
+      return 0
       ;;
     000)
       doctor_warn "receiver not reached at $TAMA_REMOTE_URL/notify"
       doctor_more 'It may simply be down — the showing computer asleep, the receiver not'
       doctor_more 'started — so this is worth knowing rather than broken. When it runs,'
       doctor_more 'probe it by hand: curl http://THAT-COMPUTER:8765/health'
+      return 0
       ;;
     *)
       doctor_warn "receiver answered HTTP $status at $TAMA_REMOTE_URL/notify; expected 400"
       doctor_more 'Something else is listening there. Check the URL and the port.'
+      return 0
+      ;;
+  esac
+
+  # Answered and authorized — but a receiver with nothing to draw with answers the
+  # probe while failing every real banner, so ask /health what it draws with. A
+  # fixed-string match rather than a JSON parser: the field is this receiver's own
+  # contract, spelled exactly so.
+  health="$("$TAMA_REMOTE_CURL" -s --max-time "$probe_timeout" \
+    "$TAMA_REMOTE_URL/health" 2>/dev/null)" || health=''
+  case "$health" in
+    *'"notifier": "none"'*)
+      doctor_warn 'receiver has no notifier: no banners will draw there'
+      doctor_more 'Install terminal-notifier on the showing computer, where osascript'
+      doctor_more 'is the fallback without grouping or click actions.'
       ;;
   esac
 }
