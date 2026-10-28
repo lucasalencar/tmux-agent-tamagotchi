@@ -36,8 +36,12 @@ sending machine. By default a click only activates the terminal; with
 `--ssh-target` the receiver runs the click back over SSH, restoring
 click-to-pane for users whose showing computer can reach tmux that way. The
 receiver executes nothing it was not sent by a bearer of the token, and
-nothing at all without `--ssh-target`.
+nothing at all without `--ssh-target` — which in turn refuses to run without a
+token, since it turns any bearer into someone who can plant a click payload.
 
-The token travels as a bearer header and is never printed by `doctor`, for the
-same reason capability overrides are redacted there: that output is meant to
-be pasted into a bug report.
+The token travels as a bearer header in cleartext HTTP, so the receiver belongs
+on a trusted network or behind a TLS-terminating proxy; that output is meant to
+be pasted into a bug report, and the token itself is never printed by `doctor`.
+`doctor` does probe the receiver live, reporting reachability and whether the
+configured token matches — a mismatched token is otherwise silence in both
+directions, and the likeliest two-machine misconfiguration.

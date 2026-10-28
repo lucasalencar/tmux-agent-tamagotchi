@@ -23,18 +23,11 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 main() {
-  local title="${1-}" message="${2-}" token payload
+  local title="${1-}" message="${2-}" payload
 
   # A banner with nothing to say would only be a request started to say it. The core
   # does not send one; a user's own caller might.
   [ -n "$message" ] || exit 0
-
-  # No `curl`, no receiver URL, no banner, and no complaint: this is the machine state
-  # `auto` never selects — the backend runs only when named — reached here because the
-  # binary went away or the URL was never configured. `doctor` is what says so loudly.
-  tama_remote_curl || exit 0
-  tama_remote_url || exit 0
-  tama_remote_timeout
 
   # One object, every value escaped: a message is arbitrary text an agent wrote and
   # may hold quotes, backslashes and newlines. `printf` keeps values as arguments so
@@ -47,18 +40,10 @@ main() {
     "$(tama_remote_json_escape "${TAMA_TERMINAL_BUNDLE_ID:-}")" \
     "$(tama_remote_json_escape "${TAMA_CLICK:-}")")"
 
-  # `--data-binary`, not `--data`: the latter strips newlines, which a payload must
-  # survive byte-for-byte. `-o /dev/null` rather than a redirect, because the point is
-  # to receive nothing, not to print it somewhere else.
-  set -- -s -o /dev/null --max-time "$TAMA_REMOTE_TIMEOUT" -X POST \
-    -H 'Content-Type: application/json' --data-binary "$payload"
-
-  # Optional, and the only secret here: when configured it travels as a bearer token,
-  # which the receiver checks before drawing anything.
-  token="$(tama_opt tama_remote_token '')"
-  [ -z "$token" ] || set -- "$@" -H "Authorization: Bearer $token"
-
-  "$TAMA_REMOTE_CURL" "$@" "$TAMA_REMOTE_URL/notify" >/dev/null 2>&1 &
+  # No `curl`, no receiver URL, no banner, and no complaint: this is the machine state
+  # `auto` never selects — the backend runs only when named — reached here because the
+  # binary went away or the URL was never configured. `doctor` is what says so loudly.
+  tama_remote_post /notify "$payload" || exit 0
 }
 
 main "$@"

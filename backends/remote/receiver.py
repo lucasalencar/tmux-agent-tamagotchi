@@ -5,7 +5,7 @@ Runs on the computer that shows the notifications (for example your MacBook)
 and receives what the `remote` backend forwards from the computer that runs
 tmux (for example a Linux VM)::
 
-    python3 receiver.py --port 8765 --token s3cr3t
+    TAMA_REMOTE_TOKEN=s3cr3t python3 receiver.py --port 8765
 
 Then, on the tmux side::
 
@@ -30,7 +30,13 @@ Clicking a banner runs nothing by default besides activating the terminal: the
 click action names tmux paths on the *sending* machine, where this computer
 cannot reach them. Pass `--ssh-target user@vm` and the click is run back over
 SSH instead, so a click lands on the pane that spoke — provided this computer
-can SSH there without a passphrase prompt.
+can SSH there without a passphrase prompt. Because that turns any bearer of
+the token into someone who can plant a click payload, `--ssh-target` refuses
+to run without `--token` (or `TAMA_REMOTE_TOKEN`).
+
+The token travels in cleartext HTTP, so run this on a network you trust
+(Tailscale, WireGuard, your own LAN) or behind a TLS-terminating proxy; anyone
+who captures the token can raise banners in your name.
 """
 
 import argparse
@@ -43,6 +49,10 @@ import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# The notifier this draws with, and where a Mac keeps one. These mirror
+# TAMA_MACOS_NOTIFIER_NAME and TAMA_MACOS_NOTIFIER_DIRS in lib/backend.sh — the
+# two files cannot share code (this one is copied to another computer), so when
+# one side learns a new name or prefix, teach the other.
 NOTIFIER_NAME = "terminal-notifier"
 NOTIFIER_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 MAX_BODY_BYTES = 1024 * 1024
@@ -64,58 +74,73 @@ def find_notifier(explicit=None):
     return None
 
 
+def run_quiet(argv, timeout=30):
+    """Run argv silently. Returns the completed process, or None when it never ran."""
+    try:
+        return subprocess.run(
+            argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=timeout, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def removable_group(group):
+    """Whether dismissing may name this group. `ALL` is terminal-notifier's word
+    for removing everything, and an empty group names an ungrouped banner that
+    nothing can take back."""
+    return bool(group) and group != "ALL"
+
+
 def applescript_escape(value):
-    return value.replace("\\", "\\\\").replace('"', '\\"')
+    # A best-effort fallback: AppleScript string literals cannot span lines, so
+    # newlines become spaces rather than breaking the script.
+    return (value.replace("\\", "\\\\").replace('"', '\\"')
+                 .replace("\r", " ").replace("\n", " "))
 
 
-def draw_banner(notifier, osascript, title, message, group, activate, execute):
-    """Draw one banner. Returns True when something was asked to draw it."""
+def draw_banner(notifier, osascript, title, message, group, activate, click_command):
+    """Draw one banner. Returns True when a draw command reported success."""
     if notifier is not None:
         argv = [notifier, "-title", title, "-message", message]
-        if group and group != "ALL":
+        if removable_group(group):
             argv += ["-group", group]
         if activate:
             argv += ["-activate", activate]
-        if execute:
-            argv += ["-execute", execute]
-        try:
-            subprocess.run(
-                argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=30, check=False,
-            )
+        if click_command:
+            argv += ["-execute", click_command]
+        result = run_quiet(argv)
+        if result is not None and result.returncode == 0:
             return True
-        except (OSError, subprocess.SubprocessError):
-            pass
     if osascript is not None:
         script = 'display notification "%s" with title "%s"' % (
             applescript_escape(message), applescript_escape(title))
-        try:
-            subprocess.run(
-                [osascript, "-e", script],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=30, check=False,
-            )
+        result = run_quiet([osascript, "-e", script])
+        if result is not None and result.returncode == 0:
             return True
-        except (OSError, subprocess.SubprocessError):
-            pass
     return False
 
 
 def remove_banner(notifier, group):
-    """Take down the banners raised under group. A no-op without a notifier."""
-    if notifier is None:
-        return True
-    if not group or group == "ALL":
-        return True
-    try:
-        subprocess.run(
-            [notifier, "-remove", group],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=30, check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        pass
+    """Take down the banners raised under group. A no-op without a notifier or a
+    removable group; always succeeds, because a banner that would not go away is
+    not worth an error."""
+    if notifier is not None and removable_group(group):
+        run_quiet([notifier, "-remove", group])
     return True
+
+
+def text_field(payload, name):
+    value = payload.get(name) or ""
+    return value if isinstance(value, str) else str(value)
+
+
+def build_click_command(ssh_binary, ssh_target, click):
+    return "%s %s %s" % (
+        shlex.quote(ssh_binary),
+        shlex.quote(ssh_target),
+        shlex.quote(click),
+    )
 
 
 class ReceiverHandler(BaseHTTPRequestHandler):
@@ -132,30 +157,42 @@ class ReceiverHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def read_json(self):
+    def read_json_or_respond(self):
+        """The request body as a dict, or None after answering the error."""
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
-            return None, self.send_json(400, {"error": "bad Content-Length"})
+            self.send_json(400, {"error": "bad Content-Length"})
+            return None
         if length <= 0 or length > MAX_BODY_BYTES:
             self.send_json(413 if length > 0 else 400, {"error": "bad body size"})
-            return None, None
+            return None
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             self.send_json(400, {"error": "malformed JSON"})
-            return None, None
+            return None
         if not isinstance(payload, dict):
             self.send_json(400, {"error": "JSON object expected"})
-            return None, None
-        return payload, None
+            return None
+        return payload
 
-    def authorized(self):
+    def require_authorization(self):
+        """True when the request may proceed, after answering 401 otherwise."""
         expected = self.server.shared_token
         if not expected:
             return True
         presented = self.headers.get("Authorization") or ""
-        if hmac.compare_digest(presented, "Bearer " + expected):
+        # Headers arrive latin-1 decoded, so encoding back recovers the exact bytes
+        # the sender put on the wire; the token itself is compared as UTF-8. Either
+        # encoding failing means the values cannot match, not a crash.
+        try:
+            match = hmac.compare_digest(
+                presented.encode("latin-1"),
+                ("Bearer " + expected).encode("utf-8"))
+        except (UnicodeEncodeError, TypeError):
+            match = False
+        if match:
             return True
         self.send_json(401, {"error": "bad token"})
         return False
@@ -173,49 +210,53 @@ class ReceiverHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802 (BaseHTTPRequestHandler API)
         path = self.path.split("?", 1)[0]
-        if path not in ("/notify", "/dismiss"):
+        if path == "/notify":
+            self.handle_notify()
+        elif path == "/dismiss":
+            self.handle_dismiss()
+        else:
             self.send_json(404, {"error": "unknown path"})
+
+    def handle_notify(self):
+        if not self.require_authorization():
             return
-        if not self.authorized():
-            return
-        payload, _ = self.read_json()
+        payload = self.read_json_or_respond()
         if payload is None:
             return
-
-        def text(name):
-            value = payload.get(name) or ""
-            return value if isinstance(value, str) else str(value)
-
-        if path == "/dismiss":
-            remove_banner(self.server.notifier, text("group"))
-            self.send_json(200, {})
-            return
-
-        message = text("message")
+        message = text_field(payload, "message")
         if not message:
             self.send_json(400, {"error": "message is required"})
             return
-        execute = ""
-        click = text("click")
+        click_command = ""
+        click = text_field(payload, "click")
         if click and self.server.ssh_target:
-            execute = "%s %s %s" % (
-                shlex.quote(self.server.ssh_binary),
-                shlex.quote(self.server.ssh_target),
-                shlex.quote(click),
-            )
-        shown = draw_banner(
-            self.server.notifier, self.server.osascript,
-            text("title"), message, text("group"), text("activate"), execute)
-        if shown:
+            click_command = build_click_command(
+                self.server.ssh_binary, self.server.ssh_target, click)
+        if draw_banner(
+                self.server.notifier, self.server.osascript,
+                text_field(payload, "title"), message,
+                text_field(payload, "group"),
+                text_field(payload, "activate"), click_command):
             self.send_json(200, {})
         else:
             self.send_json(500, {"error": "no notifier available"})
+
+    def handle_dismiss(self):
+        if not self.require_authorization():
+            return
+        payload = self.read_json_or_respond()
+        if payload is None:
+            return
+        remove_banner(self.server.notifier, text_field(payload, "group"))
+        self.send_json(200, {})
 
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(
         description="Draw tmux-agent-tamagotchi banners forwarded by the "
-                    "remote backend as native notifications on this computer.")
+                    "remote backend as native notifications on this computer. "
+                    "Prefer a trusted network or a TLS-terminating proxy: the "
+                    "token travels in cleartext HTTP.")
     parser.add_argument("--host", default="0.0.0.0",
                         help="interface to listen on (default: %(default)s; "
                              "use 127.0.0.1 to accept only local forwards)")
@@ -228,7 +269,8 @@ def parse_args(argv):
     parser.add_argument("--ssh-target", default="",
                         help="optional SSH destination (user@host) back to the "
                              "tmux machine, enabling click-to-pane; without it "
-                             "a click only activates the terminal")
+                             "a click only activates the terminal (requires "
+                             "--token)")
     parser.add_argument("--terminal-notifier", default=None, metavar="PATH",
                         help="terminal-notifier binary to draw with "
                              "(default: found on PATH, then Homebrew prefixes)")
@@ -238,6 +280,11 @@ def parse_args(argv):
 def main(argv=None):
     args = parse_args(sys.argv[1:] if argv is None else argv)
     token = args.token if args.token is not None else os.environ.get("TAMA_REMOTE_TOKEN", "")
+    if args.ssh_target and not token:
+        sys.stderr.write(
+            "error: --ssh-target turns any bearer of the token into someone who "
+            "can plant a click payload, so it requires --token (or TAMA_REMOTE_TOKEN)\n")
+        return 2
 
     notifier = find_notifier(args.terminal_notifier)
     if args.terminal_notifier and notifier is None:

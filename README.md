@@ -353,7 +353,9 @@ the receiver was started with `--ssh-target user@vm`, in which case the click
 runs back over SSH and lands on the pane that spoke. There is no focus check
 across the network, so banners are never suppressed there: noise, never
 silence, like the `libnotify` backend. `auto` never picks `remote`; it runs
-only when chosen explicitly.
+only when chosen explicitly. The token travels in cleartext HTTP, so keep the
+receiver on a network you trust or behind a TLS-terminating proxy — see
+[`backends/README.md`](backends/README.md).
 
 ### Hook management
 

@@ -150,6 +150,19 @@ With the `remote` backend, `ALL` is refused by `dismiss` just like on macOS:
 the receiver removes with `terminal-notifier -remove`, where `ALL` would take
 down notifications that do not belong to it.
 
+The URL is the receiver's root address: a path in it (`http://host/prefix`)
+passes nothing, because the receiver only serves `/notify`, `/dismiss` and
+`/health` at the root and answers 404 to anything else. `tama doctor` fails on
+such a URL, and probes the receiver live: it reports whether the receiver
+answers and whether it accepts the configured token, since a mismatched token
+is otherwise silence in both directions.
+
+The token travels in cleartext HTTP. Run the receiver on a network you trust —
+Tailscale, WireGuard, your own LAN — or behind a TLS-terminating proxy, and
+prefer passing it as `TAMA_REMOTE_TOKEN` rather than `--token` on a shared
+machine. Anyone who captures it can raise banners in your name, and with
+`--ssh-target` in effect, plant click payloads for them.
+
 The macOS backend needs to know your terminal, since neither tmux nor this plugin can
 tell which application is displaying a session: `@tama_terminal_app` is the process
 name it asks the desktop about and defaults to Ghostty. `@tama_terminal_bundle_id`

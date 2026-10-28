@@ -15,7 +15,7 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 main() {
-  local token payload
+  local payload
 
   # argv first, the environment as the fallback: the contract puts the group in both,
   # so that a backend which handles notify and dismiss together can read it one way.
@@ -29,20 +29,10 @@ main() {
     exit 0
   fi
 
-  tama_remote_curl || exit 0
-  tama_remote_url || exit 0
-  tama_remote_timeout
-
   # shellcheck disable=SC2059  # the format is fixed; the data is in the arguments
   payload="$(printf '{"group":"%s"}' "$(tama_remote_json_escape "$group")")"
 
-  set -- -s -o /dev/null --max-time "$TAMA_REMOTE_TIMEOUT" -X POST \
-    -H 'Content-Type: application/json' --data-binary "$payload"
-
-  token="$(tama_opt tama_remote_token '')"
-  [ -z "$token" ] || set -- "$@" -H "Authorization: Bearer $token"
-
-  "$TAMA_REMOTE_CURL" "$@" "$TAMA_REMOTE_URL/dismiss" >/dev/null 2>&1 &
+  tama_remote_post /dismiss "$payload" || exit 0
 }
 
 main "$@"
