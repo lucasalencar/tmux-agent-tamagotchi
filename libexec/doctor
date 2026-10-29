@@ -872,7 +872,7 @@ doctor_remote_timeout() {
     doctor_ok "@tama_remote_timeout is ${effective}s"
   else
     doctor_warn "@tama_remote_timeout is '$configured'; using ${effective}s instead"
-    doctor_more 'Expected a positive number of seconds, at most 300.'
+    doctor_more "Expected a positive number of seconds, at most $TAMA_REMOTE_TIMEOUT_MAX."
   fi
 }
 
@@ -907,8 +907,7 @@ doctor_remote_probe() {
     status='000'
   case "$status" in
     400)
-      doctor_ok "receiver answers at $TAMA_REMOTE_URL/notify (HTTP 400)"
-      doctor_more 'That verdict covers the token too: a mismatch answers 401.'
+      doctor_remote_health "$probe_timeout"
       ;;
     200)
       doctor_warn "receiver answered HTTP 200 at $TAMA_REMOTE_URL/notify; a receiver answers 400"
@@ -933,11 +932,15 @@ doctor_remote_probe() {
       return 0
       ;;
   esac
+}
 
-  # Answered and authorized — but a receiver with nothing to draw with answers the
-  # probe while failing every real banner, so ask /health what it draws with. A
-  # fixed-string match rather than a JSON parser: the field is this receiver's own
-  # contract, spelled exactly so.
+# What the answering service draws with, asked only after it proved itself a
+# receiver by answering the probe 400. A wrong service that happens to 400 would
+# otherwise read as healthy, and a receiver with nothing to draw with answers
+# the probe while failing every real banner.
+doctor_remote_health() { # <probe timeout>
+  local probe_timeout="$1" health
+  # `local` and assignment on one line would mask the exit status.
   health="$("$TAMA_REMOTE_CURL" -s --max-time "$probe_timeout" \
     "$TAMA_REMOTE_URL/health" 2>/dev/null)" || health=''
   case "$health" in
@@ -945,6 +948,21 @@ doctor_remote_probe() {
       doctor_warn 'receiver has no notifier: no banners will draw there'
       doctor_more 'Install terminal-notifier on the showing computer, where osascript'
       doctor_more 'is the fallback without grouping or click actions.'
+      ;;
+    *'"notifier": "osascript"'*)
+      doctor_warn 'receiver draws with osascript: no per-window grouping or click actions'
+      doctor_more 'Banners still arrive, but a chatty agent may stack them and clicks only'
+      doctor_more 'activate the terminal. Install terminal-notifier for the full behavior.'
+      ;;
+    *'"ok": true'*)
+      doctor_ok "receiver answers at $TAMA_REMOTE_URL/notify (HTTP 400)"
+      doctor_more 'That verdict covers the token too: a mismatch answers 401.'
+      ;;
+    *)
+      # Warn, not fail: only 401 proves a configuration wrong, and a health fetch
+      # can fail while the receiver is fine. A wrong verdict here must not fail CI.
+      doctor_warn "receiver answered HTTP 400 but its /health is unexpected"
+      doctor_more 'Something that is not this receiver may be listening there. Check the URL.'
       ;;
   esac
 }

@@ -280,11 +280,12 @@ agent_pane_elsewhere() {
 }
 
 @test "a URL with no host, or with a path the receiver never serves, is silence" {
-  # The receiver is root-mounted: a path in the URL is a configuration that can
-  # never deliver, and a bare scheme is not an address at all.
+  # The receiver is root-mounted: a path, query or fragment in the URL is a
+  # configuration that can never deliver. Every case points at the live fake
+  # server, so only validation silence — never a refused connection — passes.
   start_fake_remote_server
-  local url
-  for url in 'http://' 'https://' 'http:///' 'http://127.0.0.1:9/prefix' 'http://127.0.0.1:9?x=1' 'http://127.0.0.1:9#frag' 'http://127.0.0.1:9/a b'; do
+  local base="$TAMA_REMOTE_URL" url
+  for url in 'http://' 'https://' 'http:///' "$base/prefix" "$base?x=1" "$base#frag"; do
     tmux_test_server_run set -g @tama_remote_url "$url"
     : >"$TAMA_REMOTE_DIR/requests"
 
@@ -294,6 +295,15 @@ agent_pane_elsewhere() {
     [ -z "$stderr" ] || return 1
     refute_remote_request || return 1
   done
+  # A whitespace host without any slash, so only the whitespace branch rejects it.
+  tmux_test_server_run set -g @tama_remote_url 'http://exa mple:8765'
+  : >"$TAMA_REMOTE_DIR/requests"
+
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code 'needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  [ -z "$stderr" ]
+  refute_remote_request
 }
 
 @test "a curl that is not installed is silence, not a failed turn" {
@@ -374,12 +384,14 @@ agent_pane_elsewhere() {
   pane="$(agent_pane_elsewhere)"
   window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
 
-  run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code "it's waiting" \
+  local message
+  message="$(printf "it's waiting\nsecond line\tend")"
+  run --separate-stderr "$PLUGIN_ROOT/bin/tama" notify claude-code "$message" \
     --pane "$pane"
   assert_success
   [ -z "$stderr" ]
   wait_for_remote_requests 1
-  assert_remote_json_value notify message "it's waiting"
+  assert_remote_json_value notify message "$message"
   assert_flagged "$window"
 
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" dismiss "$window"
@@ -432,6 +444,92 @@ healthy_remote_server() {
   assert_success
   assert_output_contains 'answered HTTP 200'
   assert_output_contains 'a receiver answers 400'
+}
+
+# A stub answering fixed statuses, for the probe branches no real receiver takes.
+start_fixed_status_server() { # <notify-status> <health-body>
+  local port status="$1" body="$2"
+  port="$(free_port)"
+  TAMA_STUB_URL="http://127.0.0.1:$port"
+  export TAMA_STUB_URL
+  python3 -c '
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+status, body = int(sys.argv[1]), sys.argv[2].encode()
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args): pass
+    def _reply(self, code, payload):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        if length: self.rfile.read(length)
+        self._reply(status, b"{}")
+    def do_GET(self):
+        self._reply(200, body)
+ThreadingHTTPServer(("127.0.0.1", int(sys.argv[3])), Handler).serve_forever()
+' "$status" "$body" "$port" >/dev/null 2>&1 &
+  TAMA_REMOTE_SERVER_PID=$!
+
+  local waited=0
+  while ! curl -s -o /dev/null "$TAMA_STUB_URL/health"; do
+    waited=$((waited + 1))
+    if [ "$waited" -gt 200 ]; then
+      printf 'the stub server never answered on %s\n' "$TAMA_STUB_URL" >&2
+      return 1
+    fi
+    sleep 0.05
+  done
+}
+
+@test "doctor warns on a 400 from something without the receiver contract" {
+  healthy_remote_server
+  # 400 alone is not proof: the verdict also needs /health to speak the
+  # receiver's contract.
+  start_fixed_status_server 400 '{"nope": true}'
+  tmux_test_server_run set -g @tama_remote_url "$TAMA_STUB_URL"
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'its /health is unexpected'
+}
+
+@test "doctor warns on an unexpected probe status" {
+  healthy_remote_server
+  start_fixed_status_server 500 '{"ok": true, "notifier": "terminal-notifier"}'
+  tmux_test_server_run set -g @tama_remote_url "$TAMA_STUB_URL"
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'answered HTTP 500'
+  assert_output_contains 'expected 400'
+}
+
+@test "doctor warns when the receiver has nothing to draw with" {
+  healthy_remote_server
+  local empty="$BATS_TEST_TMPDIR/doctor-nothing"
+  mkdir -p "$empty"
+  local port
+  port="$(free_port)"
+  TAMA_RECEIVER_URL="http://127.0.0.1:$port"
+  PATH="$empty:/bin" python3 "$PLUGIN_ROOT/backends/remote/receiver.py" \
+    --host 127.0.0.1 --port "$port" --terminal-notifier "$BATS_TEST_TMPDIR/no-such-notifier" \
+    >/dev/null 2>&1 &
+  TAMA_REMOTE_SERVER_PID=$!
+  local waited=0
+  while ! curl -s -o /dev/null "$TAMA_RECEIVER_URL/health"; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || return 1
+    sleep 0.05
+  done
+  tmux_test_server_run set -g @tama_remote_url "$TAMA_RECEIVER_URL"
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains 'receiver has no notifier'
 }
 
 @test "doctor never prints the token" {
@@ -540,14 +638,18 @@ healthy_remote_server() {
 
 @test "a fully replaced backend is not failed over its unused URL either" {
   healthy_remote_server
-  tmux_test_server_run set -g @tama_remote_url ''
   tmux_test_server_run set -g @tama_notify_command '/bin/echo'
   tmux_test_server_run set -g @tama_dismiss_command '/bin/echo'
 
-  run "$PLUGIN_ROOT/bin/tama" doctor
-  assert_success
-  assert_output_contains 'every capability this backend ships is replaced'
-  refute_output_contains 'something here is broken'
+  local url
+  for url in '' 'macbook.local:8765'; do
+    tmux_test_server_run set -g @tama_remote_url "$url"
+
+    run "$PLUGIN_ROOT/bin/tama" doctor
+    assert_success || return 1
+    assert_output_contains 'every capability this backend ships is replaced' || return 1
+    refute_output_contains 'something here is broken' || return 1
+  done
 }
 
 # --- the receiver ---------------------------------------------------------------
@@ -678,6 +780,9 @@ assert_notifier_flag() { # <flag> <expected>
   assert_success
   assert_equal "$output" '400'
   assert_contains "$(cat "$BATS_TEST_TMPDIR/probe-body")" 'message is required' 'the error'
+  # And no banner was drawn for it: every doctor run probes, so a draw here
+  # would pop a banner on the showing computer on each one.
+  [ "$(wc -l <"$TAMA_NOTIFIER_DIR/calls")" -eq 0 ]
 }
 
 @test "the receiver removes the group raising used" {

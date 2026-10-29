@@ -155,7 +155,7 @@ Configuration (defaults shown):
   set -g @tama_notify_send ''
   set -g @tama_remote_url ''
   set -g @tama_remote_token ''
-  set -g @tama_remote_timeout 5
+  set -g @tama_remote_timeout 5  # seconds, at most 300
   set -g @tama_remote_curl ''
   set -g @tama_gc_shells 'sh bash zsh fish dash ksh mksh ash csh tcsh'
   set -g @tama_manage_hooks off

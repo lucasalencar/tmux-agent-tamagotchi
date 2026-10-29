@@ -119,7 +119,7 @@ per-window group, terminal bundle id and click action as JSON to
 `@tama_remote_url/notify`, and `dismiss` POSTs the group to
 `@tama_remote_url/dismiss`. Both travel by `curl` (`@tama_remote_curl` overrides
 which one), backgrounded so the hook never waits on the network, bounded by
-`@tama_remote_timeout` seconds (default 5), and authenticated with
+`@tama_remote_timeout` seconds (default 5, at most 300), and authenticated with
 `@tama_remote_token` as a bearer token when configured. A missing `curl`, a
 missing URL, or a URL that is not `http(s)://` is silence rather than a failed
 turn; `tama doctor` fails on the configuration instead.

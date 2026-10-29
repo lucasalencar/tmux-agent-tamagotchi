@@ -222,7 +222,7 @@ tama_remote_url() {
   # above can only stop at the scheme itself, so the empty case is the bare
   # `http://` spelled out.
   case "$rest" in
-    '' | */* | *'[?#]'* | *[[:space:]]*)
+    '' | */* | *[?#]* | *[[:space:]]*)
       TAMA_REMOTE_URL=''
       return 1
       ;;
