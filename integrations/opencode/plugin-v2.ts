@@ -12,7 +12,8 @@ import {
   executeWithBun,
   type ProcessExecutor,
 } from "./effect-runner"
-import { createOpenCodeRuntime } from "./runtime"
+import { createOpenCodeRuntime, type OpenCodeRuntime } from "./runtime"
+import { buildResyncEvents, kindFromParentId } from "./resync"
 
 // Structural subset of the OpenCode v2 plugin context used here. Kept local so
 // the plugin has no v2 package dependency at load time; v2 validates the
@@ -22,6 +23,13 @@ export type PluginContextV2 = Readonly<{
   session: Readonly<{
     get(input: Readonly<{ sessionID: string }>): Promise<unknown>
     context(input: Readonly<{ sessionID: string }>): Promise<unknown>
+    // Present on newer hosts (2.2+); absent on the pinned 2.0.10 types.
+    // Always probed defensively so one host never breaks another.
+    list?(input?: unknown): Promise<unknown>
+    active?(): Promise<unknown>
+  }>
+  permission?: Readonly<{
+    list?(input: unknown): Promise<unknown>
   }>
   event: Readonly<{
     subscribe(options?: Readonly<{ signal?: AbortSignal }>): AsyncIterable<unknown>
@@ -107,6 +115,13 @@ export function createTmuxAgentTamagotchiPluginV2(
       ),
     })
 
+    // The background service can restart under a live turn (update, config
+    // reload): the new plugin instance starts with empty in-memory lifecycle
+    // while the server keeps the sessions. The snapshot is read before the
+    // subscription starts so live events order behind it instead of racing a
+    // stale idle over fresh activity.
+    await resyncV2(ctx, directory, runtime)
+
     const controller = new AbortController()
     void (async () => {
       try {
@@ -127,6 +142,109 @@ export function createTmuxAgentTamagotchiPluginV2(
       controller.abort()
       await runtime.dispose()
     }
+  }
+}
+
+// Re-establishes pane state from the v2 list/active snapshot. Best effort by
+// contract: unknown hosts (no list/active), lookup failures, and pagination
+// limits settle to presence or skip the session, and never reject into
+// OpenCode or delay setup beyond the snapshot reads.
+async function resyncV2(
+  ctx: PluginContextV2,
+  directory: string | undefined,
+  runtime: OpenCodeRuntime,
+): Promise<void> {
+  try {
+    const session = ctx.session as {
+      get(input: Readonly<{ sessionID: string }>): Promise<unknown>
+      list?(input?: unknown): Promise<unknown>
+      active?(): Promise<unknown>
+    }
+    type KnownSession = { parentID?: unknown; directory?: string }
+    const byId = new Map<string, KnownSession>()
+    if (typeof session.list === "function") {
+      let cursor: string | undefined
+      for (let page = 0; page < 10; page += 1) {
+        let raw: unknown
+        try {
+          raw = await session.list(
+            directory !== undefined
+              ? { directory, limit: 100, ...(cursor !== undefined ? { cursor } : {}) }
+              : { limit: 100, ...(cursor !== undefined ? { cursor } : {}) },
+          )
+        } catch {
+          break
+        }
+        const { items, next } = unwrapSessionPage(raw)
+        for (const item of items) {
+          if (directory !== undefined && item.directory !== undefined && !sameDirectory(item.directory, directory)) {
+            continue
+          }
+          if (!byId.has(item.id)) byId.set(item.id, item)
+        }
+        if (next === undefined) break
+        cursor = next
+      }
+    }
+    const activeIds = new Set<string>()
+    if (typeof session.active === "function") {
+      try {
+        const raw = await session.active()
+        for (const sessionId of Object.keys(unwrapActiveMap(raw))) {
+          if (sessionId) activeIds.add(sessionId)
+        }
+      } catch {
+        // Without the running set every listed session settles to idle
+        // presence, still better than the cleared pane.
+      }
+    }
+    // Active sessions the list omitted (delegated children are not
+    // top-level): only running ones justify an extra lookup.
+    for (const sessionId of Array.from(activeIds)) {
+      if (byId.has(sessionId)) continue
+      const fetched = await getSession(ctx, sessionId).catch(() => undefined)
+      if (!fetched) continue
+      if (directory !== undefined && fetched.directory !== undefined && !sameDirectory(fetched.directory, directory)) {
+        continue
+      }
+      byId.set(sessionId, fetched)
+    }
+    if (byId.size === 0) return
+    const permissions: Array<{ requestId: string; sessionId: string; kind: "root" | "delegated"; directory?: string }> = []
+    const listPermission = ctx.permission?.list
+    if (typeof listPermission === "function") {
+      for (const [sessionId, sessionInfo] of Array.from(byId)) {
+        const kind = kindFromParentId(sessionInfo.parentID) ?? "root"
+        try {
+          const raw = await listPermission({ sessionID: sessionId }).catch(() => undefined)
+          for (const requestId of unwrapPermissionIds(raw)) {
+            permissions.push({
+              requestId,
+              sessionId,
+              kind,
+              ...(directory !== undefined ? { directory } : {}),
+            })
+          }
+        } catch {
+          continue
+        }
+      }
+    }
+    const events = buildResyncEvents(
+      Array.from(byId).flatMap(([sessionId, sessionInfo]) => {        const kind = kindFromParentId(sessionInfo.parentID)
+        if (!kind) return []
+        return [{
+          sessionId,
+          kind,
+          status: activeIds.has(sessionId) ? "busy" as const : "idle" as const,
+          ...(directory !== undefined ? { directory } : {}),
+        }]
+      }),
+      permissions,
+    )
+    if (events.length > 0) await runtime.resync(events)
+  } catch {
+    // Resync must never break plugin setup.
   }
 }
 
@@ -203,6 +321,55 @@ function textParts(content: unknown): Array<{ type: string; text: string }> {
 function unwrapData(response: unknown): unknown {
   if (isRecord(response) && "data" in response) return response.data
   return response
+}
+
+// Reads one v2 session page defensively: the client returns SessionsResponse
+// ({ data, cursor }) directly while older hosts may wrap it in { data }.
+// Items normalize both the flat v1-style { directory } and the v2
+// { location: { directory } } shapes; entries without an id are dropped.
+function unwrapSessionPage(response: unknown): {
+  items: Array<{ id: string; parentID?: unknown; directory?: string }>
+  next?: string
+} {
+  const root = unwrapData(response)
+  const data = isRecord(root) && Array.isArray(root.data) ? root.data : Array.isArray(root) ? root : []
+  const items: Array<{ id: string; parentID?: unknown; directory?: string }> = []
+  for (const entry of data) {
+    if (!isRecord(entry) || typeof entry.id !== "string" || !entry.id) continue
+    const location = entry.location
+    const directory = typeof entry.directory === "string"
+      ? entry.directory
+      : isRecord(location) && typeof location.directory === "string"
+        ? (location.directory as string)
+        : undefined
+    items.push({
+      id: entry.id,
+      ...(Object.prototype.hasOwnProperty.call(entry, "parentID") ? { parentID: entry.parentID } : {}),
+      ...(directory !== undefined ? { directory } : {}),
+    })
+  }
+  const cursor = isRecord(root) ? root.cursor : undefined
+  const next = isRecord(cursor) && typeof cursor.next === "string" && cursor.next ? cursor.next : undefined
+  return next !== undefined ? { items, next } : { items }
+}
+
+// Reads the active-session map ({ sessionID: { type: "running" } }) from
+// either the direct client shape or a { data } wrapper.
+function unwrapActiveMap(response: unknown): Record<string, unknown> {
+  const data = unwrapData(response)
+  return isRecord(data) ? { ...data } : {}
+}
+
+// Reads pending permission requests for one session: an array of
+// { id, sessionID } in either direct or { data } form.
+function unwrapPermissionIds(response: unknown): string[] {
+  const data = unwrapData(response)
+  const list = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.data) ? data.data : []
+  const ids: string[] = []
+  for (const entry of list) {
+    if (isRecord(entry) && typeof entry.id === "string" && entry.id) ids.push(entry.id)
+  }
+  return ids
 }
 
 // Finds the tmux pane running OpenCode in the given directory. Panes are

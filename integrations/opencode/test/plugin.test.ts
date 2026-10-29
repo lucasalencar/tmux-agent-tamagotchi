@@ -505,6 +505,79 @@ describe("wired plugin", () => {
       "/plugin/bin/tama", "state", "clear",
     ])
   })
+
+  test("resyncs running sessions from the list/status snapshot on setup", async () => {
+    const commandCalls: string[][] = []
+    const plugin = createTmuxAgentTamagotchiPlugin({
+      execute: async (argv) => {
+        commandCalls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+    const hooks = await plugin(fakePluginInput(
+      async ({ path }) => path.id === "child-a" ? { id: path.id, parentID: "root-a" } : { id: path.id },
+      async () => undefined,
+      async () => [],
+      {
+        list: [
+          { id: "root-a", directory: "/workspace" },
+          { id: "child-a", parentID: "root-a", directory: "/workspace" },
+          { id: "root-idle", directory: "/workspace" },
+        ],
+        status: {
+          "root-a": { type: "busy" },
+          "child-a": { type: "busy" },
+          "root-idle": { type: "idle" },
+        },
+      },
+    ))
+
+    // Presence, then activity, then delegated tracking — before any live event.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "subagent-start", "--", "child-a"],
+    ])
+
+    // Later live events order behind the seed: the turn ending returns to idle
+    // and stops the resynced subagent.
+    await hooks.event?.({ event: statusEvent("child-a", "idle") as never })
+    await hooks.event?.({ event: statusEvent("root-a", "idle") as never })
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "subagent-start", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "subagent-stop", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+    ])
+    await hooks.dispose?.()
+  })
+
+  test("survives snapshot failures without breaking later lifecycle", async () => {
+    const commandCalls: string[][] = []
+    const plugin = createTmuxAgentTamagotchiPlugin({
+      execute: async (argv) => {
+        commandCalls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+    const input = fakePluginInput(async ({ path }) => ({ id: path.id }))
+    input.client.session.list = async () => {
+      throw new Error("service unavailable")
+    }
+    const hooks = await plugin(input)
+
+    expect(tamaCalls(commandCalls)).toEqual([])
+    await hooks.event?.({ event: statusEvent("root-a", "busy") as never })
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "running", "OpenCode"],
+    ])
+    await hooks.dispose?.()
+  })
 })
 
 function fakePluginInput(
@@ -517,6 +590,10 @@ function fakePluginInput(
     path: { id: string }
     query: { directory: string; limit?: number }
   }) => Promise<unknown> = async () => [],
+  snapshot: {
+    list?: unknown
+    status?: unknown
+  } = {},
 ): PluginInput {
   return {
     directory: "/workspace",
@@ -537,6 +614,8 @@ function fakePluginInput(
         }) => ({
           data: await lookupMessages(options),
         }),
+        ...("list" in snapshot ? { list: async () => ({ data: snapshot.list }) } : {}),
+        ...("status" in snapshot ? { status: async () => ({ data: snapshot.status }) } : {}),
       },
     },
   } as unknown as PluginInput

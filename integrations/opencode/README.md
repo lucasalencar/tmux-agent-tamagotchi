@@ -130,6 +130,26 @@ Sessions are classified conservatively from `parentID`, using an exact SDK looku
 does not include session information. Unattributed errors and events whose session metadata cannot
 be recovered are ignored. Unknown or malformed events and operational failures are silent.
 
+## Restart recovery
+
+OpenCode runs this plugin inside its background service, so a service restart (update, config
+reload, `opencode service restart`) replaces the plugin instance and its in-memory lifecycle
+while the sessions themselves survive. The previous instance clears the pane on disposal; the
+new instance then re-reads the authoritative snapshot before subscribing to live events, so the
+pane returns to the state the server reports instead of staying cleared:
+
+- v1 reads `session.list` with `session.status` for the instance directory.
+- v2 reads `session.list` with `session.active` for the instance directory (plus pending
+  permission requests when the host exposes them), following list cursors and resolving
+  active sessions the top-level list omits.
+
+Each known session seeds presence (`idle`) then activity (`running` for busy roots,
+subagent tracking for busy delegated sessions, `waiting` for pending permissions), scoped to
+the instance directory exactly like live events. The seed never synthesizes terminal
+assistant messages, so recovery never raises a completion notification for work it did not
+observe finishing. Snapshot failures are silent and leave live events to establish state as
+before; hosts without the newer list/active methods simply resync nothing.
+
 ## Completion notifications
 
 An eligible successful turn sets the pane to `idle` immediately, then waits five seconds before

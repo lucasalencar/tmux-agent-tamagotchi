@@ -313,6 +313,84 @@ describe("v2 setup", () => {
     await cleanup()
     expect(tamaCalls(commandCalls)).toEqual([])
   })
+
+  test("resyncs running sessions from the list/active snapshot before live events", async () => {
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const events: unknown[] = [
+      { type: "session.idle", data: { sessionID: "root-a" } },
+    ]
+    const cleanup = await setup(fakeContextV2(events, { "root-a": {} }, {}, {
+      list: [{ id: "root-a" }],
+      active: { "root-a": { type: "running" } },
+    }))
+    await settle()
+
+    // Presence, then activity from the snapshot, then the live idle lands last.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+    ])
+    await cleanup()
+  })
+
+  test("resyncs idle presence without active and follows paginated lists", async () => {
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const cleanup = await setup(fakeContextV2(
+      [],
+      { "root-a": {}, "child-a": { parentID: "root-a" } },
+      {},
+      {
+        listPages: [[{ id: "root-a" }], [{ id: "child-a", parentID: "root-a" }]],
+        active: {},
+      },
+    ))
+    await settle()
+
+    // Both pages establish presence; nothing is running so the pane settles
+    // at idle with no subagent tracking.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+    ])
+    await cleanup()
+  })
+
+  test("resync ignores foreign sessions and restores waiting from permissions", async () => {
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const cleanup = await setup(fakeContextV2(
+      [],
+      { "root-a": {}, "root-foreign": { location: { directory: "/elsewhere" } } },
+      {},
+      {
+        list: [{ id: "root-a" }, { id: "root-foreign", location: { directory: "/elsewhere" } }],
+        active: { "root-a": { type: "running" }, "root-foreign": { type: "running" } },
+        permissions: { "root-a": ["request-a"] },
+      },
+    ))
+    await settle()
+
+    // Only the local session reaches tama; its pending permission overlays
+    // waiting above the resynced running state.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "waiting", "OpenCode", "--pane", PANE],
+    ])
+    await cleanup()
+  })
+
+  test("setup without list/active on old hosts publishes nothing by itself", async () => {
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const cleanup = await setup(fakeContextV2([], {}, {}))
+    await settle()
+
+    expect(tamaCalls(commandCalls)).toEqual([])
+    await cleanup()
+  })
 })
 
 function fakeExecute(commandCalls: string[][]) {
@@ -331,7 +409,14 @@ function fakeContextV2(
   events: unknown[],
   sessions: Record<string, { parentID?: string; location?: { directory: string } }>,
   messages: Record<string, Array<Record<string, unknown>>>,
+  snapshot?: {
+    list?: Array<Record<string, unknown>>
+    listPages?: Array<Array<Record<string, unknown>>>
+    active?: Record<string, unknown>
+    permissions?: Record<string, string[]>
+  },
 ): PluginContextV2 {
+  let listCalls = 0
   return {
     location: { directory: DIRECTORY },
     session: {
@@ -340,7 +425,38 @@ function fakeContextV2(
         return session ? { id: sessionID, ...session } : undefined
       },
       context: async ({ sessionID }: { sessionID: string }) => messages[sessionID] ?? [],
+      ...(snapshot && ("list" in snapshot || "listPages" in snapshot)
+        ? {
+          list: async () => {
+            listCalls += 1
+            if (snapshot.listPages) {
+              const page = snapshot.listPages[listCalls - 1] ?? []
+              const next = listCalls < snapshot.listPages.length ? `cursor-${listCalls}` : undefined
+              return { data: page, cursor: next !== undefined ? { next } : {} }
+            }
+            return { data: snapshot.list ?? [], cursor: {} }
+          },
+        }
+        : {}),
+      ...(snapshot && "active" in snapshot
+        ? { active: async () => snapshot.active ?? {} }
+        : {}),
     },
+    ...(snapshot && "permissions" in snapshot
+      ? {
+        permission: {
+          list: async (input: unknown) => {
+            const sessionID = (input as { sessionID?: unknown }).sessionID
+            return {
+              data: (typeof sessionID === "string" ? snapshot.permissions?.[sessionID] ?? [] : []).map((id) => ({
+                id,
+                sessionID,
+              })),
+            }
+          },
+        },
+      }
+      : {}),
     event: {
       subscribe: async function* (options?: { signal?: AbortSignal }) {
         for (const event of events) {
