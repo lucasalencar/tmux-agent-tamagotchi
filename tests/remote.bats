@@ -216,7 +216,7 @@ agent_pane_elsewhere() {
   run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
   assert_success
   sleep 0.5
-  assert_equal "$(remote_request_count)" '1'
+  [ "$(remote_request_count)" -eq 1 ]
 }
 
 @test "an empty group dismisses nothing and forwards nothing" {
@@ -236,7 +236,7 @@ agent_pane_elsewhere() {
   run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
   assert_success
   sleep 0.5
-  assert_equal "$(remote_request_count)" '1'
+  [ "$(remote_request_count)" -eq 1 ]
 }
 
 @test "an empty message forwards nothing" {
@@ -510,14 +510,12 @@ ThreadingHTTPServer(("127.0.0.1", int(sys.argv[3])), Handler).serve_forever()
 
 @test "doctor warns when the receiver has nothing to draw with" {
   healthy_remote_server
-  local empty="$BATS_TEST_TMPDIR/doctor-nothing"
-  mkdir -p "$empty"
   local port
   port="$(free_port)"
   TAMA_RECEIVER_URL="http://127.0.0.1:$port"
-  PATH="$empty:/bin" python3 "$PLUGIN_ROOT/backends/remote/receiver.py" \
+  python3 "$PLUGIN_ROOT/backends/remote/receiver.py" \
     --host 127.0.0.1 --port "$port" --terminal-notifier "$BATS_TEST_TMPDIR/no-such-notifier" \
-    >/dev/null 2>&1 &
+    --osascript "$BATS_TEST_TMPDIR/no-such-osascript" >/dev/null 2>&1 &
   TAMA_REMOTE_SERVER_PID=$!
   local waited=0
   while ! curl -s -o /dev/null "$TAMA_RECEIVER_URL/health"; do
@@ -909,18 +907,18 @@ assert_notifier_flag() { # <flag> <expected>
   export TAMA_OSASCRIPT_DIR="$BATS_TEST_TMPDIR/osascript"
   mkdir -p "$TAMA_OSASCRIPT_DIR"
   : >"$TAMA_OSASCRIPT_DIR/calls"
-  local bin="$BATS_TEST_TMPDIR/osabin"
-  mkdir -p "$bin"
-  cp "$PLUGIN_ROOT/tests/fixtures/fake-osascript" "$bin/osascript"
+  local osascript="$BATS_TEST_TMPDIR/fallback-osascript"
+  cp "$PLUGIN_ROOT/tests/fixtures/fake-osascript" "$osascript"
+  chmod +x "$osascript"
 
   local port
   port="$(free_port)"
   TAMA_RECEIVER_URL="http://127.0.0.1:$port"
   # A notifier path that is not there forces the fallback deterministically, on any
   # machine — including a developer Mac that really has terminal-notifier.
-  PATH="$bin:/usr/bin:/bin" python3 "$PLUGIN_ROOT/backends/remote/receiver.py" \
+  python3 "$PLUGIN_ROOT/backends/remote/receiver.py" \
     --host 127.0.0.1 --port "$port" --terminal-notifier "$BATS_TEST_TMPDIR/no-such-notifier" \
-    >/dev/null 2>&1 &
+    --osascript "$osascript" >/dev/null 2>&1 &
   TAMA_REMOTE_SERVER_PID=$!
   local waited=0
   while ! curl -s -o /dev/null "$TAMA_RECEIVER_URL/health"; do
@@ -946,8 +944,8 @@ assert_notifier_flag() { # <flag> <expected>
   assert_contains "$(cat "$TAMA_OSASCRIPT_DIR/script")" 'display notification' 'the script'
   assert_contains "$(cat "$TAMA_OSASCRIPT_DIR/script")" 'say \"hi\"' 'the escaped message'
   # One line: a literal newline would end the AppleScript string early and the
-  # banner would never draw.
-  assert_equal "$(wc -l <"$TAMA_OSASCRIPT_DIR/script")" '0'
+  # banner would never draw. Compared numerically: BSD wc pads its output.
+  [ "$(wc -l <"$TAMA_OSASCRIPT_DIR/script")" -eq 0 ]
 }
 
 @test "a failing terminal-notifier falls back to osascript" {
@@ -957,6 +955,7 @@ assert_notifier_flag() { # <flag> <expected>
   local bin="$BATS_TEST_TMPDIR/fallbackbin"
   mkdir -p "$bin"
   cp "$PLUGIN_ROOT/tests/fixtures/fake-osascript" "$bin/osascript"
+  chmod +x "$bin/osascript"
   cat >"$bin/terminal-notifier" <<'NOTIFIER'
 #!/bin/sh
 exit 1
@@ -966,8 +965,10 @@ NOTIFIER
   local port
   port="$(free_port)"
   TAMA_RECEIVER_URL="http://127.0.0.1:$port"
-  PATH="$bin:/usr/bin:/bin" python3 "$PLUGIN_ROOT/backends/remote/receiver.py" \
-    --host 127.0.0.1 --port "$port" >/dev/null 2>&1 &
+  python3 "$PLUGIN_ROOT/backends/remote/receiver.py" \
+    --host 127.0.0.1 --port "$port" \
+    --terminal-notifier "$bin/terminal-notifier" --osascript "$bin/osascript" \
+    >/dev/null 2>&1 &
   TAMA_REMOTE_SERVER_PID=$!
   local waited=0
   while ! curl -s -o /dev/null "$TAMA_RECEIVER_URL/health"; do
@@ -993,15 +994,12 @@ NOTIFIER
 }
 
 @test "with no notifier at all the receiver says so" {
-  local empty="$BATS_TEST_TMPDIR/nothinghere"
-  mkdir -p "$empty"
-
   local port
   port="$(free_port)"
   TAMA_RECEIVER_URL="http://127.0.0.1:$port"
-  PATH="$empty:/bin" python3 "$PLUGIN_ROOT/backends/remote/receiver.py" \
+  python3 "$PLUGIN_ROOT/backends/remote/receiver.py" \
     --host 127.0.0.1 --port "$port" --terminal-notifier "$BATS_TEST_TMPDIR/no-such-notifier" \
-    >/dev/null 2>&1 &
+    --osascript "$BATS_TEST_TMPDIR/no-such-osascript" >/dev/null 2>&1 &
   TAMA_REMOTE_SERVER_PID=$!
   local waited=0
   while ! curl -s -o /dev/null "$TAMA_RECEIVER_URL/health"; do

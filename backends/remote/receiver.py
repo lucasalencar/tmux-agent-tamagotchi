@@ -74,6 +74,15 @@ def find_notifier(explicit=None):
     return None
 
 
+def find_osascript(explicit=None):
+    """The osascript to fall back to, or None."""
+    if explicit:
+        if os.path.isfile(explicit) and os.access(explicit, os.X_OK):
+            return explicit
+        return None
+    return shutil.which("osascript")
+
+
 def run_quiet(argv, timeout=30):
     """Run argv silently. Returns the completed process, or None when it never ran."""
     try:
@@ -278,6 +287,9 @@ def parse_args(argv):
     parser.add_argument("--terminal-notifier", default=None, metavar="PATH",
                         help="terminal-notifier binary to draw with "
                              "(default: found on PATH, then Homebrew prefixes)")
+    parser.add_argument("--osascript", default=None, metavar="PATH",
+                        help="osascript binary to fall back to "
+                             "(default: found on PATH)")
     return parser.parse_args(argv)
 
 
@@ -294,7 +306,10 @@ def main(argv=None):
     if args.terminal_notifier and notifier is None:
         sys.stderr.write("WARNING: terminal-notifier not executable, "
                          "falling back: %s\n" % args.terminal_notifier)
-    osascript = shutil.which("osascript")
+    osascript = find_osascript(args.osascript)
+    if args.osascript and osascript is None:
+        sys.stderr.write("WARNING: osascript not executable, "
+                         "drawing without fallback: %s\n" % args.osascript)
     ssh_binary = shutil.which("ssh") or "ssh"
 
     server = ThreadingHTTPServer((args.host, args.port), ReceiverHandler)

@@ -133,7 +133,9 @@ python3 backends/remote/receiver.py --port 8765 --token 'a-shared-secret'
 
 It draws each banner natively — `terminal-notifier` when installed,
 `display notification` otherwise — grouped per window like every backend, and
-removes it on `dismiss`. Probe it with `curl http://THAT-COMPUTER:8765/health`
+removes it on `dismiss`. Both binaries are found on `PATH` (then the Homebrew
+prefixes for the notifier) and overridable with `--terminal-notifier` and
+`--osascript`. Probe it with `curl http://THAT-COMPUTER:8765/health`
 before blaming the plugin for a silent desktop.
 
 * **No `focused`.** Nothing here can say which terminal window is in front of a
