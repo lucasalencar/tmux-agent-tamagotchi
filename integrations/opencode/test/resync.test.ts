@@ -2,8 +2,11 @@ import { describe, expect, test } from "bun:test"
 
 import {
   buildResyncEvents,
+  isActiveSessionValue,
+  isInstanceScope,
   kindFromParentId,
   statusFromServerType,
+  unwrapKeyedMap,
 } from "../resync"
 
 describe("buildResyncEvents", () => {
@@ -77,5 +80,53 @@ describe("statusFromServerType", () => {
     expect(statusFromServerType("idle")).toBe("idle")
     expect(statusFromServerType("unknown")).toBe("idle")
     expect(statusFromServerType(undefined)).toBe("idle")
+  })
+})
+
+describe("isActiveSessionValue", () => {
+  test("running, busy, and retry entries are active", () => {
+    expect(isActiveSessionValue({ type: "running" })).toBe(true)
+    expect(isActiveSessionValue({ type: "busy" })).toBe(true)
+    expect(isActiveSessionValue({ type: "retry" })).toBe(true)
+  })
+
+  test("missing or non-record values stay lenient", () => {
+    expect(isActiveSessionValue({})).toBe(true)
+    expect(isActiveSessionValue(undefined)).toBe(true)
+    expect(isActiveSessionValue("running")).toBe(true)
+  })
+
+  test("explicit non-running types opt out", () => {
+    expect(isActiveSessionValue({ type: "idle" })).toBe(false)
+    expect(isActiveSessionValue({ type: "succeeded" })).toBe(false)
+  })
+})
+
+describe("unwrapKeyedMap", () => {
+  test("reads direct and wrapped maps", () => {
+    expect(unwrapKeyedMap({ "root-a": { type: "busy" } })).toEqual({ "root-a": { type: "busy" } })
+    expect(unwrapKeyedMap({ data: { "root-a": { type: "busy" } } })).toEqual({ "root-a": { type: "busy" } })
+  })
+
+  test("rejects arrays and unknown shapes instead of inventing keys", () => {
+    expect(unwrapKeyedMap([{ type: "busy" }])).toEqual({})
+    expect(unwrapKeyedMap(undefined)).toEqual({})
+    expect(unwrapKeyedMap("busy")).toEqual({})
+  })
+})
+
+describe("isInstanceScope", () => {
+  test("everything is in scope without an instance directory", () => {
+    expect(isInstanceScope("/elsewhere", undefined)).toBe(true)
+    expect(isInstanceScope(undefined, undefined)).toBe(true)
+  })
+
+  test("unknown session directories stay lenient", () => {
+    expect(isInstanceScope(undefined, "/workspace")).toBe(true)
+  })
+
+  test("known directories must match", () => {
+    expect(isInstanceScope("/workspace", "/workspace")).toBe(true)
+    expect(isInstanceScope("/elsewhere", "/workspace")).toBe(false)
   })
 })

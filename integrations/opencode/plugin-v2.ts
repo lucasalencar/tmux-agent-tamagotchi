@@ -11,7 +11,7 @@ import {
   type ProcessExecutor,
 } from "./effect-runner"
 import { createOpenCodeRuntime, type OpenCodeRuntime } from "./runtime"
-import { buildResyncEvents, canonicalize, kindFromParentId, sameDirectory } from "./resync"
+import { buildResyncEvents, canonicalize, isActiveSessionValue, isInstanceScope, kindFromParentId, sameDirectory, unwrapKeyedMap } from "./resync"
 
 // Structural subset of the OpenCode v2 plugin context used here. Kept local so
 // the plugin has no v2 package dependency at load time; v2 validates the
@@ -180,9 +180,7 @@ async function resyncV2(
         }
         const { items, next } = unwrapSessionPage(raw)
         for (const item of items) {
-          if (directory !== undefined && item.directory !== undefined && !sameDirectory(item.directory, directory)) {
-            continue
-          }
+          if (!isInstanceScope(item.directory, directory)) continue
           if (!byId.has(item.id)) byId.set(item.id, item)
         }
         if (next === undefined) break
@@ -193,12 +191,9 @@ async function resyncV2(
     if (typeof session.active === "function") {
       try {
         const raw = await session.active()
-        // Every key the server reports is running work; entries that carry
-        // an explicit non-running type are future-proofed out, while a
-        // missing type stays lenient (busy) rather than hiding known work.
-        for (const [sessionId, info] of Object.entries(unwrapActiveMap(raw))) {
+        for (const [sessionId, info] of Object.entries(unwrapKeyedMap(raw))) {
           if (!sessionId) continue
-          if (isRecord(info) && "type" in info && info.type !== "running") continue
+          if (!isActiveSessionValue(info)) continue
           activeIds.add(sessionId)
         }
       } catch {
@@ -212,9 +207,7 @@ async function resyncV2(
       if (byId.has(sessionId)) continue
       const fetched = await getSession(ctx, sessionId).catch(() => undefined)
       if (!fetched) continue
-      if (directory !== undefined && fetched.directory !== undefined && !sameDirectory(fetched.directory, directory)) {
-        continue
-      }
+      if (!isInstanceScope(fetched.directory, directory)) continue
       byId.set(sessionId, fetched)
     }
     if (byId.size === 0) return
@@ -378,15 +371,6 @@ function sessionDirectory(entry: Record<string, unknown>): string | undefined {
     return location.directory as string
   }
   return undefined
-}
-
-// Reads the active-session map ({ sessionID: { type: "running" } }) from
-// either the direct client shape or a { data } wrapper. Arrays are rejected:
-// spreading one would invent "0", "1" session ids.
-function unwrapActiveMap(response: unknown): Record<string, unknown> {
-  const data = unwrapData(response)
-  if (Array.isArray(data)) return {}
-  return isRecord(data) ? { ...data } : {}
 }
 
 // Reads pending permission requests for one session: an array of

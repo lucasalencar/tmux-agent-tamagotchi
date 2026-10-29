@@ -322,7 +322,8 @@ describe("v2 setup", () => {
     ]
     const cleanup = await setup(fakeContextV2(events, { "root-a": {} }, {}, {
       list: [{ id: "root-a" }],
-      active: { "root-a": { type: "running" } },
+      // A busy vocabulary entry counts as running work, like "running" does.
+      active: { "root-a": { type: "busy" } },
     }))
     await settle()
 

@@ -146,11 +146,15 @@ pane returns to the state the server reports instead of staying cleared:
   returns to `running`/`idle` until the next live event.)
 
 Each known session seeds presence (`idle`) then activity (`running` for busy roots,
-subagent tracking for busy delegated sessions, `waiting` for pending permissions on v2),
-scoped to the instance directory exactly like live events. The seed never synthesizes
+subagent tracking for busy delegated sessions, `waiting` for pending permissions on v2).
+Snapshots are scoped to the instance directory (v1 live events remain unscoped and
+attribute every session they see, so a foreign live event can still light the pane after
+recovery). The seed never synthesizes
 terminal assistant messages, so recovery itself never raises a completion notification;
 the next live `idle` may still complete a pre-restart turn it can attribute, which is
-the normal completion path observing real work finish. Snapshot failures are silent and leave live events to establish state as
+the normal completion path observing real work finish. List reads follow cursors up to
+ten pages of one hundred sessions; larger fleets resync partially and silently by
+contract. Snapshot failures are silent and leave live events to establish state as
 before; hosts without the newer list/active methods simply resync nothing.
 
 ## Completion notifications

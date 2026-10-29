@@ -12,7 +12,7 @@ import {
   type ProcessExecutor,
 } from "./effect-runner"
 import { createOpenCodeRuntime, type OpenCodeRuntime } from "./runtime"
-import { buildResyncEvents, kindFromParentId, sameDirectory, statusFromServerType, statusTypeOf } from "./resync"
+import { buildResyncEvents, isInstanceScope, kindFromParentId, statusFromServerType, statusTypeOf, unwrapKeyedMap } from "./resync"
 
 export type PluginDependencies = Readonly<{
   execute?: ProcessExecutor
@@ -114,7 +114,7 @@ async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<v
     )
     let statuses: Record<string, unknown> = {}
     if (typeof sessionClient.status === "function") {
-      statuses = unwrapStatusMap(
+      statuses = unwrapKeyedMap(
         await (sessionClient.status as (args: unknown) => Promise<unknown>)({
           query: directory !== undefined ? { directory } : {},
         }).catch(() => undefined),
@@ -124,7 +124,10 @@ async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<v
     const byId = new Map<string, { parentID?: unknown; directory?: unknown }>()
     for (const session of listed) {
       if (typeof session.id !== "string" || !session.id) continue
-      if (directory !== undefined && typeof session.directory === "string" && !sameDirectory(session.directory, directory)) {
+      if (!isInstanceScope(
+        typeof session.directory === "string" ? session.directory : undefined,
+        directory,
+      )) {
         continue
       }
       byId.set(session.id, session)
@@ -144,7 +147,10 @@ async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<v
             }).catch(() => undefined),
           )
           if (!fetched) continue
-          if (directory !== undefined && typeof fetched.directory === "string" && !sameDirectory(fetched.directory, directory)) {
+          if (!isInstanceScope(
+            typeof fetched.directory === "string" ? fetched.directory : undefined,
+            directory,
+          )) {
             continue
           }
           byId.set(sessionId, fetched)
@@ -196,12 +202,6 @@ function unwrapSessionRecord(response: unknown): ListedSession | undefined {
     ...(Object.prototype.hasOwnProperty.call(data, "parentID") ? { parentID: data.parentID } : {}),
     ...(typeof data.directory === "string" ? { directory: data.directory } : {}),
   }
-}
-
-function unwrapStatusMap(response: unknown): Record<string, unknown> {
-  const data = isRecord(response) && "data" in response ? response.data : response
-  if (Array.isArray(data)) return {}
-  return isRecord(data) ? { ...data } : {}
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

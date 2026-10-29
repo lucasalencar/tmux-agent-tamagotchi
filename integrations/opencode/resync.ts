@@ -75,10 +75,42 @@ export function statusFromServerType(type: unknown): SessionStatus {
   return "idle"
 }
 
-// Reads the status discriminator from either the direct client shape or a
-// { data } wrapper, so the filter and the seeding below cannot disagree.
+// Reads the status discriminator from a status value's `type` field.
+// Unknown shapes settle to undefined and let statusFromServerType fall back
+// to idle presence.
 export function statusTypeOf(status: unknown): unknown {
   return isRecord(status) ? status.type : undefined
+}
+
+// Reports whether an active-map entry means running work. The observed shape
+// is { type: "running" }; busy/retry are accepted too because they share the
+// lifecycle's running semantics, while an explicit non-running type opts out.
+// A missing type stays lenient: key presence in the active set means the
+// server considers the session active, and uncertainty must not hide known
+// work by declaring it idle.
+export function isActiveSessionValue(info: unknown): boolean {
+  if (!isRecord(info) || !("type" in info)) return true
+  return info.type === "running" || info.type === "busy" || info.type === "retry"
+}
+
+// Reads a string-keyed map from either the direct client shape or a { data }
+// wrapper. Arrays are rejected: spreading one would invent "0", "1" keys.
+export function unwrapKeyedMap(response: unknown): Record<string, unknown> {
+  const data = isRecord(response) && "data" in response ? response.data : response
+  if (Array.isArray(data)) return {}
+  return isRecord(data) ? { ...data } : {}
+}
+
+// Instance-scope check shared by every snapshot filter: without an instance
+// directory everything is in scope; a session without a known directory stays
+// lenient (like the live ownsSession fallback); a known one must match.
+export function isInstanceScope(
+  itemDirectory: string | undefined,
+  instanceDirectory: string | undefined,
+): boolean {
+  if (instanceDirectory === undefined) return true
+  if (itemDirectory === undefined) return true
+  return sameDirectory(itemDirectory, instanceDirectory)
 }
 
 // Compares working directories with symlinks resolved, so /tmp and
