@@ -34,7 +34,7 @@ jobs:
       - run: make lint
 
   test:
-    name: bats (${{ matrix.os }}, shard ${{ matrix.shard }}/2)
+    name: bats (${{ matrix.os }}, shard ${{ matrix.shard }}/4)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -61,10 +61,12 @@ jobs:
         # `notify-send` — the command line it is handed, never a banner. It is the only
         # leg that can decide what `auto` resolves to off a Mac. See tests/linux.bats.
         os: [ubuntu-24.04, macos-15]
-        # Two shards so the suite runs on two VMs per OS in parallel; each shard
-        # is ~half the files (balanced by test count) run serially via
-        # `make test-shard`. Wall time is the slowest shard, ~half of `make test`.
-        shard: [1, 2]
+        # Four shards so the suite runs on four VMs per OS in parallel; each shard
+        # is ~a quarter of the files (round-robin over sorted names) run serially
+        # via `make test-shard`. Wall time is the slowest shard, ~a quarter of
+        # `make test`. Serial within a shard on purpose: no new dependency and
+        # no shared-CPU timing flakes; speedup comes from separate VMs.
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - name: Install tmux, bats and jq (Linux)
@@ -90,7 +92,7 @@ jobs:
           jq --version
           bash --version | head -1
           /bin/bash --version | head -1
-      - run: make test-shard SHARD=${{ matrix.shard }} SHARDS=2
+      - run: make test-shard SHARD=${{ matrix.shard }} SHARDS=4
 
   doctor:
     name: doctor (Ubuntu)
