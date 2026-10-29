@@ -3,6 +3,7 @@ import {
   createLifecycleState,
   reduceLifecycle,
   type LifecycleEvent,
+  type Reduction,
   type StateMachineEffect,
 } from "./state-machine"
 import type { LogContext, LogObservation } from "./effect-runner"
@@ -69,16 +70,7 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
           event: eventName,
           outcome: "applied",
         }))
-        const reduction = reduceLifecycle(state, lifecycleEvent)
-        state = reduction.state
-        for (const effect of reduction.effects) {
-          if (phase !== "active") break
-          try {
-            await dependencies.runEffect(effect, context)
-          } catch {
-            // One effect failure must not suppress the remaining reduction effects.
-          }
-        }
+        await applyReduction(reduceLifecycle(state, lifecycleEvent), context)
       } catch {
         if (context) await settle(() => dependencies.observeEvent?.({
           ...context,
@@ -103,18 +95,24 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
     if (events.length === 0) return Promise.resolve()
     return enqueue(async () => {
       for (const lifecycleEvent of events) {
-        const reduction = reduceLifecycle(state, lifecycleEvent)
-        state = reduction.state
-        for (const effect of reduction.effects) {
-          if (phase !== "active") break
-          try {
-            await dependencies.runEffect(effect)
-          } catch {
-            // One effect failure must not suppress the remaining reduction effects.
-          }
-        }
+        await applyReduction(reduceLifecycle(state, lifecycleEvent))
       }
     })
+  }
+
+  // Applies one reduction's effects in order. Shared by live events (with
+  // their log correlation) and resync seeds (replayed state, no correlation):
+  // one effect failure must not suppress the remaining effects.
+  async function applyReduction(reduction: Reduction, context?: LogContext): Promise<void> {
+    state = reduction.state
+    for (const effect of reduction.effects) {
+      if (phase !== "active") break
+      try {
+        await dependencies.runEffect(effect, context)
+      } catch {
+        // One effect failure must not suppress the remaining reduction effects.
+      }
+    }
   }
 
   function dispose(): Promise<void> {

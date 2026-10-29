@@ -139,15 +139,18 @@ new instance then re-reads the authoritative snapshot before subscribing to live
 pane returns to the state the server reports instead of staying cleared:
 
 - v1 reads `session.list` with `session.status` for the instance directory.
-- v2 reads `session.list` with `session.active` for the instance directory (plus pending
-  permission requests when the host exposes them), following list cursors and resolving
-  active sessions the top-level list omits.
+- v2 reads `session.list` with `session.active` for the instance directory, plus pending
+  permission requests when the host exposes them, following list cursors and resolving
+  active sessions the top-level list omits. (Waiting-state recovery is v2-only: the v1
+  API exposes no pending-permission listing, so a v1 restart under a permission prompt
+  returns to `running`/`idle` until the next live event.)
 
 Each known session seeds presence (`idle`) then activity (`running` for busy roots,
-subagent tracking for busy delegated sessions, `waiting` for pending permissions), scoped to
-the instance directory exactly like live events. The seed never synthesizes terminal
-assistant messages, so recovery never raises a completion notification for work it did not
-observe finishing. Snapshot failures are silent and leave live events to establish state as
+subagent tracking for busy delegated sessions, `waiting` for pending permissions on v2),
+scoped to the instance directory exactly like live events. The seed never synthesizes
+terminal assistant messages, so recovery itself never raises a completion notification;
+the next live `idle` may still complete a pre-restart turn it can attribute, which is
+the normal completion path observing real work finish. Snapshot failures are silent and leave live events to establish state as
 before; hosts without the newer list/active methods simply resync nothing.
 
 ## Completion notifications

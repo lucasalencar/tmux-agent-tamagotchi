@@ -555,8 +555,81 @@ describe("wired plugin", () => {
     await hooks.dispose?.()
   })
 
-  test("survives snapshot failures without breaking later lifecycle", async () => {
+  test("resyncs busy sessions the list omits and skips foreign directories", async () => {
     const commandCalls: string[][] = []
+    const plugin = createTmuxAgentTamagotchiPlugin({
+      execute: async (argv) => {
+        commandCalls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+    const hooks = await plugin(fakePluginInput(
+      async ({ path }) => {
+        if (path.id === "child-b") return { id: path.id, parentID: "root-a", directory: "/workspace" }
+        if (path.id === "root-foreign") return { id: path.id, directory: "/elsewhere" }
+        if (path.id === "child-foreign") {
+          return { id: path.id, parentID: "root-foreign", directory: "/elsewhere" }
+        }
+        return { id: path.id, directory: "/workspace" }
+      },
+      async () => undefined,
+      async () => [],
+      {
+        list: [
+          { id: "root-a", directory: "/workspace" },
+          { id: "root-foreign", directory: "/elsewhere" },
+          { id: "child-foreign", parentID: "root-foreign", directory: "/elsewhere" },
+        ],
+        status: {
+          "root-a": { type: "idle" },
+          "child-b": { type: "busy" },
+          "root-foreign": { type: "busy" },
+          "child-foreign": { type: "busy" },
+        },
+      },
+    ))
+
+    // child-b is absent from the list but busy, so it is resolved and tracked;
+    // the foreign sessions never reach tama despite being busy.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "subagent-start", "--", "child-b"],
+    ])
+    await hooks.dispose?.()
+  })
+
+  test("resyncs from status alone when the list comes back empty", async () => {
+    const commandCalls: string[][] = []
+    const plugin = createTmuxAgentTamagotchiPlugin({
+      execute: async (argv) => {
+        commandCalls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+    const hooks = await plugin(fakePluginInput(
+      async ({ path }) => ({ id: path.id, directory: "/workspace" }),
+      async () => undefined,
+      async () => [],
+      {
+        list: [],
+        status: { "root-a": { type: "busy" } },
+      },
+    ))
+
+    // An empty list must not skip the status snapshot: the busy session still
+    // re-establishes presence and activity.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode"],
+    ])
+    await hooks.dispose?.()
+  })
+
+  test("survives snapshot failures without breaking later lifecycle", async () => {    const commandCalls: string[][] = []
     const plugin = createTmuxAgentTamagotchiPlugin({
       execute: async (argv) => {
         commandCalls.push([...argv])

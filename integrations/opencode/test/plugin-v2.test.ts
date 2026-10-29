@@ -340,19 +340,45 @@ describe("v2 setup", () => {
     const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
     const cleanup = await setup(fakeContextV2(
       [],
-      { "root-a": {}, "child-a": { parentID: "root-a" } },
+      // root-b is deliberately absent here so only the second list page can
+      // provide it: the active-only lookup cannot resolve it either.
+      { "root-a": {} },
       {},
       {
-        listPages: [[{ id: "root-a" }], [{ id: "child-a", parentID: "root-a" }]],
-        active: {},
+        listPages: [[{ id: "root-a" }], [{ id: "root-b" }]],
+        active: { "root-b": { type: "running" } },
       },
     ))
     await settle()
 
-    // Both pages establish presence; nothing is running so the pane settles
-    // at idle with no subagent tracking.
+    // The second page is read (its running root lights the pane); a dropped
+    // cursor would leave only the first page's idle behind.
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
+    ])
+    await cleanup()
+  })
+
+  test("resyncs active sessions the list omits via lookup", async () => {
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const cleanup = await setup(fakeContextV2(
+      [],
+      { "root-a": {}, "child-b": { parentID: "root-a" } },
+      {},
+      {
+        list: [{ id: "root-a" }],
+        active: { "child-b": { type: "running" } },
+      },
+    ))
+    await settle()
+
+    // child-b never appears in the top-level list, yet its delegated work is
+    // tracked from the active set.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "subagent-start", "--pane", PANE, "--", "child-b"],
     ])
     await cleanup()
   })
@@ -362,18 +388,33 @@ describe("v2 setup", () => {
     const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
     const cleanup = await setup(fakeContextV2(
       [],
-      { "root-a": {}, "root-foreign": { location: { directory: "/elsewhere" } } },
+      {
+        "root-a": {},
+        "root-foreign": { location: { directory: "/elsewhere" } },
+        "child-foreign": { parentID: "root-foreign", location: { directory: "/elsewhere" } },
+        "ghost-foreign": { parentID: "root-foreign", location: { directory: "/elsewhere" } },
+      },
       {},
       {
-        list: [{ id: "root-a" }, { id: "root-foreign", location: { directory: "/elsewhere" } }],
-        active: { "root-a": { type: "running" }, "root-foreign": { type: "running" } },
+        list: [
+          { id: "root-a" },
+          { id: "root-foreign", location: { directory: "/elsewhere" } },
+          { id: "child-foreign", parentID: "root-foreign", location: { directory: "/elsewhere" } },
+        ],
+        active: {
+          "root-a": { type: "running" },
+          "root-foreign": { type: "running" },
+          "child-foreign": { type: "running" },
+          "ghost-foreign": { type: "running" },
+        },
         permissions: { "root-a": ["request-a"] },
       },
     ))
     await settle()
 
     // Only the local session reaches tama; its pending permission overlays
-    // waiting above the resynced running state.
+    // waiting above the resynced running state. The foreign delegated work
+    // (listed and active-only alike) must not start subagent tracking.
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],

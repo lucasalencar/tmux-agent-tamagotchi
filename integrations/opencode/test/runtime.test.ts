@@ -353,8 +353,31 @@ describe("OpenCode runtime", () => {
     ])
   })
 
-  test("resync after disposal publishes nothing", async () => {
-    const effects: StateMachineEffect[] = []
+  test("resync contains effect failures without suppressing the remaining seed", async () => {
+    const attempted: StateMachineEffect[] = []
+    const runtime = createOpenCodeRuntime({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      runEffect: async (effect) => {
+        attempted.push(effect)
+        if (effect.type === "pane-state" && effect.state === "idle") {
+          throw new Error("tama unavailable")
+        }
+      },
+      clearPane: async () => undefined,
+    })
+
+    await runtime.resync([
+      { type: "session-created", sessionId: "root-a", kind: "root" },
+      { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+    ])
+
+    expect(attempted).toEqual([
+      { type: "pane-state", state: "idle" },
+      { type: "pane-state", state: "running" },
+    ])
+  })
+
+  test("resync after disposal publishes nothing", async () => {    const effects: StateMachineEffect[] = []
     const runtime = createOpenCodeRuntime({
       lookupSession: async (sessionId) => ({ id: sessionId }),
       runEffect: async (effect) => {

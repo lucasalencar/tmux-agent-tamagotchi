@@ -1,5 +1,3 @@
-import { realpathSync } from "node:fs"
-
 import { createEventAdapterV2, eventDirectoryV2 } from "./adapter-v2"
 import {
   createCompletionScheduler,
@@ -13,7 +11,7 @@ import {
   type ProcessExecutor,
 } from "./effect-runner"
 import { createOpenCodeRuntime, type OpenCodeRuntime } from "./runtime"
-import { buildResyncEvents, kindFromParentId } from "./resync"
+import { buildResyncEvents, canonicalize, kindFromParentId, sameDirectory } from "./resync"
 
 // Structural subset of the OpenCode v2 plugin context used here. Kept local so
 // the plugin has no v2 package dependency at load time; v2 validates the
@@ -44,6 +42,11 @@ export type PluginV2Dependencies = Readonly<{
 }>
 
 type SetupCleanup = () => Promise<void> | void
+
+// Bounds for the setup snapshot: newer hosts paginate session.list, and each
+// page is one RPC the setup awaits before subscribing to live events.
+const RESYNC_LIST_LIMIT = 100
+const RESYNC_LIST_MAX_PAGES = 10
 
 export function createTmuxAgentTamagotchiPluginV2(
   dependencies: PluginV2Dependencies = {},
@@ -164,13 +167,13 @@ async function resyncV2(
     const byId = new Map<string, KnownSession>()
     if (typeof session.list === "function") {
       let cursor: string | undefined
-      for (let page = 0; page < 10; page += 1) {
+      for (let page = 0; page < RESYNC_LIST_MAX_PAGES; page += 1) {
         let raw: unknown
         try {
           raw = await session.list(
             directory !== undefined
-              ? { directory, limit: 100, ...(cursor !== undefined ? { cursor } : {}) }
-              : { limit: 100, ...(cursor !== undefined ? { cursor } : {}) },
+              ? { directory, limit: RESYNC_LIST_LIMIT, ...(cursor !== undefined ? { cursor } : {}) }
+              : { limit: RESYNC_LIST_LIMIT, ...(cursor !== undefined ? { cursor } : {}) },
           )
         } catch {
           break
@@ -190,8 +193,13 @@ async function resyncV2(
     if (typeof session.active === "function") {
       try {
         const raw = await session.active()
-        for (const sessionId of Object.keys(unwrapActiveMap(raw))) {
-          if (sessionId) activeIds.add(sessionId)
+        // Every key the server reports is running work; entries that carry
+        // an explicit non-running type are future-proofed out, while a
+        // missing type stays lenient (busy) rather than hiding known work.
+        for (const [sessionId, info] of Object.entries(unwrapActiveMap(raw))) {
+          if (!sessionId) continue
+          if (isRecord(info) && "type" in info && info.type !== "running") continue
+          activeIds.add(sessionId)
         }
       } catch {
         // Without the running set every listed session settles to idle
@@ -214,7 +222,11 @@ async function resyncV2(
     const listPermission = ctx.permission?.list
     if (typeof listPermission === "function") {
       for (const [sessionId, sessionInfo] of Array.from(byId)) {
-        const kind = kindFromParentId(sessionInfo.parentID) ?? "root"
+        // Sessions without an attributable kind are skipped below, so their
+        // permissions are skipped here too: an orphan permission-asked would
+        // pin the pane to waiting with no presence to clear it.
+        const kind = kindFromParentId(sessionInfo.parentID)
+        if (!kind) continue
         try {
           const raw = await listPermission({ sessionID: sessionId }).catch(() => undefined)
           for (const requestId of unwrapPermissionIds(raw)) {
@@ -231,14 +243,17 @@ async function resyncV2(
       }
     }
     const events = buildResyncEvents(
-      Array.from(byId).flatMap(([sessionId, sessionInfo]) => {        const kind = kindFromParentId(sessionInfo.parentID)
+      Array.from(byId).flatMap(([sessionId, sessionInfo]) => {
+        const kind = kindFromParentId(sessionInfo.parentID)
         if (!kind) return []
-        return [{
-          sessionId,
-          kind,
-          status: activeIds.has(sessionId) ? "busy" as const : "idle" as const,
-          ...(directory !== undefined ? { directory } : {}),
-        }]
+        return [
+          {
+            sessionId,
+            kind,
+            status: activeIds.has(sessionId) ? ("busy" as const) : ("idle" as const),
+            ...(directory !== undefined ? { directory } : {}),
+          },
+        ]
       }),
       permissions,
     )
@@ -274,15 +289,13 @@ async function getSession(
     const response = await ctx.session.get({ sessionID: sessionId })
     const session = unwrapData(response)
     if (!isRecord(session) || typeof session.id !== "string" || !session.id) return undefined
-    const location = session.location
+    const directory = sessionDirectory(session)
     return {
       id: session.id,
       ...(typeof session.parentID === "string" || session.parentID === undefined
         ? { parentID: session.parentID as string | undefined }
         : {}),
-      ...(isRecord(location) && typeof location.directory === "string"
-        ? { directory: location.directory as string }
-        : {}),
+      ...(directory !== undefined ? { directory } : {}),
     }
   } catch {
     return undefined
@@ -325,7 +338,9 @@ function unwrapData(response: unknown): unknown {
 
 // Reads one v2 session page defensively: the client returns SessionsResponse
 // ({ data, cursor }) directly while older hosts may wrap it in { data }.
-// Items normalize both the flat v1-style { directory } and the v2
+// The cursor is read from the original response before unwrapping, because
+// unwrapping a direct-shape page yields the bare items array and would drop
+// it. Items normalize both the flat v1-style { directory } and the v2
 // { location: { directory } } shapes; entries without an id are dropped.
 function unwrapSessionPage(response: unknown): {
   items: Array<{ id: string; parentID?: unknown; directory?: string }>
@@ -336,27 +351,41 @@ function unwrapSessionPage(response: unknown): {
   const items: Array<{ id: string; parentID?: unknown; directory?: string }> = []
   for (const entry of data) {
     if (!isRecord(entry) || typeof entry.id !== "string" || !entry.id) continue
-    const location = entry.location
-    const directory = typeof entry.directory === "string"
-      ? entry.directory
-      : isRecord(location) && typeof location.directory === "string"
-        ? (location.directory as string)
-        : undefined
+    const directory = sessionDirectory(entry)
     items.push({
       id: entry.id,
       ...(Object.prototype.hasOwnProperty.call(entry, "parentID") ? { parentID: entry.parentID } : {}),
       ...(directory !== undefined ? { directory } : {}),
     })
   }
-  const cursor = isRecord(root) ? root.cursor : undefined
-  const next = isRecord(cursor) && typeof cursor.next === "string" && cursor.next ? cursor.next : undefined
+  const next = cursorOf(response) ?? cursorOf(root)
   return next !== undefined ? { items, next } : { items }
 }
 
+function cursorOf(node: unknown): string | undefined {
+  if (!isRecord(node) || Array.isArray(node)) return undefined
+  const cursor = node.cursor
+  if (!isRecord(cursor) || Array.isArray(cursor)) return undefined
+  return typeof cursor.next === "string" && cursor.next ? cursor.next : undefined
+}
+
+// Reads a session's working directory from either the flat { directory }
+// shape or the v2 { location: { directory } } shape.
+function sessionDirectory(entry: Record<string, unknown>): string | undefined {
+  if (typeof entry.directory === "string") return entry.directory
+  const location = entry.location
+  if (isRecord(location) && typeof location.directory === "string") {
+    return location.directory as string
+  }
+  return undefined
+}
+
 // Reads the active-session map ({ sessionID: { type: "running" } }) from
-// either the direct client shape or a { data } wrapper.
+// either the direct client shape or a { data } wrapper. Arrays are rejected:
+// spreading one would invent "0", "1" session ids.
 function unwrapActiveMap(response: unknown): Record<string, unknown> {
   const data = unwrapData(response)
+  if (Array.isArray(data)) return {}
   return isRecord(data) ? { ...data } : {}
 }
 
@@ -399,23 +428,6 @@ async function resolvePaneForDirectory(
     return undefined
   } catch {
     return undefined
-  }
-}
-
-function sameDirectory(left: string, right: string): boolean {
-  if (left === right) return true
-  try {
-    return canonicalize(left) === canonicalize(right)
-  } catch {
-    return false
-  }
-}
-
-function canonicalize(path: string): string {
-  try {
-    return realpathSync(path)
-  } catch {
-    return path
   }
 }
 

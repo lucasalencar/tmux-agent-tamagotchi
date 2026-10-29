@@ -12,7 +12,7 @@ import {
   type ProcessExecutor,
 } from "./effect-runner"
 import { createOpenCodeRuntime, type OpenCodeRuntime } from "./runtime"
-import { buildResyncEvents, kindFromParentId, statusFromServerType } from "./resync"
+import { buildResyncEvents, kindFromParentId, sameDirectory, statusFromServerType, statusTypeOf } from "./resync"
 
 export type PluginDependencies = Readonly<{
   execute?: ProcessExecutor
@@ -112,7 +112,6 @@ async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<v
         query: directory !== undefined ? { directory } : {},
       }).catch(() => undefined),
     )
-    if (listed.length === 0) return
     let statuses: Record<string, unknown> = {}
     if (typeof sessionClient.status === "function") {
       statuses = unwrapStatusMap(
@@ -121,10 +120,11 @@ async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<v
         }).catch(() => undefined),
       )
     }
+    if (listed.length === 0 && Object.keys(statuses).length === 0) return
     const byId = new Map<string, { parentID?: unknown; directory?: unknown }>()
     for (const session of listed) {
       if (typeof session.id !== "string" || !session.id) continue
-      if (directory !== undefined && typeof session.directory === "string" && session.directory !== directory) {
+      if (directory !== undefined && typeof session.directory === "string" && !sameDirectory(session.directory, directory)) {
         continue
       }
       byId.set(session.id, session)
@@ -135,9 +135,7 @@ async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<v
     if (typeof sessionClient.get === "function") {
       for (const sessionId of Object.keys(statuses)) {
         if (byId.has(sessionId)) continue
-        const status = statuses[sessionId]
-        const type = isRecord(status) ? status.type : (status as { type?: unknown })?.type
-        if (type !== "busy" && type !== "retry") continue
+        if (statusFromServerType(statusTypeOf(statuses[sessionId])) === "idle") continue
         try {
           const fetched = unwrapSessionRecord(
             await (sessionClient.get as (args: unknown) => Promise<unknown>)({
@@ -146,7 +144,7 @@ async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<v
             }).catch(() => undefined),
           )
           if (!fetched) continue
-          if (directory !== undefined && typeof fetched.directory === "string" && fetched.directory !== directory) {
+          if (directory !== undefined && typeof fetched.directory === "string" && !sameDirectory(fetched.directory, directory)) {
             continue
           }
           byId.set(sessionId, fetched)
@@ -159,9 +157,12 @@ async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<v
       Array.from(byId).flatMap(([sessionId, session]) => {
         const kind = kindFromParentId(session.parentID)
         if (!kind) return []
-        const status = statuses[sessionId]
-        const type = isRecord(status) ? (status as { type?: unknown }).type : undefined
-        return [{ sessionId, kind, status: statusFromServerType(type) }]
+        return [{
+          sessionId,
+          kind,
+          status: statusFromServerType(statusTypeOf(statuses[sessionId])),
+          ...(directory !== undefined ? { directory } : {}),
+        }]
       }),
     )
     if (events.length > 0) await runtime.resync(events)
@@ -199,6 +200,7 @@ function unwrapSessionRecord(response: unknown): ListedSession | undefined {
 
 function unwrapStatusMap(response: unknown): Record<string, unknown> {
   const data = isRecord(response) && "data" in response ? response.data : response
+  if (Array.isArray(data)) return {}
   return isRecord(data) ? { ...data } : {}
 }
 
