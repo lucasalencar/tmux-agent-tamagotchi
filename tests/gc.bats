@@ -6,19 +6,40 @@ load helper
 
 # The plugin is loaded in every test here, because half of what the sweep has to
 # prove is what the status line stops showing, and the other half runs from the hooks
-# the entrypoint wires.
-setup() {
-  tama_fake_backend_env
-  tama_start_server
-  run "$PLUGIN_ROOT/tamagotchi.tmux"
-  assert_success
+# the entrypoint wires. One server per file (see tama_shared_server_setup_file):
+# wiring it costs ~20 tmux round-trips.
+setup_file() {
+  tama_shared_server_setup_file || return 1
+  "$PLUGIN_ROOT/tamagotchi.tmux" || return 1
+}
 
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
+# Globals this file's tests assign. @tama_backend is set explicitly below.
+TAMA_GC_RESET_GLOBALS='tama_gc_shells'
+
+setup() {
+  tama_shared_server_test_setup || return 1
+  # Before anything else touches the server: the backend is reached from tmux
+  # hooks too, and a hook's `run-shell` inherits the environment the server
+  # was started with.
+  tama_fake_backend_env
+  tmux_test_server_run set -gu @tama_gc_shells
+  tama_shared_server_sync_test_env
+  tama_use_fake_backend
+  tama_shared_server_rewire_hooks
   WINDOW="$(tama_window_id t:0)"
   PANE="$(tama_pane_of t:0)"
   # Every pane in this suite runs a command the test named, because staleness is a
   # claim about what a pane is running: a pane left on the developer's own shell
   # reports whatever that shell's startup happens to be doing at the time.
   pane_running "$PANE" 'sleep 300'
+}
+
+teardown() {
+  tama_detach_client
 }
 
 @test "switching sessions acknowledges only the tmux window the client lands on" {
@@ -31,7 +52,11 @@ setup() {
   elsewhere="$(tama_window_id other:1)"
   elsewhere_pane="$(tama_pane_of other:1)"
 
-  tama_attach_client t
+  # Attached without the attachment hooks: the switch below is what this test
+  # is about, and the attach-time sweep is an async `gc --all` that can still
+  # be running when the switch lands — two dismiss paths racing for the same
+  # recorded call. (The focus test below isolates its path the same way.)
+  tama_attach_client_without_attachment_hooks t
   run "$PLUGIN_ROOT/bin/tama" state running Claude --pane "$landed_pane"
   assert_success
   pane_running_shell "$landed_pane"
@@ -42,6 +67,7 @@ setup() {
   assert_success
   pane_running_shell "$elsewhere_pane"
 
+  tama_shared_server_rewire_hooks
   client="$(tmux_test_server_run list-clients -F '#{client_name}')"
   tmux_test_server_run switch-client -c "$client" -t other:0
 
@@ -73,11 +99,6 @@ setup() {
   wait_until_not_flagged "$landed"
   wait_until_no_icons "$landed"
   refute_backend_called dismiss
-}
-
-teardown() {
-  tama_detach_client
-  tmux_test_server_stop
 }
 
 # Puts <pane> on a known command, and waits for tmux to agree it is running it.
