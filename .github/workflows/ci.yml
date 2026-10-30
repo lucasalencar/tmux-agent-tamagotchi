@@ -98,7 +98,10 @@ jobs:
           curl -sL -o /tmp/rush.tgz "https://github.com/shenwei356/rush/releases/download/v0.5.4/$asset"
           tar xzf /tmp/rush.tgz -C "$RUNNER_TEMP/rushbin"
           echo "$RUNNER_TEMP/rushbin" >> "$GITHUB_PATH"
-          rush --version
+          # NOTE: $GITHUB_PATH only takes effect in subsequent steps, so verify
+          # with the absolute path here; later steps (make test-shard) get it
+          # via PATH.
+          "$RUNNER_TEMP/rushbin/rush" --version
       - name: Report versions
         run: |
           tmux -V
