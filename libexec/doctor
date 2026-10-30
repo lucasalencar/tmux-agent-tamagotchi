@@ -1553,6 +1553,13 @@ main() {
     esac
   done
 
+  # Prefetch every global option this command may consult, in one tmux
+  # round-trip instead of one per read (see tama_opt_batch). Doctor never
+  # writes globals, so the snapshot stays true for the whole run; a name read
+  # here that a later path does not consult costs nothing, and a name missed
+  # here falls back to a live read. Outside tmux this is one failed call.
+  tama_opt_batch tama_backend tama_bin tama_bin_dir tama_dismiss_command tama_flag_policy tama_focus_command tama_focused_command tama_group_format tama_label_command tama_manage_hooks tama_notifications tama_notify_command tama_notify_send tama_priority_max_percent tama_summary_show_background tama_summary_show_error tama_summary_show_idle tama_summary_show_running tama_summary_show_unknown tama_summary_show_waiting tama_suppress_when_focused tama_terminal_app tama_terminal_bundle_id tama_terminal_notifier tama_title_format || true
+
   doctor_tmux
   doctor_plugin
   doctor_log
