@@ -34,7 +34,7 @@ jobs:
       - run: make lint
 
   test:
-    name: bats (${{ matrix.os }}, shard ${{ matrix.shard }}/2, jobs 4)
+    name: bats (${{ matrix.os }}, shard ${{ matrix.shard }}/4)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -61,12 +61,14 @@ jobs:
         # `notify-send` — the command line it is handed, never a banner. It is the only
         # leg that can decide what `auto` resolves to off a Mac. See tests/linux.bats.
         os: [ubuntu-24.04, macos-15]
-        # Two shards × 4 in-VM jobs (rush): fewer VMs than the 4-shard setup,
-        # same total parallelism, less macOS queue risk. Within a shard, files
-        # run in parallel but each file's tests stay serial
-        # (--no-parallelize-within-files), the exact semantics of serial runs.
-        # Validated locally 3× with 0 failures; CI is the final judge (this line).
-        shard: [1, 2]
+        # Four serial shards: measured sweet spot. In-VM parallelism (rush,
+        # 2 shards x jobs 4) was tried and reverted: on CI runners it was
+        # *slower* than 4 serial shards (Ubuntu wall 77s vs 64s, macOS 137s
+        # vs 134s) — contention plus per-job overhead ate the gains — and it
+        # surfaced three load-sensitive assertions, fixed separately in
+        # tests/demo.bats, tests/gc.bats, tests/list.bats and
+        # tests/fixtures/fake-tmux. Speedup comes from separate VMs.
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - name: Install tmux, bats and jq (Linux)
@@ -85,23 +87,6 @@ jobs:
         # tests point `@tama_terminal_notifier` at a fixture instead.
         if: runner.os == 'macOS'
         run: brew install tmux bats-core jq
-      - name: Install rush (parallel test runner)
-        # Single static binary, no package manager needed on either image.
-        # Pinned to the version validated locally (v0.5.4).
-        run: |
-          case "$(uname -s)-$(uname -m)" in
-            Linux-x86_64) asset=rush_linux_amd64.tar.gz ;;
-            Darwin-arm64) asset=rush_darwin_arm64.tar.gz ;;
-            *) echo "unsupported runner: $(uname -s)-$(uname -m)"; exit 1 ;;
-          esac
-          mkdir -p "$RUNNER_TEMP/rushbin"
-          curl -sL -o /tmp/rush.tgz "https://github.com/shenwei356/rush/releases/download/v0.5.4/$asset"
-          tar xzf /tmp/rush.tgz -C "$RUNNER_TEMP/rushbin"
-          echo "$RUNNER_TEMP/rushbin" >> "$GITHUB_PATH"
-          # NOTE: $GITHUB_PATH only takes effect in subsequent steps, so verify
-          # with the absolute path here; later steps (make test-shard) get it
-          # via PATH.
-          "$RUNNER_TEMP/rushbin/rush" --version
       - name: Report versions
         run: |
           tmux -V
@@ -109,7 +94,7 @@ jobs:
           jq --version
           bash --version | head -1
           /bin/bash --version | head -1
-      - run: make test-shard SHARD=${{ matrix.shard }} SHARDS=2 JOBS=4
+      - run: make test-shard SHARD=${{ matrix.shard }} SHARDS=4
 
   doctor:
     name: doctor (Ubuntu)
