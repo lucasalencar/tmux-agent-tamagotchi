@@ -8,14 +8,38 @@ bats_require_minimum_version 1.7.0
 
 load helper
 
+# One tmux server per file (see tama_shared_server_setup_file). Isolation per
+# test comes from a fresh `t` session plus a reset of the icon/show globals
+# this file's tests assign (one chained call); the entrypoint runs below stay
+# idempotent because wiring twice changes nothing.
+setup_file() {
+  tama_shared_server_setup_file || return 1
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
+TAMA_ICONS_RESET_GLOBALS='tama_icon_background tama_icon_error tama_icon_idle tama_icon_prefix tama_icon_running tama_icon_separator tama_icon_set tama_icon_suffix tama_icon_waiting tama_show_background tama_show_idle'
+
 setup() {
-  tama_start_server
+  tama_shared_server_test_setup || return 1
+  local option reset_args=() first=1
+  for option in $TAMA_ICONS_RESET_GLOBALS; do
+    if [ "$first" -eq 1 ]; then
+      first=0
+    else
+      reset_args+=(';')
+    fi
+    reset_args+=(set -gu "@$option")
+  done
+  tmux_test_server_run "${reset_args[@]}"
   WINDOW="$(tmux_test_server_run display-message -p -t t '#{window_id}')"
   PANE="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | head -1)"
 }
 
 teardown() {
-  tmux_test_server_stop
+  tama_detach_client
 }
 
 # Reports a state on a pane the way an agent hook would.

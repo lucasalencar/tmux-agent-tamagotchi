@@ -28,22 +28,43 @@ load helper
 # the two gates in this file, and run it. That found a real failure the Mac run hid — a
 # mark asserted in a race with the sweep that a client attaching fires — so it is worth
 # doing again after anything here or in tama_backend_auto moves.
+setup_file() {
+  tama_shared_server_setup_file || return 1
+  "$PLUGIN_ROOT/tamagotchi.tmux" || return 1
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
+# Globals this file's tests assign. @tama_backend is set explicitly by the
+# tests that need it (and unset by the one proving the unset default).
+TAMA_LINUX_RESET_GLOBALS='tama_terminal_notifier tama_notify_send'
+
 setup() {
-  # Before the server boots: the backend is reached from tmux hooks too — a window
-  # selection dismissing a banner — and a hook's `run-shell` inherits the environment the
-  # server was started with, not the one the test has now.
+  # The notify-send fixture is per test, and hooks inherit the server
+  # environment — so both the path and the sync happen per test.
   export TAMA_NOTIFY_SEND_DIR="$BATS_TEST_TMPDIR/notify-send"
   mkdir -p "$TAMA_NOTIFY_SEND_DIR"
   : >"$TAMA_NOTIFY_SEND_DIR/calls"
 
-  tama_start_server
-  run "$PLUGIN_ROOT/tamagotchi.tmux"
-  assert_success
+  tama_shared_server_test_setup || return 1
+  local option reset_args=() first=1
+  for option in $TAMA_LINUX_RESET_GLOBALS; do
+    if [ "$first" -eq 1 ]; then
+      first=0
+    else
+      reset_args+=(';')
+    fi
+    reset_args+=(set -gu "@$option")
+  done
+  reset_args+=(';' set -gu @tama_backend)
+  tmux_test_server_run "${reset_args[@]}"
+  tama_shared_server_sync_test_env
 }
 
 teardown() {
   tama_detach_client
-  tmux_test_server_stop
 }
 
 require_darwin() {

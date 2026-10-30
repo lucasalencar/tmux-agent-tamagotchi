@@ -5,19 +5,48 @@ bats_require_minimum_version 1.7.0
 load helper
 
 # Notification behavior through the public CLI and a recording backend.
+#
+# One tmux server per file (see tama_shared_server_setup_file): wiring the
+# plugin costs ~20 tmux round-trips, so booting per test doubles this file's
+# runtime. Isolation per test comes from a fresh `t` session, a reset of the
+# globals this file's tests mutate, and a server-environment re-sync so hooks
+# inherit what the test sees.
+setup_file() {
+  tama_shared_server_setup_file || return 1
+  "$PLUGIN_ROOT/tamagotchi.tmux" || return 1
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
+# Every global this file's tests assign. Reset per test (one chained call),
+# because the server — unlike the per-test servers this replaces — remembers.
+# @tama_backend is set explicitly below rather than reset: unset would resolve
+# to `auto` and reach a real notifier.
+TAMA_NOTIFY_RESET_GLOBALS='tama_group_format tama_label_command tama_notifications tama_notify_command tama_suppress_when_focused tama_terminal_bundle_id tama_title_format'
+
 setup() {
-  # Before the server boots: the backend is reached from tmux hooks too, and a hook's
-  # `run-shell` inherits the environment the server was started with.
+  tama_shared_server_test_setup || return 1
+  # Before anything else touches the server: hooks inherit the server
+  # environment, and the backend log path is per test.
   tama_fake_backend_env
-  tama_start_server
-  run "$PLUGIN_ROOT/tamagotchi.tmux"
-  assert_success
+  local option reset_args=() first=1
+  for option in $TAMA_NOTIFY_RESET_GLOBALS; do
+    if [ "$first" -eq 1 ]; then
+      first=0
+    else
+      reset_args+=(';')
+    fi
+    reset_args+=(set -gu "@$option")
+  done
+  tmux_test_server_run "${reset_args[@]}"
+  tama_shared_server_sync_test_env
   tama_use_fake_backend
 }
 
 teardown() {
   tama_detach_client
-  tmux_test_server_stop
 }
 
 # A second window in the session, so that a test can put the user somewhere other than

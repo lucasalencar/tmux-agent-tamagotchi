@@ -4,12 +4,22 @@ bats_require_minimum_version 1.7.0
 
 load helper
 
+# One tmux server per file (see tama_shared_server_setup_file). Nothing here
+# mutates server state, so isolation is just a fresh `t` session per test.
+setup_file() {
+  tama_shared_server_setup_file || return 1
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
 setup() {
-  tama_start_server
+  tama_shared_server_test_setup || return 1
 }
 
 teardown() {
-  tmux_test_server_stop
+  tama_detach_client
 }
 
 set_pane_value() { # <pane> <option suffix> <value>
@@ -59,6 +69,7 @@ record_for() { # <session target> <pane> <agent> <state> <label>
 
 @test "list filters by exact session name and id and missing sessions are empty" {
   tmux_test_server_run rename-session -t t exact
+  tmux_test_server_run rename-window -t exact:0 fixed
   local pane session_id expected
   pane="$(tama_pane_of exact:0)"
   session_id="$(tmux_test_server_run display-message -p -t exact:0 '#{session_id}')"
@@ -79,6 +90,7 @@ record_for() { # <session target> <pane> <agent> <state> <label>
 
 @test "list emits one record for each linked-window session linkage" {
   tmux_test_server_run rename-session -t t one
+  tmux_test_server_run rename-window -t one:0 fixed
   local pane window_id
   pane="$(tama_pane_of one:0)"
   window_id="$(tama_window_id one:0)"
@@ -95,6 +107,7 @@ record_for() { # <session target> <pane> <agent> <state> <label>
 
 @test "list does not embed control separators that older tmux versions escape" {
   local pane expected wrapper
+  tmux_test_server_run rename-window -t t:0 fixed
   pane="$(tama_pane_of t:0)"
   set_pane_value "$pane" state_main running
   expected="$(record_for t:0 "$pane" '' running '')"
@@ -128,6 +141,7 @@ record_for() { # <session target> <pane> <agent> <state> <label>
 
 @test "list is read-only, reports stale state, and a cleared pane disappears" {
   local pane before expected
+  tmux_test_server_run rename-window -t t:0 fixed
   pane="$(tama_pane_of t:0)"
   set_pane_value "$pane" state_main error
   set_pane_value "$pane" cmd definitely-stale

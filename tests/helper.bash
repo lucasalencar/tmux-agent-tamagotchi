@@ -12,6 +12,11 @@ export PLUGIN_ROOT
 # shellcheck source=tests/lib/tmux-test-server.sh
 . "$PLUGIN_ROOT/tests/lib/tmux-test-server.sh"
 
+# Hook recipes, for the per-file shared server's rewire check (a test that
+# detaches hooks to isolate its path must not leave the file unwired).
+# shellcheck source=lib/hooks.sh
+. "$PLUGIN_ROOT/lib/hooks.sh"
+
 # tmux's own vocabulary for a flag option turned off — what lib/options.sh reads and
 # what both the README and `tama --help` print. It lives here once because a suite
 # that only ever wrote `off` is exactly what let three of the plugin's options go on
@@ -49,6 +54,162 @@ tama_point_at_server() {
   # Whatever tmux the suite is being run from must not reach into it: a test that
   # means "no pane was given" has to mean that on a developer's machine too.
   unset TMUX_PANE
+}
+
+# A tmux server shared by every test in one file, instead of one server per
+# test. Booting a server is cheap; wiring the plugin on it (~20 tmux
+# round-trips) is not, and neither is tearing it down. Sharing keeps per-test
+# isolation through three rules the file's setup() must follow: a fresh
+# session per test, globals reset per test, and server environment re-synced
+# per test (a hook's `run-shell` inherits the environment the server was
+# started — or last `set-environment` — with, not the one the test has now).
+#
+# The socket outlives any single test process state, so setup_file records it
+# where every test can find it. Keyed by file: one bats run can hold several
+# files' servers at once (see `make test-shard`).
+tama_shared_server_key_file() {
+  printf '%s/tama-shared-server-%s.env' "${BATS_SUITE_TMPDIR:-/tmp}" \
+    "$(basename "${BATS_TEST_FILENAME:-shared}" .bats)"
+}
+
+# Boot the file's server. Call once from setup_file(), then wire the plugin
+# and set whatever baseline the file's tests share.
+tama_shared_server_setup_file() {
+  TMUX_TEST_SOCKET="tmuxtest-shared-$$-${RANDOM}"
+  export TMUX_TEST_SOCKET
+  unset TMUX_TEST_SERVER_PID
+  tama_prepare_test_server_environment
+  _tmux_test_server_start_session /dev/null t || return 1
+  # Tests take turns owning every session (fresh `t` per test), and killing
+  # the last session would take the server with it: exit-empty would make the
+  # next new-session boot a pristine-looking but unwired stranger, and race
+  # the dying server to do it. Nothing under test asserts on server death
+  # (lifecycle tests use their own servers), so keep it around while empty.
+  tmux_test_server_run set -s exit-empty off
+  printf 'TMUX_TEST_SOCKET=%s\nTMUX_TEST_SERVER_PID=%s\n' \
+    "$TMUX_TEST_SOCKET" "${TMUX_TEST_SERVER_PID:-}" >"$(tama_shared_server_key_file)"
+}
+
+# Stop the file's server. Call once from teardown_file().
+tama_shared_server_teardown_file() {
+  local key_file
+  key_file="$(tama_shared_server_key_file)"
+  [ -e "$key_file" ] || return 0
+  # shellcheck disable=SC1090  # written by tama_shared_server_setup_file above
+  . "$key_file"
+  export TMUX_TEST_SOCKET TMUX_TEST_SERVER_PID
+  tama_prepare_test_server_environment
+  tmux_test_server_stop
+  rm -f "$key_file"
+}
+
+# Join the file's server and hand this test a pristine session named `t`,
+# killing whatever sessions an earlier test left behind (hostile names
+# included: they travel as argv, never through a shell). Call first from
+# the file's setup().
+tama_shared_server_test_setup() {
+  local key_file session sessions
+  key_file="$(tama_shared_server_key_file)"
+  [ -e "$key_file" ] || {
+    printf 'no shared test server for this file; setup_file did not run\n' >&2
+    return 1
+  }
+  # shellcheck disable=SC1090  # written by tama_shared_server_setup_file above
+  . "$key_file"
+  export TMUX_TEST_SOCKET TMUX_TEST_SERVER_PID
+  tama_point_at_server
+  sessions="$(tmux_test_server_run list-sessions -F '#{session_name}' 2>/dev/null)" || sessions=''
+  if [ -n "$sessions" ]; then
+    local args=() first=1
+    while IFS= read -r session; do
+      [ -n "$session" ] || continue
+      if [ "$first" -eq 1 ]; then
+        args=(kill-session -t "$session")
+        first=0
+      else
+        args+=(';' kill-session -t "$session")
+      fi
+    done <<<"$sessions"
+    [ "$first" -eq 1 ] || tmux_test_server_run "${args[@]}"
+  fi
+  tmux_test_server_run new-session -d -s t
+}
+
+# Remember wiring-seeded values so per-test resets can restore them instead of
+# unsetting (unsetting would drop the seed the entrypoint planted). Call with
+# option names (without @) after wiring in setup_file; each becomes
+# $TAMA_SHARED_WIRED_<name> when tests source the key file.
+tama_shared_server_remember_options() {
+  local key_file option value
+  key_file="$(tama_shared_server_key_file)"
+  for option in "$@"; do
+    value="$(tmux_test_server_run show -gqv "@$option" 2>/dev/null)" || value=''
+    printf 'TAMA_SHARED_WIRED_%s=%q\n' "$option" "$value" >>"$key_file"
+  done
+}
+
+# Re-check the file's hook wiring, re-adding whatever a test unwired (some
+# tests detach hooks to isolate the path under test). The recipes are
+# identical every time, so present ones are left alone: usually five checks,
+# zero writes.
+tama_shared_server_rewire_hooks() {
+  local hook command
+  while IFS='|' read -r hook command; do
+    [ -n "$hook" ] || continue
+    tama_hook_is_wired "$hook" "$command" || \
+      tmux_test_server_run set-hook -ga "$hook" "run-shell -b '$(tama_hook_recipe "$command")'"
+  done <<EOF
+$TAMA_HOOKS
+EOF
+}
+
+# Restore the file's hook wiring to exactly what the entrypoint wires, in one
+# tmux round-trip: every event in TAMA_HOOKS is emptied and re-appended with
+# the current recipe. For files whose tests unwire hooks *and* plant stale
+# recipes (re-adding alone would leave the stale ones behind) — unlike
+# tama_shared_server_rewire_hooks, which only adds what is missing.
+tama_shared_server_reset_hooks() {
+  local hook command args=() first=1
+  while IFS='|' read -r hook command; do
+    [ -n "$hook" ] || continue
+    if [ "$first" -eq 1 ]; then
+      first=0
+    else
+      args+=(';')
+    fi
+    args+=(set-hook -gu "$hook" ';' set-hook -ga "$hook" "run-shell -b '$(tama_hook_recipe "$command")'")
+  done <<EOF
+$TAMA_HOOKS
+EOF
+  [ "$first" -eq 1 ] || tmux_test_server_run "${args[@]}"
+}
+
+# Push the test's environment at the server, so hooks this test triggers
+# inherit what the test sees (a hook's `run-shell` inherits the environment
+# the server was started — or last `set-environment` — with, not the one the
+# test has now). Syncs every exported TAMA_* variable — backend log paths,
+# notifier dirs, fake-tmux controls — so per-test values reach hooks without
+# each file enumerating them. One chained call for the lot. Skips the socket
+# itself, which is how the test addresses the server, not hook configuration.
+tama_shared_server_sync_test_env() {
+  local args=() first=1 var value
+  while IFS= read -r var; do
+    case "$var" in
+      TMUX_TEST_SOCKET | TMUX_TEST_SERVER_PID) continue ;;
+    esac
+    value="${!var:-}"
+    if [ "$first" -eq 1 ]; then
+      first=0
+    else
+      args+=(';')
+    fi
+    if [ -n "$value" ]; then
+      args+=(set-environment -g "$var" "$value")
+    else
+      args+=(set-environment -gu "$var")
+    fi
+  done <<<"$(compgen -e | grep '^TAMA_' || true)"
+  [ "$first" -eq 1 ] || tmux_test_server_run "${args[@]}"
 }
 
 tama_arrange_sleeping_pane() { # <pane> [cwd]

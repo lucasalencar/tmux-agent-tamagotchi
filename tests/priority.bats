@@ -4,15 +4,39 @@ bats_require_minimum_version 1.7.0
 
 load helper
 
+setup_file() {
+  tama_shared_server_setup_file || return 1
+  "$PLUGIN_ROOT/tamagotchi.tmux" || return 1
+  tama_shared_server_remember_options tama_priority_icon
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
+# Globals this file's tests assign. Everything unsets back to the fresh-server
+# state except @tama_priority_icon, whose wiring-planted seed is restored.
+TAMA_PRIORITY_UNSET_GLOBALS='tama_backend tama_flag_policy tama_icon_set tama_notifications tama_priority_max_percent'
+
 setup() {
-  tama_start_server
-  run "$PLUGIN_ROOT/tamagotchi.tmux"
-  assert_success
+  tama_shared_server_test_setup || return 1
+  tama_shared_server_sync_test_env
+  local option reset_args=() first=1
+  for option in $TAMA_PRIORITY_UNSET_GLOBALS; do
+    if [ "$first" -eq 1 ]; then
+      first=0
+    else
+      reset_args+=(';')
+    fi
+    reset_args+=(set -gu "@$option")
+  done
+  reset_args+=(';' set -gu automatic-rename)
+  reset_args+=(';' set -g @tama_priority_icon "$TAMA_SHARED_WIRED_tama_priority_icon")
+  tmux_test_server_run "${reset_args[@]}"
 }
 
 teardown() {
   tama_detach_client
-  tmux_test_server_stop
 }
 
 @test "toggle-priority requires an explicit window target" {

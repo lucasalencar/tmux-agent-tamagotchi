@@ -24,21 +24,44 @@ load helper
 # It matches terminal window titles, so a session named `t` could match a real window of
 # the developer's own terminal called `notes` and raise it. Every test here either
 # replaces the capability or uses a session name no real window could be called.
+setup_file() {
+  tama_shared_server_setup_file || return 1
+  "$PLUGIN_ROOT/tamagotchi.tmux" || return 1
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
+# Globals this file's tests assign, reset per test (one chained call) the
+# way a fresh server would have them: unset. The tests that need a backend
+# set it explicitly; the auto tests rely on the unset default.
+TAMA_MACOS_RESET_GLOBALS='tama_backend tama_focus_command tama_group_format tama_notify_send tama_terminal_app tama_terminal_bundle_id tama_terminal_notifier'
+
 setup() {
-  # Before the server boots: the notifier is reached from tmux hooks too, and a hook's
-  # `run-shell` inherits the environment the server was started with.
+  # The notifier fixture is per test, and hooks inherit the server
+  # environment — so both the path and the sync happen per test.
   export TAMA_NOTIFIER_DIR="$BATS_TEST_TMPDIR/notifier"
   mkdir -p "$TAMA_NOTIFIER_DIR"
   : >"$TAMA_NOTIFIER_DIR/calls"
 
-  tama_start_server
-  run "$PLUGIN_ROOT/tamagotchi.tmux"
-  assert_success
+  tama_shared_server_test_setup || return 1
+  local option reset_args=() first=1
+  for option in $TAMA_MACOS_RESET_GLOBALS; do
+    if [ "$first" -eq 1 ]; then
+      first=0
+    else
+      reset_args+=(';')
+    fi
+    reset_args+=(set -gu "@$option")
+  done
+  tmux_test_server_run "${reset_args[@]}"
+  tama_shared_server_sync_test_env
+  tama_shared_server_rewire_hooks
 }
 
 teardown() {
   tama_detach_client
-  tmux_test_server_stop
 }
 
 require_darwin() {
