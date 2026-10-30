@@ -131,16 +131,47 @@ Python 3.7 or newer will do):
 python3 backends/remote/receiver.py --port 8765 --token 'a-shared-secret'
 ```
 
+or, on the showing computer itself, installed to start at login with one command:
+
+```sh
+bin/tama install-receiver
+```
+
+which renders `examples/remote-receiver.plist`, loads it with `launchctl`, and
+prints the token it generated (if any) for `@tama_remote_token`. To start it at
+login by hand instead, copy that example to `~/Library/LaunchAgents/` with the
+`%%PLUGIN_DIR%%` and `%%TOKEN%%` placeholders replaced (its header says how) and
+`launchctl load` it; it restarts itself via `KeepAlive` and logs to
+`/tmp/tama-remote-receiver.log`.
+
 It draws each banner natively — `terminal-notifier` when installed,
 `display notification` otherwise — grouped per window like every backend, and
 removes it on `dismiss`. Both binaries are found on `PATH` (then the Homebrew
 prefixes for the notifier) and overridable with `--terminal-notifier` and
 `--osascript`. Probe it with `curl http://THAT-COMPUTER:8765/health`
-before blaming the plugin for a silent desktop. To start it at login on a Mac,
-copy `examples/remote-receiver.plist` to `~/Library/LaunchAgents/` with the
-`PLUGIN_DIR` and `TOKEN` placeholders replaced (the header says how) and
-`launchctl load` it; it restarts itself via `KeepAlive` and logs to
-`/tmp/tama-remote-receiver.log`.
+before blaming the plugin for a silent desktop.
+
+### Finding the receiver
+
+`@tama_remote_url` needs an address of the showing computer that survives, in
+order of preference:
+
+* **Tailscale (or another mesh VPN) name.** Stable MagicDNS names and stable
+  IPs, encrypted in transit — which also answers the cleartext-HTTP warning
+  above. If both computers share a tailnet, this is the one to use.
+* **mDNS `<name>.local`.** macOS advertises it by default and it never changes
+  with DHCP — but the tmux side resolves it only with an mDNS resolver
+  (Avahi/`libnss-mdns`), which minimal Linux installs lack. If
+  `getent hosts <name>.local` answers on the tmux machine, it works.
+* **DHCP reservation.** Pin the Mac's address on the router so a plain LAN IP
+  stops moving.
+
+There is deliberately no network discovery of receivers: it would need
+non-standard-library dependencies on both ends (breaking the receiver's
+copy-anywhere property), and an unauthenticated beacon a sender trusts lets
+anyone on the LAN plant a receiver and harvest notification bodies and the
+bearer token. The URL stays explicit configuration, validated loudly by
+`tama doctor`.
 
 * **No `focused`.** Nothing here can say which terminal window is in front of a
   screen on another computer, and asking would mean a synchronous network round

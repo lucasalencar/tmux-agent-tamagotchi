@@ -346,6 +346,13 @@ On the Mac, from this plugin directory:
 python3 backends/remote/receiver.py --port 8765 --token 'a-shared-secret'
 ```
 
+Or installed to start at login with one command (a Mac), which renders and
+loads the launchd plist and prints the token when it generates one:
+
+```sh
+bin/tama install-receiver
+```
+
 The receiver draws each forwarded banner natively — with `terminal-notifier`
 when installed, with `display notification` otherwise — and dismisses it when
 the tmux window is selected. A click only brings the terminal forward unless
@@ -401,6 +408,7 @@ The plugin does not install mouse bindings.
 | `on-select` | Perform Attention acknowledgement and sweep stale state. |
 | `hook` | Dispatch an event to a bundled adapter. |
 | `setup` | Configure an integration that provides a setup helper. |
+| `install-receiver` | Install the remote receiver to start at login on this computer. |
 | `doctor` | Diagnose an installation. |
 | `version` | Print the plugin version. |
 
@@ -419,7 +427,8 @@ Hook-facing commands follow these rules:
 
 `doctor` and `setup` report failures with a non-zero status. Both `setup` and `focus-window`
 run outside tmux: setup may configure an agent before tmux starts, while desktop notification
-clicks do not inherit the hook environment.
+clicks do not inherit the hook environment. `install-receiver` also runs outside tmux and
+reports installation failures the same way.
 
 ## Operational notes
 

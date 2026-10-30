@@ -1,0 +1,14 @@
+#!/bin/sh
+#
+# Stands in for `launchctl`, so install-receiver can be tested without touching
+# the real service manager — here and on a Mac, where the real one would start
+# a receiver. Records into $TAMA_LAUNCHCTL_DIR:
+#
+#   calls   one line per invocation, holding the full command line
+#
+# Exits non-zero when $TAMA_LAUNCHCTL_FAIL names the subcommand ($1), which
+# covers the installer's failure branches deterministically.
+
+printf '%s\n' "$*" >>"$TAMA_LAUNCHCTL_DIR/calls"
+[ "${TAMA_LAUNCHCTL_FAIL:-}" = "$1" ] && exit 1
+exit 0
