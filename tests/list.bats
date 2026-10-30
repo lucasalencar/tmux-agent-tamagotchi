@@ -4,12 +4,22 @@ bats_require_minimum_version 1.7.0
 
 load helper
 
+# One tmux server per file (see tama_shared_server_setup_file). Nothing here
+# mutates server state, so isolation is just a fresh `t` session per test.
+setup_file() {
+  tama_shared_server_setup_file || return 1
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
 setup() {
-  tama_start_server
+  tama_shared_server_test_setup || return 1
 }
 
 teardown() {
-  tmux_test_server_stop
+  tama_detach_client
 }
 
 set_pane_value() { # <pane> <option suffix> <value>
