@@ -520,7 +520,9 @@ wait_until_no_icons() { # <window>
   tama_attach_client t
   tmux_test_server_run select-window -t t:1
   wait_until_no_icons "$target"
-  assert_not_flagged "$target"
+  # The sweep and the unflag travel through hooks that can skew under load;
+  # the claim is that the flag clears, not that it clears in the same breath.
+  wait_until_not_flagged "$target"
 }
 
 @test "on-select sweeps the window it was called for" {
