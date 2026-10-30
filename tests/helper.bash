@@ -163,6 +163,27 @@ $TAMA_HOOKS
 EOF
 }
 
+# Restore the file's hook wiring to exactly what the entrypoint wires, in one
+# tmux round-trip: every event in TAMA_HOOKS is emptied and re-appended with
+# the current recipe. For files whose tests unwire hooks *and* plant stale
+# recipes (re-adding alone would leave the stale ones behind) — unlike
+# tama_shared_server_rewire_hooks, which only adds what is missing.
+tama_shared_server_reset_hooks() {
+  local hook command args=() first=1
+  while IFS='|' read -r hook command; do
+    [ -n "$hook" ] || continue
+    if [ "$first" -eq 1 ]; then
+      first=0
+    else
+      args+=(';')
+    fi
+    args+=(set-hook -gu "$hook" ';' set-hook -ga "$hook" "run-shell -b '$(tama_hook_recipe "$command")'")
+  done <<EOF
+$TAMA_HOOKS
+EOF
+  [ "$first" -eq 1 ] || tmux_test_server_run "${args[@]}"
+}
+
 # Push the test's environment at the server, so hooks this test triggers
 # inherit what the test sees (a hook's `run-shell` inherits the environment
 # the server was started — or last `set-environment` — with, not the one the
