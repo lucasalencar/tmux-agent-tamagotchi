@@ -4,12 +4,25 @@ bats_require_minimum_version 1.7.0
 
 load helper
 
+# One tmux server per file (see tama_shared_server_setup_file). Each test
+# wires or unwires for itself, so setup() only hands it a fresh `t` session
+# on a bare server: the wiring products are unset, exactly as on the
+# per-test servers this replaces.
+setup_file() {
+  tama_shared_server_setup_file || return 1
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
 setup() {
-  tama_start_server
+  tama_shared_server_test_setup || return 1
+  tmux_test_server_run set -gu @tama_bin ';' set -gu @tama_bin_dir ';' set -gu @tama_choose_tree_format
 }
 
 teardown() {
-  tmux_test_server_stop
+  tama_detach_client
 }
 
 # Sets $PLUGIN to a copy of the plugin that has one dispatchable subcommand.
