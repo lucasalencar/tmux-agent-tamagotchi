@@ -211,7 +211,11 @@ wire_hooks() {
   # This version splits attachment acknowledgement from its server-wide sweep. Remove
   # only the exact recipe the previous version owned, leaving every user hook intact.
   local wire_obsolete wire_apply_first=1
-  local wire_apply_args hook cmdline entry command
+  # Initialised, not merely declared: bash 3.2, which this plugin still
+  # supports, prepends an empty element on the first `+=` to a merely
+  # declared local array, and tmux then fails the whole chained call.
+  local wire_apply_args=()
+  local hook cmdline entry command
   wire_obsolete="$(tama_hook_recipe 'on-select --all --window #{window_id}')"
   while read -r entry command; do
     [ "$command" = "run-shell -b \"$wire_obsolete\"" ] || continue
