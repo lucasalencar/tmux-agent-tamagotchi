@@ -4,14 +4,31 @@ bats_require_minimum_version 1.7.0
 
 load helper
 
+# One tmux server per file (see tama_shared_server_setup_file). Isolation per
+# test comes from a fresh `t` session, a reset of the two globals this file's
+# tests assign, and a server-environment re-sync so hooks inherit what the
+# test sees.
+setup_file() {
+  tama_shared_server_setup_file || return 1
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
 setup() {
-  tama_start_server
+  tama_shared_server_test_setup || return 1
+  tmux_test_server_run set -gu @tama_backend ';' set -gu @tama_notify_command
+  tama_shared_server_sync_test_env
   PANE="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | head -1)"
+  # The fresh `t` session's window id, which advances every test: the first
+  # window of a file-shared server is not `@0` the way a per-test server's
+  # was, so tests that render a real window read it here instead of naming it.
+  WINDOW="$(tmux_test_server_run display-message -p -t t '#{window_id}')"
 }
 
 teardown() {
   tama_detach_client
-  tmux_test_server_stop
 }
 
 file_mode() {
@@ -42,7 +59,7 @@ file_mode() {
 @test "successful status rendering stays out of an enabled Log" {
   local log="$BATS_TEST_TMPDIR/render.jsonl"
 
-  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" icons '@0'
+  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" icons "$WINDOW"
 
   assert_success
   [ ! -e "$log" ]
@@ -53,7 +70,7 @@ file_mode() {
   tama_log_tmux_calls
   export TAMA_FAKE_TMUX_FAIL_COMMAND=display-message
 
-  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" icons '@0'
+  TAMA_LOG_FILE="$log" run "$PLUGIN_ROOT/bin/tama" icons "$WINDOW"
 
   assert_success
   assert_equal "$output" ''
