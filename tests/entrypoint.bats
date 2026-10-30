@@ -488,7 +488,10 @@ unwire_hooks() {
   assert_success
   [ -z "$stderr" ]
   assert_plugin_wired "$PLUGIN_ROOT"
-  run grep -q 'display-message' "$TAMA_FAKE_TMUX_LOG"
+  # A warning would reach a clientless server through display-message *without*
+  # `-p` (a bare message argument); the batched option reads use
+  # `display-message -p` markers, which are not warnings.
+  run awk '/^display-message$/ { getline nxt; if (nxt != "-p") { found=1 } } END { exit !found }' "$TAMA_FAKE_TMUX_LOG"
   assert_status 1
 }
 
