@@ -28,8 +28,11 @@ tama_record() { # <capability> [args…]
   tama_capability="$1"
   shift
 
-  printf '%s\n' "$tama_capability" >>"$TAMA_TEST_LOG"
-
+  # Values first, the call-log line last: tests wait for the line and then
+  # read the values, so the line must imply all of them are present. The
+  # other order opened a microsecond window where the call was counted but
+  # its argv files did not exist yet — a flake (macOS shard 4/4, notify
+  # "arriving at the window takes its banner down").
   printf '%s' "$#" >"$TAMA_TEST_LOG.$tama_capability.argc"
   tama_argument=0
   for tama_value in "$@"; do
@@ -46,6 +49,8 @@ tama_record() { # <capability> [args…]
   tama_record_env TAMA_BIN "${TAMA_BIN-}"
   tama_record_env TAMA_TERMINAL_APP "${TAMA_TERMINAL_APP-}"
   tama_record_env TAMA_TERMINAL_BUNDLE_ID "${TAMA_TERMINAL_BUNDLE_ID-}"
+
+  printf '%s\n' "$tama_capability" >>"$TAMA_TEST_LOG"
 }
 
 # Written with no trailing newline, so the file holds the value and nothing else.
