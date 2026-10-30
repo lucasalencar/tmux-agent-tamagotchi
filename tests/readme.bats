@@ -34,12 +34,38 @@ load helper
 
 README="$PLUGIN_ROOT/README.md"
 
+# One tmux server per file (see tama_shared_server_setup_file). Isolation per
+# test comes from a fresh `t` session plus a reset of everything the first
+# test pastes (it sources every README `set -g` line, including
+# `@tama_manage_hooks off` — which would silence every later wiring) and of
+# @tama_notifications (one spelling loop below assigns it repeatedly).
+setup_file() {
+  tama_shared_server_setup_file || return 1
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
+TAMA_README_RESET_GLOBALS='tama_flag_policy tama_icon_background tama_icon_error tama_icon_idle tama_icon_running tama_icon_set tama_icon_unknown tama_icon_waiting tama_manage_hooks tama_notifications tama_summary_prefix tama_summary_separator tama_summary_suffix'
+
 setup() {
-  tama_start_server
+  tama_shared_server_test_setup || return 1
+  local option reset_args=() first=1
+  for option in $TAMA_README_RESET_GLOBALS; do
+    if [ "$first" -eq 1 ]; then
+      first=0
+    else
+      reset_args+=(';')
+    fi
+    reset_args+=(set -gu "@$option")
+  done
+  reset_args+=(';' set -gu window-status-format ';' set -gu window-status-current-format)
+  tmux_test_server_run "${reset_args[@]}"
 }
 
 teardown() {
-  tmux_test_server_stop
+  tama_detach_client
 }
 
 # Every `set -g` line inside a fenced block of the README, in order, with the leading
