@@ -136,7 +136,11 @@ It draws each banner natively — `terminal-notifier` when installed,
 removes it on `dismiss`. Both binaries are found on `PATH` (then the Homebrew
 prefixes for the notifier) and overridable with `--terminal-notifier` and
 `--osascript`. Probe it with `curl http://THAT-COMPUTER:8765/health`
-before blaming the plugin for a silent desktop.
+before blaming the plugin for a silent desktop. To start it at login on a Mac,
+copy `examples/remote-receiver.plist` to `~/Library/LaunchAgents/` with the
+`PLUGIN_DIR` and `TOKEN` placeholders replaced (the header says how) and
+`launchctl load` it; it restarts itself via `KeepAlive` and logs to
+`/tmp/tama-remote-receiver.log`.
 
 * **No `focused`.** Nothing here can say which terminal window is in front of a
   screen on another computer, and asking would mean a synchronous network round

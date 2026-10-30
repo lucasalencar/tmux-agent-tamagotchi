@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Run the tama remote-notification receiver at login on the computer that shows
+  the banners (e.g. your MacBook). See "The remote backend" in backends/README.md.
+
+  Install once (replace PLUGIN_DIR with this plugin's directory and TOKEN with
+  the same secret as @tama_remote_token on the tmux side):
+
+    sed -e "s|PLUGIN_DIR|$HOME/code/tmux-agent-tamagotchi|" \
+        -e "s|TOKEN|a-shared-secret|" \
+        PLUGIN_DIR/examples/remote-receiver.plist \
+        >~/Library/LaunchAgents/com.tamagotchi.remote-receiver.plist
+    launchctl load ~/Library/LaunchAgents/com.tamagotchi.remote-receiver.plist
+
+  Logs go to /tmp/tama-remote-receiver.log. Unload with `launchctl unload` on
+  the same path. The token sits in this file in cleartext with the usual
+  home-directory permissions; prefer a user-only checkout on a shared machine.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tamagotchi.remote-receiver</string>
+  <key>ProgramArguments</key>
+  <array>
+    <!-- Homebrew python if you have it, else /usr/bin/python3 (which may first
+         ask you to install Xcode's command line tools). Any Python 3.7+ works. -->
+    <string>/opt/homebrew/bin/python3</string>
+    <string>PLUGIN_DIR/backends/remote/receiver.py</string>
+    <string>--port</string>
+    <string>8765</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TAMA_REMOTE_TOKEN</key>
+    <string>TOKEN</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/tama-remote-receiver.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/tama-remote-receiver.log</string>
+</dict>
+</plist>
