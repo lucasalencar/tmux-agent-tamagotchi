@@ -205,12 +205,19 @@ wire_hooks() {
   # ever cleared, no sweep ever run, and nothing on screen to say why.
   tama_opt_enabled tama_manage_hooks on || return 0
 
-  # One dump for every hook below, instead of one `show-options` each: empty
-  # hooks print as a bare name (never an error, so the chain never aborts) and
-  # wired ones as `hook[N] command` lines, which is also what the obsolete
-  # recipe is matched against.
-  local wire_dump
-  wire_dump="$(tmux_run show-options -g client-attached ';' show-options -g after-select-window ';' show-options -g after-select-pane ';' show-options -g client-focus-in ';' show-options -g client-session-changed 2>/dev/null)" || return 0
+  # One dump for every hook below, instead of one query each. `show -gqv`
+  # prints each wired recipe on its own line and prints nothing — and, unlike
+  # `show-options`, never fails — for an empty hook, so the chain cannot abort
+  # partway on any tmux version. Markers separate the hooks, in chain order.
+  local wire_marker wire_dump wire_section wire_index
+  wire_marker="__tama_hooks_$$_${RANDOM}_${RANDOM}__"
+  wire_dump="$(tmux_run show -gqv client-attached ';' display-message -p "$wire_marker" ';' show -gqv after-select-window ';' display-message -p "$wire_marker" ';' show -gqv after-select-pane ';' display-message -p "$wire_marker" ';' show -gqv client-focus-in ';' display-message -p "$wire_marker" ';' show -gqv client-session-changed ';' display-message -p "$wire_marker" 2>/dev/null)" || return 0
+
+  # Indexed entries for exactly one hook, for the targeted removal below:
+  # only the `hook[N] command` form names the single entry to drop, and this
+  # query cannot abort anything because it stands alone.
+  local wire_indexed
+  wire_indexed="$(tmux_run show-options -g client-attached 2>/dev/null)" || wire_indexed=''
 
   # This version splits attachment acknowledgement from its server-wide sweep. Remove
   # only the exact recipe the previous version owned, leaving every user hook intact.
@@ -230,12 +237,46 @@ wire_hooks() {
         wire_apply_args+=(set-hook -gu "$entry")
         ;;
     esac
+  done <<<"$wire_indexed"
+
+  # Split the dump into one section per hook, in chain order, then check each
+  # hook's own section for its recipe. Five small strings, no subprocesses.
+  local hook cmdline wire_s0 wire_s1 wire_s2 wire_s3 wire_s4
+  local wire_line wire_section
+  wire_s0='' wire_s1='' wire_s2='' wire_s3='' wire_s4=''
+  wire_index=0
+  while IFS= read -r wire_line; do
+    if [ "$wire_line" = "$wire_marker" ]; then
+      wire_index=$((wire_index + 1))
+      continue
+    fi
+    case "$wire_index" in
+      0) wire_s0="$wire_s0
+$wire_line" ;;
+      1) wire_s1="$wire_s1
+$wire_line" ;;
+      2) wire_s2="$wire_s2
+$wire_line" ;;
+      3) wire_s3="$wire_s3
+$wire_line" ;;
+      4) wire_s4="$wire_s4
+$wire_line" ;;
+    esac
   done <<<"$wire_dump"
 
-  local hook cmdline
   while IFS='|' read -r hook cmdline; do
     [ -n "$hook" ] || continue
-    printf '%s\n' "$wire_dump" | grep -qF -- "$(tama_hook_recipe "$cmdline")" && continue
+    case "$hook" in
+      client-attached) wire_section="$wire_s0" ;;
+      after-select-window) wire_section="$wire_s1" ;;
+      after-select-pane) wire_section="$wire_s2" ;;
+      client-focus-in) wire_section="$wire_s3" ;;
+      client-session-changed) wire_section="$wire_s4" ;;
+      *) continue ;;
+    esac
+    if printf '%s\n' "$wire_section" | grep -qF -- "$(tama_hook_recipe "$cmdline")"; then
+      continue
+    fi
     if [ "$wire_apply_first" -eq 1 ]; then
       wire_apply_first=0
     else
