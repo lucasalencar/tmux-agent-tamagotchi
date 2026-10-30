@@ -47,6 +47,9 @@ fi
 
 main() {
   local version warning choose_tree_format
+  local wire_marker wire_reads wire_line
+  local wire_have_priority_icon wire_have_flag_text wire_seen_marker
+  local wire_sets
   version="$(tama_tmux_version)"
   if ! tama_version_at_least "$version" "$TAMA_MIN_TMUX_VERSION"; then
     # display-message expands its argument as a tmux format, and a format can
@@ -69,8 +72,14 @@ main() {
   # interpolates this path into a `#()` format later owns quoting it and
   # escaping what tmux would otherwise read: `#` starts a format, and `%` is
   # consumed by strftime.
-  tmux_run set -g @tama_bin "$TAMA_PLUGIN_DIR/bin/tama"
-  tmux_run set -g @tama_bin_dir "$TAMA_PLUGIN_DIR/bin"
+  #
+  # All of the option writes below go out as one chained tmux call at the end
+  # (see the single tmux_run past the seeds): one round-trip instead of a
+  # dozen, which is what makes config reloads — and test setups, which load
+  # the plugin per test — fast. Values travel as separate arguments, never
+  # through a shell, so spaces and quotes in them are inert.
+  wire_sets=(set -g @tama_bin "$TAMA_PLUGIN_DIR/bin/tama"
+    ';' set -g @tama_bin_dir "$TAMA_PLUGIN_DIR/bin")
 
   # A ready-made format for the user to interpolate into their own status line,
   # wherever they want the icons — the plugin never rewrites a status line
@@ -101,12 +110,11 @@ main() {
       # Unset rather than left alone: a value from an earlier load of a different
       # clone would otherwise keep running that clone, once per window per status
       # interval, while this message says the icons are off.
-      tmux_run set -guq @tama_icons
-      tmux_run set -guq @tama_status_summary
+      wire_sets+=(';' set -guq @tama_icons ';' set -guq @tama_status_summary)
       ;;
     *)
-      tmux_run set -g @tama_icons '#(#{q:@tama_bin} icons #{window_id})'
-      tmux_run set -g @tama_status_summary '#(#{q:@tama_bin} summary #{q:session_id})'
+      wire_sets+=(';' set -g @tama_icons '#(#{q:@tama_bin} icons #{window_id})'
+        ';' set -g @tama_status_summary '#(#{q:@tama_bin} summary #{q:session_id})')
       ;;
   esac
 
@@ -118,17 +126,33 @@ main() {
   # `#{E:@tama_flag_text}` expands the text as a format in turn, so a user can put
   # `#[fg=red]` in it. The option is referenced, never interpolated, for the same
   # reason the icon path references `@tama_bin`.
-  tmux_run set -g @tama_flag '#{?@tama_window_flag,#{E:@tama_flag_text},}'
+  wire_sets+=(';' set -g @tama_flag '#{?@tama_window_flag,#{E:@tama_flag_text},}')
+
+  # Seed-aware reads for the two options seeded below, batched into one
+  # round-trip; see the comment where wire_reads is parsed for why `show -gv`
+  # cannot be used here.
+  wire_marker="__tama_wire_$$_${RANDOM}_${RANDOM}__"
+  wire_reads="$(tmux_run show -gqv @tama_priority_icon ';' display-message -p "$wire_marker" ';' show -gqv @tama_flag_text ';' display-message -p "$wire_marker" 2>/dev/null)"
+  wire_have_priority_icon=0 wire_have_flag_text=0 wire_seen_marker=0
+  while IFS= read -r wire_line; do
+    if [ "$wire_line" = "$wire_marker" ]; then
+      wire_seen_marker=$((wire_seen_marker + 1))
+    elif [ "$wire_seen_marker" -eq 0 ]; then
+      wire_have_priority_icon=1
+    else
+      wire_have_flag_text=1
+    fi
+  done <<<"$wire_reads"
 
   # Priority is a classification separate from the attention flag. Its default is
   # itself a format so changing the icon preset is visible on the next redraw.
   # Seed only when absent: an explicitly empty icon is how a user hides it.
-  if ! tmux_run show -gv @tama_priority_icon >/dev/null 2>&1; then
-    tmux_run set -g @tama_priority_icon \
-      '#{?#{==:#{@tama_icon_set},pets}, ⭐,#{?#{==:#{@tama_icon_set},ascii}, *, ★}}'
+  if [ "$wire_have_priority_icon" -eq 0 ]; then
+    wire_sets+=(';' set -g @tama_priority_icon \
+      '#{?#{==:#{@tama_icon_set},pets}, ⭐,#{?#{==:#{@tama_icon_set},ascii}, *, ★}}')
   fi
-  tmux_run set -g @tama_priority \
-    "#{?${TAMA_WINDOW_PRIORITY_OPTION},#{E:@tama_priority_icon},}"
+  wire_sets+=(';' set -g @tama_priority \
+    "#{?${TAMA_WINDOW_PRIORITY_OPTION},#{E:@tama_priority_icon},}")
 
   # choose-tree offers only one format for all three row types. Keep that complete
   # format here so users do not have to copy tmux's implementation just to decorate
@@ -141,7 +165,7 @@ main() {
   choose_tree_format="${choose_tree_format}#{session_windows} windows"
   choose_tree_format="${choose_tree_format}#{?session_grouped, (group #{session_group}: #{session_group_list}),}"
   choose_tree_format="${choose_tree_format}#{?session_attached, (attached),}}}"
-  tmux_run set -g @tama_choose_tree_format "$choose_tree_format"
+  wire_sets+=(';' set -g @tama_choose_tree_format "$choose_tree_format")
 
   # The flag text has to exist as an option, because a format cannot carry a default:
   # `#{E:@tama_flag_text}` on an option nobody set expands to nothing, and the flag
@@ -150,9 +174,12 @@ main() {
   # rather than being handed the default back on the next reload. Same distinction
   # lib/options.sh draws for every other option; this is the one that cannot be drawn
   # at read time, since tmux is doing the reading.
-  if ! tmux_run show -gv @tama_flag_text >/dev/null 2>&1; then
-    tmux_run set -g @tama_flag_text ' !'
+  if [ "$wire_have_flag_text" -eq 0 ]; then
+    wire_sets+=(';' set -g @tama_flag_text ' !')
   fi
+
+  # One round-trip for all of the option writes above.
+  tmux_run "${wire_sets[@]}"
 
   wire_hooks
   return 0
@@ -178,39 +205,47 @@ wire_hooks() {
   # ever cleared, no sweep ever run, and nothing on screen to say why.
   tama_opt_enabled tama_manage_hooks on || return 0
 
+  # One dump for every hook below, instead of one `show-options` each: empty
+  # hooks print as a bare name (never an error, so the chain never aborts) and
+  # wired ones as `hook[N] command` lines, which is also what the obsolete
+  # recipe is matched against.
+  local wire_dump
+  wire_dump="$(tmux_run show-options -g client-attached ';' show-options -g after-select-window ';' show-options -g after-select-pane ';' show-options -g client-focus-in ';' show-options -g client-session-changed 2>/dev/null)" || return 0
+
   # This version splits attachment acknowledgement from its server-wide sweep. Remove
   # only the exact recipe the previous version owned, leaving every user hook intact.
-  remove_hook_recipe client-attached 'on-select --all --window #{window_id}'
+  local wire_obsolete wire_apply_first=1
+  local wire_apply_args
+  wire_obsolete="$(tama_hook_recipe 'on-select --all --window #{window_id}')"
+  local entry command
+  while read -r entry command; do
+    [ "$command" = "run-shell -b \"$wire_obsolete\"" ] || continue
+    case "$entry" in
+      client-attached\[*\]*)
+        if [ "$wire_apply_first" -eq 1 ]; then
+          wire_apply_first=0
+        else
+          wire_apply_args+=(';')
+        fi
+        wire_apply_args+=(set-hook -gu "$entry")
+        ;;
+    esac
+  done <<<"$wire_dump"
 
-  local hook command
-  while IFS='|' read -r hook command; do
+  local hook cmdline
+  while IFS='|' read -r hook cmdline; do
     [ -n "$hook" ] || continue
-    wire_hook "$hook" "$command"
+    printf '%s\n' "$wire_dump" | grep -qF -- "$(tama_hook_recipe "$cmdline")" && continue
+    if [ "$wire_apply_first" -eq 1 ]; then
+      wire_apply_first=0
+    else
+      wire_apply_args+=(';')
+    fi
+    wire_apply_args+=(set-hook -ga "$hook" "run-shell -b '$(tama_hook_recipe "$cmdline")'")
   done <<EOF
 $TAMA_HOOKS
 EOF
-  return 0
-}
-
-remove_hook_recipe() { # <tmux hook> <obsolete tama command>
-  local entry command recipe
-  recipe="$(tama_hook_recipe "$2")"
-  while read -r entry command; do
-    [ "$command" = "run-shell -b \"$recipe\"" ] || continue
-    tmux_run set-hook -gu "$entry" >/dev/null 2>&1 || true
-  done <<EOF
-$(tmux_run show-options -g "$1" 2>/dev/null)
-EOF
-}
-
-wire_hook() { # <tmux hook> <tama command>
-  # Asked through lib/hooks.sh rather than compared here, so that the question doctor
-  # asks about this hook is the same question this function answers about it.
-  tama_hook_is_wired "$1" "$2" && return 0
-
-  # A failed write is not worth failing a config reload over.
-  tmux_run set-hook -ga "$1" "run-shell -b '$(tama_hook_recipe "$2")'" >/dev/null 2>&1 ||
-    true
+  [ "$wire_apply_first" -eq 1 ] || tmux_run "${wire_apply_args[@]}" >/dev/null 2>&1 || true
   return 0
 }
 
