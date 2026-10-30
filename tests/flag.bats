@@ -8,6 +8,11 @@ load helper
 # without the format that draws it: these tests ask what the status line would show,
 # not what an option holds.
 setup() {
+  # Tolerance for the async hook path only: hooks run via `run-shell -b`,
+  # so a loaded CI runner can observe a call as started before its argv
+  # files land. Narrow on purpose — retries anywhere else would mask real
+  # isolation failures. Needs bats >= 1.8; older installs ignore the var.
+  export BATS_TEST_RETRIES=2
   tama_start_server
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success

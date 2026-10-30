@@ -18,8 +18,12 @@ all: lint test
 lint:
 	shellcheck -x $(SHELL_FILES)
 
+# --print-output-on-failure needs bats >= 1.5 (this repo requires >= 1.7).
+# --timing needs a newer bats; detected so older installs still work.
+BATS_TIMING := $(shell bats --help 2>/dev/null | grep -q -- --timing && echo --timing)
+
 test:
-	bats -r tests
+	bats --print-output-on-failure $(BATS_TIMING) -r tests
 
 # Sharded test run for CI parallelization:
 # `make test-shard SHARD=1 SHARDS=2` runs every SHARDS-th file, so N CI jobs
@@ -30,7 +34,7 @@ test:
 SHARD ?= 1
 SHARDS ?= 1
 test-shard:
-	files="$$(ls tests/*.bats | sort | awk -v s="$(SHARD)" -v n="$(SHARDS)" '(NR-1) % n == (s-1)')"; bats $$files
+	files="$$(ls tests/*.bats | sort | awk -v s="$(SHARD)" -v n="$(SHARDS)" '(NR-1) % n == (s-1)')"; bats --print-output-on-failure $(BATS_TIMING) $$files
 
 doctor:
 	@tests/ci-doctor
