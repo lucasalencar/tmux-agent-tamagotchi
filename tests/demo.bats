@@ -20,6 +20,13 @@ boot_demo() {
   # own Mac resolves to their real notifier — and this suite reaches the dismissal path.
   # See tama_no_backend. Ignored when the boot was meant to fail.
   tama_no_backend 2>/dev/null || true
+  if [ "$boot_status" -eq 0 ]; then
+    # Freeze the window name: tmux's automatic-rename fires asynchronously and
+    # can land between this file's baseline and effect snapshots, which makes
+    # the comparison load-sensitive (observed under parallel runs on macOS).
+    # What these tests assert is the flag mark, not live window renaming.
+    tmux_test_server_run set-window-option -t demo automatic-rename off >/dev/null
+  fi
   return "$boot_status"
 }
 

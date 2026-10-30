@@ -54,8 +54,12 @@ fi
 if [ "$tama_call_number" -eq "${TAMA_FAKE_TMUX_WAIT_BEFORE:-0}" ] &&
   [ -n "${TAMA_FAKE_TMUX_WAIT_FOR:-}" ]; then
   # Bounded, so a test that gets the ordering wrong fails instead of hanging.
+  # Generous on purpose: under a loaded parallel run the other side can take a
+  # while to reach its touch point, and expiring here silently produces the
+  # wrong interleaving instead of a failure. Costs nothing when the file
+  # appears promptly, which is the common case.
   tama_waited=0
-  while [ ! -e "$TAMA_FAKE_TMUX_WAIT_FOR" ] && [ "$tama_waited" -lt 100 ]; do
+  while [ ! -e "$TAMA_FAKE_TMUX_WAIT_FOR" ] && [ "$tama_waited" -lt 600 ]; do
     sleep 0.1
     tama_waited=$((tama_waited + 1))
   done
