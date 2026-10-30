@@ -6,21 +6,33 @@ load helper
 
 # The plugin is loaded in every test here, because the flag is only half a feature
 # without the format that draws it: these tests ask what the status line would show,
-# not what an option holds.
+# not what an option holds. One server per file (see tama_shared_server_setup_file).
+setup_file() {
+  tama_shared_server_setup_file || return 1
+  "$PLUGIN_ROOT/tamagotchi.tmux" || return 1
+  tama_shared_server_remember_options tama_flag_text
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
 setup() {
+  tama_shared_server_test_setup || return 1
   # Tolerance for the async hook path only: hooks run via `run-shell -b`,
   # so a loaded CI runner can observe a call as started before its argv
   # files land. Narrow on purpose — retries anywhere else would mask real
   # isolation failures. Needs bats >= 1.8; older installs ignore the var.
   export BATS_TEST_RETRIES=2
-  tama_start_server
-  run "$PLUGIN_ROOT/tamagotchi.tmux"
-  assert_success
+  tama_shared_server_sync_test_env
+  # Restored, not unset: the entrypoint seeds the default text, and the empty
+  # test below proves a reload keeps an emptied one — both need the seed back.
+  tmux_test_server_run set -g @tama_flag_text "$TAMA_SHARED_WIRED_tama_flag_text"
+  tmux_test_server_run set -gu renumber-windows
 }
 
 teardown() {
   tama_detach_client
-  tmux_test_server_stop
 }
 
 # A second session with two windows, so that "same index, different session" — the

@@ -135,6 +135,19 @@ tama_shared_server_test_setup() {
   tmux_test_server_run new-session -d -s t
 }
 
+# Remember wiring-seeded values so per-test resets can restore them instead of
+# unsetting (unsetting would drop the seed the entrypoint planted). Call with
+# option names (without @) after wiring in setup_file; each becomes
+# $TAMA_SHARED_WIRED_<name> when tests source the key file.
+tama_shared_server_remember_options() {
+  local key_file option value
+  key_file="$(tama_shared_server_key_file)"
+  for option in "$@"; do
+    value="$(tmux_test_server_run show -gqv "@$option" 2>/dev/null)" || value=''
+    printf 'TAMA_SHARED_WIRED_%s=%q\n' "$option" "$value" >>"$key_file"
+  done
+}
+
 # Re-check the file's hook wiring, re-adding whatever a test unwired (some
 # tests detach hooks to isolate the path under test). The recipes are
 # identical every time, so present ones are left alone: usually five checks,
@@ -150,11 +163,19 @@ $TAMA_HOOKS
 EOF
 }
 
-# Push the current test's environment at the server, so hooks this test
-# triggers inherit what the test sees. One chained call for the lot.
+# Push the test's environment at the server, so hooks this test triggers
+# inherit what the test sees (a hook's `run-shell` inherits the environment
+# the server was started — or last `set-environment` — with, not the one the
+# test has now). Syncs every exported TAMA_* variable — backend log paths,
+# notifier dirs, fake-tmux controls — so per-test values reach hooks without
+# each file enumerating them. One chained call for the lot. Skips the socket
+# itself, which is how the test addresses the server, not hook configuration.
 tama_shared_server_sync_test_env() {
   local args=() first=1 var value
-  for var in TAMA_TEST_LOG TAMA_FAKE_FOCUSED TAMA_TMUX TAMA_TMUX_ARGS; do
+  while IFS= read -r var; do
+    case "$var" in
+      TMUX_TEST_SOCKET | TMUX_TEST_SERVER_PID) continue ;;
+    esac
     value="${!var:-}"
     if [ "$first" -eq 1 ]; then
       first=0
@@ -166,8 +187,8 @@ tama_shared_server_sync_test_env() {
     else
       args+=(set-environment -gu "$var")
     fi
-  done
-  tmux_test_server_run "${args[@]}"
+  done <<<"$(compgen -e | grep '^TAMA_' || true)"
+  [ "$first" -eq 1 ] || tmux_test_server_run "${args[@]}"
 }
 
 tama_arrange_sleeping_pane() { # <pane> [cwd]
