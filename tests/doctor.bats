@@ -7,8 +7,53 @@ load helper
 # Doctor's exit status is part of its scriptable contract. Only `auto` resolution is
 # platform-gated; explicit backends use fixtures on both CI platforms.
 
+# One tmux server per file (see tama_shared_server_setup_file): wiring the
+# plugin costs ~20 tmux round-trips, so booting per test dominates this file's
+# runtime. Isolation per test comes from a fresh `t` session, a reset of the
+# globals this file's tests mutate, a full hook reset (these tests unwire hooks
+# and plant stale recipes), and a server-environment re-sync so hooks inherit
+# what the test sees.
+setup_file() {
+  tama_shared_server_setup_file || return 1
+  "$PLUGIN_ROOT/tamagotchi.tmux" || return 1
+  tmux_test_server_run set -g window-status-format '#I:#{E:@tama_priority}#W#{E:@tama_icons}#{E:@tama_flag}' ';' set -g window-status-current-format '#I:#{E:@tama_priority}#W#{E:@tama_icons}#{E:@tama_flag}'
+  tama_shared_server_remember_options tama_bin tama_bin_dir
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
+# Every global this file's tests assign. Reset per test (one chained call),
+# because the server — unlike the per-test servers this replaces — remembers.
+# @tama_backend is set explicitly below rather than reset: unset would resolve
+# to `auto` and reach a real notifier. @tama_bin/@tama_bin_dir are restored,
+# not unset: the entrypoint seeds them, and the never-loaded test below proves
+# a bare server reports it — both need the seed back.
+TAMA_DOCTOR_RESET_GLOBALS='tama_dismiss_command tama_flag_policy tama_focus_command tama_label_command tama_manage_hooks tama_notifications tama_notify_command tama_notify_send tama_priority_max_percent tama_summary_show_background tama_summary_show_error tama_summary_show_idle tama_summary_show_running tama_summary_show_unknown tama_summary_show_waiting tama_suppress_when_focused tama_terminal_app tama_terminal_bundle_id tama_terminal_notifier'
+
 setup() {
-  tama_start_server
+  tama_shared_server_test_setup || return 1
+  # Before anything else touches the server: hooks inherit the server
+  # environment, and the backend log path is per test.
+  tama_fake_backend_env
+  local option reset_args=() first=1
+  for option in $TAMA_DOCTOR_RESET_GLOBALS; do
+    if [ "$first" -eq 1 ]; then
+      first=0
+    else
+      reset_args+=(';')
+    fi
+    reset_args+=(set -gu "@$option")
+  done
+  reset_args+=(';' set -g @tama_backend "$PLUGIN_ROOT/tests/fixtures/fake-backend")
+  reset_args+=(';' set -g @tama_bin "$TAMA_SHARED_WIRED_tama_bin")
+  reset_args+=(';' set -g @tama_bin_dir "$TAMA_SHARED_WIRED_tama_bin_dir")
+  reset_args+=(';' set -g window-status-format '#I:#{E:@tama_priority}#W#{E:@tama_icons}#{E:@tama_flag}')
+  reset_args+=(';' set -g window-status-current-format '#I:#{E:@tama_priority}#W#{E:@tama_icons}#{E:@tama_flag}')
+  tmux_test_server_run "${reset_args[@]}"
+  tama_shared_server_reset_hooks
+  tama_shared_server_sync_test_env
 
   # Claude Code's settings are read from the environment and from $PWD, so both are
   # pointed somewhere this test owns. Without that the suite would read the developer's
@@ -19,15 +64,14 @@ setup() {
 }
 
 teardown() {
-  tmux_test_server_stop
+  tama_detach_client
 }
 
+# The healthy baseline (wired plugin, formats, fake backend) is established in
+# setup_file() and restored per test in setup(); this keeps its name at the
+# call sites so each test still reads as "from healthy, …".
 healthy_server() {
-  run "$PLUGIN_ROOT/tamagotchi.tmux"
-  assert_success
-  tmux_test_server_run set -g window-status-format '#I:#{E:@tama_priority}#W#{E:@tama_icons}#{E:@tama_flag}'
-  tmux_test_server_run set -g window-status-current-format '#I:#{E:@tama_priority}#W#{E:@tama_icons}#{E:@tama_flag}'
-  tama_use_fake_backend
+  return 0
 }
 
 require_darwin() {
@@ -461,8 +505,10 @@ PROVIDER
 }
 
 @test "a server the plugin was never loaded into is broken" {
-  # A bare test server: tamagotchi.tmux has not run, so @tama_bin is unset and every
-  # hook recipe and the icon format have nothing to find the plugin by.
+  # A bare server state on the shared server: drop what setup_file wired, so
+  # @tama_bin is unset and every hook recipe and the icon format have nothing
+  # to find the plugin by. setup() restores the wiring for the next test.
+  tmux_test_server_run set -gu @tama_bin ';' set -gu @tama_bin_dir
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_status 1
   assert_output_contains '@tama_bin is not set'
@@ -472,6 +518,9 @@ PROVIDER
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
   tama_use_fake_backend
+  # Fresh-server defaults, which the shared server's setup overwrote with the
+  # wired formats: this test is about a status line that never mentions them.
+  tmux_test_server_run set -gu window-status-format ';' set -gu window-status-current-format
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
