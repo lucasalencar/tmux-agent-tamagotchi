@@ -21,22 +21,39 @@ bats_require_minimum_version 1.7.0
 
 load helper
 
+# One tmux server per file (see tama_shared_server_setup_file): booting and
+# wiring per test dominates this file's runtime. Isolation per test comes from
+# a fresh `t` session (windows these tests create die with it), a restore of
+# the @tama_bin seed (two tests point it elsewhere), and a server-environment
+# re-sync so hooks inherit what the test sees.
+setup_file() {
+  tama_shared_server_setup_file || return 1
+  "$PLUGIN_ROOT/tamagotchi.tmux" || return 1
+  tama_shared_server_remember_options tama_bin
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
 setup() {
+  tama_shared_server_test_setup || return 1
   # The recording fake, for the whole file rather than only the notification tests:
   # half of what this adapter does is decide *not* to interrupt the user, and a
   # suite with no backend configured would pass every one of those claims for the
   # wrong reason. Nothing is attached to this server, so a banner is never
   # suppressed and a test that raises one always sees it.
   tama_fake_backend_env
-  tama_start_server
-  tama_use_fake_backend
+  # Restored, not unset: the entrypoint seeds @tama_bin, and the quiet-tests
+  # below unpoint it — both need the seed back.
+  tmux_test_server_run set -g @tama_bin "$TAMA_SHARED_WIRED_tama_bin" ';' set -g @tama_backend "$PLUGIN_ROOT/tests/fixtures/fake-backend"
+  tama_shared_server_sync_test_env
   PANE="$(tmux_test_server_run list-panes -t t -F '#{pane_id}' | head -1)"
   WINDOW="$(tmux_test_server_run display-message -p -t "$PANE" '#{window_id}')"
 }
 
 teardown() {
   tama_detach_client
-  tmux_test_server_stop
 }
 
 # An event, reported from the pane the agent is running in — which is where a
