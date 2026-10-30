@@ -55,6 +55,7 @@ present-and-empty.** Do not add one to make a directory look complete.
 | --- | --- | --- |
 | `macos` | `terminal-notifier`, a terminal whose window titles carry the session name | all four |
 | `libnotify` | `notify-send`, a running freedesktop notification daemon | `notify` only |
+| `remote` | `curl`, a receiver running on the computer that shows the banners | `notify`, `dismiss` |
 | `none` | nothing | `notify`, `dismiss`, both no-ops |
 
 With the `macos` backend, `ALL` is reserved by terminal-notifier to remove every
@@ -78,6 +79,8 @@ banner in place rather than dismissing notifications that do not belong to it.
    notifier, where every macOS capability would be a process started to fail.
 
 `tama doctor` is what explains which one was chosen and why the others were not.
+`remote` is never picked by `auto`: forwarding banners across the network is a
+choice, not a platform fact, so it runs only when named explicitly.
 
 ### The libnotify backend, and the three capabilities it does not have
 
@@ -108,6 +111,102 @@ It also needs a session bus: `notify-send` finds one through
 `$DBUS_SESSION_BUS_ADDRESS`, which an agent's hook inherits from the desktop session it
 was started in. Where that does not reach — a systemd unit, `ssh` without it, a tmux
 server that outlived the session — there are no banners and nothing fails.
+
+### The remote backend, and the two capabilities it does not have
+
+`remote` forwards banners to another computer: `notify` POSTs the title, message,
+per-window group, terminal bundle id and click action as JSON to
+`@tama_remote_url/notify`, and `dismiss` POSTs the group to
+`@tama_remote_url/dismiss`. Both travel by `curl` (`@tama_remote_curl` overrides
+which one), backgrounded so the hook never waits on the network, bounded by
+`@tama_remote_timeout` seconds (default 5, at most 300), and authenticated with
+`@tama_remote_token` as a bearer token when configured. A missing `curl`, a
+missing URL, or a URL that is not `http(s)://` is silence rather than a failed
+turn; `tama doctor` fails on the configuration instead.
+
+The other side runs `backends/remote/receiver.py` (standard library only, so any
+Python 3.7 or newer will do):
+
+```sh
+python3 backends/remote/receiver.py --port 8765 --token 'a-shared-secret'
+```
+
+or, on the showing computer itself, installed to start at login with one command:
+
+```sh
+bin/tama install-receiver
+```
+
+which renders `examples/remote-receiver.plist`, loads it with `launchctl`, and
+prints the token it generated (if any) for `@tama_remote_token`. To start it at
+login by hand instead, copy that example to `~/Library/LaunchAgents/` with the
+`%%PLUGIN_DIR%%` and `%%TOKEN%%` placeholders replaced (its header says how) and
+`launchctl load` it; it restarts itself via `KeepAlive` and logs to
+`/tmp/tama-remote-receiver.log`.
+
+It draws each banner natively — `terminal-notifier` when installed,
+`display notification` otherwise — grouped per window like every backend, and
+removes it on `dismiss`. Both binaries are found on `PATH` (then the Homebrew
+prefixes for the notifier) and overridable with `--terminal-notifier` and
+`--osascript`. Probe it with `curl http://THAT-COMPUTER:8765/health`
+before blaming the plugin for a silent desktop.
+
+### Finding the receiver
+
+`@tama_remote_url` needs an address of the showing computer that survives, in
+order of preference:
+
+* **Tailscale (or another mesh VPN) name.** Stable MagicDNS names and stable
+  IPs, encrypted in transit — which also answers the cleartext-HTTP warning
+  above. If both computers share a tailnet, this is the one to use.
+* **mDNS `<name>.local`.** macOS advertises it by default and it never changes
+  with DHCP — but the tmux side resolves it only with an mDNS resolver
+  (Avahi/`libnss-mdns`), which minimal Linux installs lack. If
+  `getent hosts <name>.local` answers on the tmux machine, it works.
+* **DHCP reservation.** Pin the Mac's address on the router so a plain LAN IP
+  stops moving.
+
+There is deliberately no network discovery of receivers: it would need
+non-standard-library dependencies on both ends (breaking the receiver's
+copy-anywhere property), and an unauthenticated beacon a sender trusts lets
+anyone on the LAN plant a receiver and harvest notification bodies and the
+bearer token. The URL stays explicit configuration, validated loudly by
+`tama doctor`.
+
+* **No `focused`.** Nothing here can say which terminal window is in front of a
+  screen on another computer, and asking would mean a synchronous network round
+  trip inside every hook. Its absence means notifications are never suppressed
+  there — noise, never silence, the direction ADR-0004 fails in on purpose.
+* **No `focus`, so a click only brings the terminal forward by default.** The
+  click action names tmux paths on the sending machine, where the showing
+  computer cannot reach them. Start the receiver with `--ssh-target user@vm`
+  and the click runs back over SSH instead, landing on the pane that spoke —
+  provided that computer can SSH there without a passphrase prompt. Harden that
+  key on the tmux side: a dedicated key restricted with `command=` to the tmux
+  subcommands a click runs keeps a captured token from becoming a general shell
+  on that machine.
+
+A message the receiver cannot decode as UTF-8 (raw latin-1 tool output, for
+example) is refused with 400 and never drawn, while the local backends hand
+their bytes straight to the notifier. Rare, but a real divergence: keep agent
+messages UTF-8 where you can.
+
+With the `remote` backend, `ALL` is refused by `dismiss` just like on macOS:
+the receiver removes with `terminal-notifier -remove`, where `ALL` would take
+down notifications that do not belong to it.
+
+The URL is the receiver's root address: a path in it (`http://host/prefix`)
+passes nothing, because the receiver only serves `/notify`, `/dismiss` and
+`/health` at the root and answers 404 to anything else. `tama doctor` fails on
+such a URL, and probes the receiver live: it reports whether the receiver
+answers and whether it accepts the configured token, since a mismatched token
+is otherwise silence in both directions.
+
+The token travels in cleartext HTTP. Run the receiver on a network you trust —
+Tailscale, WireGuard, your own LAN — or behind a TLS-terminating proxy, and
+prefer passing it as `TAMA_REMOTE_TOKEN` rather than `--token` on a shared
+machine. Anyone who captures it can raise banners in your name, and with
+`--ssh-target` in effect, plant click payloads for them.
 
 The macOS backend needs to know your terminal, since neither tmux nor this plugin can
 tell which application is displaying a session: `@tama_terminal_app` is the process

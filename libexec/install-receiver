@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+#
+#   tama install-receiver [--port <port>] [--token <token>]
+#     [--ssh-target <target>] [--python <path>]
+#
+# Install the remote backend's receiver to start at login on THIS computer —
+# the one that shows the banners (a Mac). Renders examples/remote-receiver.plist
+# with this clone's path and installs it into ~/Library/LaunchAgents.
+#
+# Runs outside tmux and speaks on stdout: interactive setup, never a hook. The
+# token it prints (generated when none is given) goes into @tama_remote_token
+# on the tmux side.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+TAMA_RECEIVER_LABEL='com.tamagotchi.remote-receiver'
+TAMA_RECEIVER_TEMPLATE="$TAMA_PLUGIN_DIR/examples/remote-receiver.plist"
+TAMA_RECEIVER_PORT_DEFAULT='8765'
+
+fail() {
+  printf 'tama install-receiver: %s\n' "$1" >&2
+  exit 1
+}
+
+main() {
+  local port="$TAMA_RECEIVER_PORT_DEFAULT" token='' ssh_target='' python=''
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --port)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--port needs a port number'
+        fi
+        port="$2"
+        shift 2
+        ;;
+      --token)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--token needs a token'
+        fi
+        token="$2"
+        shift 2
+        ;;
+      --ssh-target)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--ssh-target needs a destination'
+        fi
+        ssh_target="$2"
+        shift 2
+        ;;
+      --python)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--python needs a path'
+        fi
+        python="$2"
+        shift 2
+        ;;
+      --) shift ;;
+      -*) die_usage "unknown option: $1" ;;
+      *) die_usage "takes no positional arguments, got: $1" ;;
+    esac
+  done
+
+  case "$port" in
+    '' | *[!0-9]* | 0*) die_usage "--port needs a port number, got: $port" ;;
+  esac
+  if [ "$port" -gt 65535 ]; then
+    die_usage "--port needs a port number, got: $port"
+  fi
+
+  command -v launchctl >/dev/null 2>&1 ||
+    fail 'needs macOS: no launchctl here (run this where the banners show)'
+  [ -n "${HOME:-}" ] || fail 'HOME is not set, so there is no LaunchAgents to install into'
+  if [ ! -f "$TAMA_RECEIVER_TEMPLATE" ] || [ ! -r "$TAMA_RECEIVER_TEMPLATE" ]; then
+    fail "no template at $TAMA_RECEIVER_TEMPLATE; this plugin directory is incomplete"
+  fi
+
+  if [ -z "$python" ]; then
+    python="$(command -v python3 2>/dev/null)" || python=''
+  fi
+  if [ -z "$python" ] || [ ! -f "$python" ] || [ ! -x "$python" ]; then
+    fail 'no Python 3 interpreter (pass --python or put python3 on PATH)'
+  fi
+
+  if [ -z "$token" ]; then
+    token="${TAMA_REMOTE_TOKEN:-}"
+  fi
+  if [ -z "$token" ]; then
+    # Any Python 3.7+ has secrets; python3 itself is already required above, so
+    # generation cannot fail for a missing tool.
+    token="$("$python" -c 'import secrets; print(secrets.token_hex(32))')" ||
+      fail 'could not generate a token (pass --token)'
+    [ -n "$token" ] || fail 'could not generate a token (pass --token)'
+  fi
+
+  local dest="$HOME/Library/LaunchAgents/$TAMA_RECEIVER_LABEL.plist"
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/tama-receiver.XXXXXX")" ||
+    fail 'could not stage the plist'
+  # ${tmp:-} because the trap outlives main's locals under nounset.
+  trap 'rm -f "${tmp:-}"' EXIT
+
+  # Exact-string replacement in Python: values are user data (a token may hold
+  # shell metacharacters) and must never be read as a pattern. Every value is
+  # XML-escaped: a raw & or < would render a malformed plist (plutil rejects it
+  # on a Mac, and launchd would choke on it everywhere).
+  TAMA_TEMPLATE="$TAMA_RECEIVER_TEMPLATE" TAMA_DEST="$tmp" \
+    TAMA_TOKEN="$token" TAMA_PORT="$port" \
+    TAMA_PYTHON="$python" TAMA_SSH_TARGET="$ssh_target" \
+    "$python" - <<'PYEOF' || fail 'could not render the plist'
+import os
+from xml.sax.saxutils import escape
+template = open(os.environ['TAMA_TEMPLATE']).read()
+ssh_target = os.environ['TAMA_SSH_TARGET']
+ssh_args = ''
+if ssh_target:
+    ssh_args = ('<string>--ssh-target</string>\n    <string>%s</string>\n    ' %
+                escape(ssh_target, {'"': '&quot;'}))
+rendered = (template.replace('%%PLUGIN_DIR%%', escape(os.environ['TAMA_PLUGIN_DIR']))
+                    .replace('%%TOKEN%%', escape(os.environ['TAMA_TOKEN']))
+                    .replace('%%PORT%%', escape(os.environ['TAMA_PORT']))
+                    .replace('%%PYTHON_BIN%%', escape(os.environ['TAMA_PYTHON']))
+                    .replace('%%SSH_TARGET_ARGS%%', ssh_args))
+open(os.environ['TAMA_DEST'], 'w').write(rendered)
+PYEOF
+
+  # Best effort where available: macOS always has plutil next to launchctl.
+  if command -v plutil >/dev/null 2>&1; then
+    plutil -lint "$tmp" >/dev/null 2>&1 || fail 'rendered an invalid plist (report this as a bug)'
+  fi
+
+  mkdir -p "$HOME/Library/LaunchAgents" ||
+    fail "could not create $HOME/Library/LaunchAgents"
+  # Unload-then-load makes reinstalls idempotent: a previous copy stops being
+  # the one that runs, whatever it held.
+  launchctl unload "$dest" >/dev/null 2>&1 || true
+  cp "$tmp" "$dest" || fail "could not write $dest"
+  rm -f "$tmp"
+  launchctl load "$dest" >/dev/null 2>&1 ||
+    fail "launchctl would not load $dest"
+  launchctl list "$TAMA_RECEIVER_LABEL" >/dev/null 2>&1 ||
+    fail "$TAMA_RECEIVER_LABEL is not listed after loading it"
+
+  printf 'receiver installed: %s\n' "$dest"
+  printf 'drawing with: %s\n' "$python"
+  printf 'port: %s\n' "$port"
+  printf '\nOn the tmux side:\n\n'
+  printf '  set -g @tama_backend remote\n'
+  printf "  set -g @tama_remote_url 'http://THIS-COMPUTER:%s'\n" "$port"
+  printf "  set -g @tama_remote_token '%s'\n" "$token"
+  printf '\nFind this computer as <name>.local, its LAN IP, or its Tailscale name;\n'
+  printf 'see "Finding the receiver" in backends/README.md. Then run tama doctor there.\n'
+}
+
+main "$@"

@@ -10,6 +10,8 @@
 TAMA_BACKEND_NONE='none'
 
 # The platform backend for Darwin, and the binary it is nothing without.
+# backends/remote/receiver.py finds the same binary on the showing computer;
+# when this name or these prefixes change, teach it too.
 TAMA_BACKEND_MACOS='macos'
 TAMA_MACOS_NOTIFIER_NAME='terminal-notifier'
 
@@ -35,6 +37,25 @@ TAMA_LIBNOTIFY_SEND_NAME='notify-send'
 # the same reason the Homebrew prefixes are — a hook inherits an agent's environment,
 # not a login shell's, and a `PATH` somebody trimmed is not a reason to go silent.
 TAMA_LIBNOTIFY_SEND_DIRS='/usr/bin /usr/local/bin'
+
+# The remote backend, which forwards banners to a receiver running on another
+# computer over HTTP. It needs `curl` to send with and the receiver's URL to
+# send to; both are configuration rather than platform facts, so `auto` never
+# picks it — it runs only when named explicitly.
+# shellcheck disable=SC2034  # read by libexec/doctor, which names the backend
+TAMA_BACKEND_REMOTE='remote'
+TAMA_REMOTE_CURL_NAME='curl'
+
+# Where a package manager puts `curl`. Searched only after `PATH`, for the same
+# reason the notifier directories are: a hook inherits an agent's environment,
+# not a login shell's.
+TAMA_REMOTE_CURL_DIRS='/opt/homebrew/bin /usr/local/bin /usr/bin'
+
+# How long a forward may take before `curl` gives up, in seconds. The backend
+# backgrounds the request so the hook never waits, but an unbounded one leaves
+# a hung `curl` behind for every banner.
+TAMA_REMOTE_TIMEOUT_DEFAULT='5'
+TAMA_REMOTE_TIMEOUT_MAX='300'
 
 # The status for "this capability does not exist here". 127 is what a shell reports
 # for a command it could not find, which is exactly what happened.
@@ -163,6 +184,110 @@ tama_libnotify_send() {
   tama_resolve_binary tama_notify_send "$TAMA_LIBNOTIFY_SEND_NAME" \
     "$TAMA_LIBNOTIFY_SEND_DIRS" || return 1
   TAMA_LIBNOTIFY_SEND="$TAMA_BINARY"
+}
+
+# The `curl` to use, in TAMA_REMOTE_CURL; non-zero when there is none. `@tama_remote_curl`
+# is a name or an absolute path. backends/remote calls this.
+# shellcheck disable=SC2034  # TAMA_REMOTE_CURL is read by the caller
+tama_remote_curl() {
+  TAMA_REMOTE_CURL=''
+  tama_resolve_binary tama_remote_curl "$TAMA_REMOTE_CURL_NAME" \
+    "$TAMA_REMOTE_CURL_DIRS" || return 1
+  TAMA_REMOTE_CURL="$TAMA_BINARY"
+}
+
+# The receiver's base URL, in TAMA_REMOTE_URL; non-zero when `@tama_remote_url` is
+# unset, empty, or not the receiver's root `http(s)://` address. A misconfigured URL
+# is silence here and a failure in `doctor`: hooks must never fail an agent turn
+# over configuration.
+# shellcheck disable=SC2034  # TAMA_REMOTE_URL is read by the caller
+tama_remote_url() {
+  local scheme rest
+  TAMA_REMOTE_URL="$(tama_opt tama_remote_url '')"
+  case "$TAMA_REMOTE_URL" in
+    http://*) scheme='http://' ;;
+    https://*) scheme='https://' ;;
+    *)
+      TAMA_REMOTE_URL=''
+      return 1
+      ;;
+  esac
+  rest="${TAMA_REMOTE_URL#"$scheme"}"
+  # Trailing slashes go, so that appending `/notify` cannot produce `//notify`.
+  while [ "$rest" != "${rest%/}" ]; do
+    rest="${rest%/}"
+  done
+  # The receiver is root-mounted: a path, query or fragment it would answer 404
+  # to, or no host at all, is a configuration that can never deliver. The loop
+  # above can only stop at the scheme itself, so the empty case is the bare
+  # `http://` spelled out.
+  case "$rest" in
+    '' | */* | *[?#]* | *[[:space:]]*)
+      TAMA_REMOTE_URL=''
+      return 1
+      ;;
+  esac
+  TAMA_REMOTE_URL="$scheme$rest"
+  return 0
+}
+
+# How long a forward may take, in TAMA_REMOTE_TIMEOUT. Always succeeds: an empty,
+# non-numeric or leading-zero `@tama_remote_timeout` falls back to the default
+# rather than handing `curl` a flag value it would refuse. Zero means no timeout to
+# `curl`, which is a hung process per banner, so it falls back too. Above the
+# maximum it clamps: an unbounded forward is the same pile-up, one typo away.
+# shellcheck disable=SC2034  # TAMA_REMOTE_TIMEOUT is read by the caller
+tama_remote_timeout() {
+  TAMA_REMOTE_TIMEOUT="$(tama_opt tama_remote_timeout "$TAMA_REMOTE_TIMEOUT_DEFAULT")"
+  case "$TAMA_REMOTE_TIMEOUT" in
+    '' | *[!0-9]* | 0*) TAMA_REMOTE_TIMEOUT="$TAMA_REMOTE_TIMEOUT_DEFAULT" ;;
+  esac
+  if [ "$TAMA_REMOTE_TIMEOUT" -gt "$TAMA_REMOTE_TIMEOUT_MAX" ]; then
+    TAMA_REMOTE_TIMEOUT="$TAMA_REMOTE_TIMEOUT_MAX"
+  fi
+  return 0
+}
+
+# Escapes an arbitrary value for use inside JSON double quotes, on stdout. A message
+# is text an agent wrote and may hold quotes, backslashes and newlines; without this
+# the payload would be malformed JSON or, worse, a second object the receiver decodes
+# as fields nobody sent.
+#
+# Control characters below U+0020 are forbidden literally in JSON strings. The three
+# with a short escape are rewritten; what remains of that range is deleted, which is
+# byte-safe for UTF-8 because every byte of a multibyte sequence is above 0x7F.
+tama_remote_json_escape() { # <value>
+  local escaped="$1"
+  escaped="${escaped//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  escaped="${escaped//$'\n'/\\n}"
+  escaped="${escaped//$'\r'/\\r}"
+  escaped="${escaped//$'\t'/\\t}"
+  printf '%s' "$escaped" | tr -d '\000-\037'
+}
+
+# POSTs <payload> to the receiver's <endpoint>, backgrounded: fire and forget, so
+# the hook never waits on the network. The caller composes the payload and
+# enforces its own guards; non-zero means there is nowhere to send (no `curl`,
+# no URL), which is silence to the caller rather than an error.
+tama_remote_post_backgrounded() { # <endpoint> <payload>
+  local endpoint="$1" payload="$2" token
+  tama_remote_curl || return 1
+  tama_remote_url || return 1
+  tama_remote_timeout
+
+  # `--data-binary`, not `--data`: the latter strips newlines, which a payload must
+  # survive byte-for-byte. `-o /dev/null` rather than a redirect, because the point
+  # is to receive nothing, not to print it somewhere else.
+  set -- -s -o /dev/null --max-time "$TAMA_REMOTE_TIMEOUT" -X POST \
+    -H 'Content-Type: application/json' --data-binary "$payload"
+
+  # Optional, and the only secret here: when configured it travels as a bearer token,
+  # which the receiver checks before drawing anything.
+  token="$(tama_opt tama_remote_token '')"
+  [ -z "$token" ] || set -- "$@" -H "Authorization: Bearer $token"
+
+  "$TAMA_REMOTE_CURL" "$@" "$TAMA_REMOTE_URL$endpoint" >/dev/null 2>&1 &
 }
 
 # Runs <capability>, with the caller's arguments, and returns its exit status —

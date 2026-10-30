@@ -304,6 +304,7 @@ option map.
 | Priority | `@tama_priority_icon`, `@tama_priority_max_percent` (1–100) |
 | Window mark | `@tama_flag_text`, `@tama_flag_policy` (`ambient` or `selective`) |
 | Notifications | `@tama_notifications`, `@tama_backend`, `@tama_title_format`, `@tama_group_format`, `@tama_label_command` |
+| Remote | `@tama_remote_url`, `@tama_remote_token`, `@tama_remote_timeout`, `@tama_remote_curl` |
 | Focus suppression | `@tama_suppress_when_focused` |
 | Terminal | `@tama_terminal_app`, `@tama_terminal_bundle_id`, `@tama_terminal_notifier`, `@tama_notify_send` |
 | Capability overrides | `@tama_notify_command`, `@tama_dismiss_command`, `@tama_focused_command`, `@tama_focus_command` |
@@ -325,6 +326,42 @@ set -g set-titles-string '#S'
 ```
 
 Backend configuration, custom backends and capability overrides are covered in
+[`backends/README.md`](backends/README.md).
+
+### Remote notifications
+
+When tmux runs on one computer and you look at another — a Linux VM whose
+banners should appear natively on your MacBook — name the `remote` backend and
+point it at the receiver running where the banners should show:
+
+```tmux
+set -g @tama_backend remote
+set -g @tama_remote_url 'http://macbook.local:8765'
+set -g @tama_remote_token 'a-shared-secret'
+```
+
+On the Mac, from this plugin directory:
+
+```sh
+python3 backends/remote/receiver.py --port 8765 --token 'a-shared-secret'
+```
+
+Or installed to start at login with one command (a Mac), which renders and
+loads the launchd plist and prints the token when it generates one:
+
+```sh
+bin/tama install-receiver
+```
+
+The receiver draws each forwarded banner natively — with `terminal-notifier`
+when installed, with `display notification` otherwise — and dismisses it when
+the tmux window is selected. A click only brings the terminal forward unless
+the receiver was started with `--ssh-target user@vm`, in which case the click
+runs back over SSH and lands on the pane that spoke. There is no focus check
+across the network, so banners are never suppressed there: noise, never
+silence, like the `libnotify` backend. `auto` never picks `remote`; it runs
+only when chosen explicitly. The token travels in cleartext HTTP, so keep the
+receiver on a network you trust or behind a TLS-terminating proxy — see
 [`backends/README.md`](backends/README.md).
 
 ### Hook management
@@ -371,6 +408,7 @@ The plugin does not install mouse bindings.
 | `on-select` | Perform Attention acknowledgement and sweep stale state. |
 | `hook` | Dispatch an event to a bundled adapter. |
 | `setup` | Configure an integration that provides a setup helper. |
+| `install-receiver` | Install the remote receiver to start at login on this computer. |
 | `doctor` | Diagnose an installation. |
 | `version` | Print the plugin version. |
 
@@ -389,7 +427,8 @@ Hook-facing commands follow these rules:
 
 `doctor` and `setup` report failures with a non-zero status. Both `setup` and `focus-window`
 run outside tmux: setup may configure an agent before tmux starts, while desktop notification
-clicks do not inherit the hook environment.
+clicks do not inherit the hook environment. `install-receiver` also runs outside tmux and
+reports installation failures the same way.
 
 ## Operational notes
 
