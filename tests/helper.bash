@@ -12,6 +12,11 @@ export PLUGIN_ROOT
 # shellcheck source=tests/lib/tmux-test-server.sh
 . "$PLUGIN_ROOT/tests/lib/tmux-test-server.sh"
 
+# Hook recipes, for the per-file shared server's rewire check (a test that
+# detaches hooks to isolate its path must not leave the file unwired).
+# shellcheck source=lib/hooks.sh
+. "$PLUGIN_ROOT/lib/hooks.sh"
+
 # tmux's own vocabulary for a flag option turned off — what lib/options.sh reads and
 # what both the README and `tama --help` print. It lives here once because a suite
 # that only ever wrote `off` is exactly what let three of the plugin's options go on
@@ -128,6 +133,21 @@ tama_shared_server_test_setup() {
     [ "$first" -eq 1 ] || tmux_test_server_run "${args[@]}"
   fi
   tmux_test_server_run new-session -d -s t
+}
+
+# Re-check the file's hook wiring, re-adding whatever a test unwired (some
+# tests detach hooks to isolate the path under test). The recipes are
+# identical every time, so present ones are left alone: usually five checks,
+# zero writes.
+tama_shared_server_rewire_hooks() {
+  local hook command
+  while IFS='|' read -r hook command; do
+    [ -n "$hook" ] || continue
+    tama_hook_is_wired "$hook" "$command" || \
+      tmux_test_server_run set-hook -ga "$hook" "run-shell -b '$(tama_hook_recipe "$command")'"
+  done <<EOF
+$TAMA_HOOKS
+EOF
 }
 
 # Push the current test's environment at the server, so hooks this test
