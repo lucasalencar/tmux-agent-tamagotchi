@@ -20,6 +20,12 @@ deliver() { # <target> <agent_name> <message>
     exit 0
   fi
 
+  # Prefetch every global option this notification may consult, in one tmux
+  # round-trip instead of one per read (see tama_opt_batch). The flow below
+  # writes only pane- and window-scoped state, never these globals, so the
+  # snapshot stays true for the whole call.
+  tama_opt_batch tama_backend tama_flag_policy tama_group_format tama_label_command tama_notifications tama_notify_command tama_notify_send tama_suppress_when_focused tama_terminal_app tama_terminal_bundle_id tama_terminal_notifier tama_title_format tama_focused_command tama_dismiss_command || true
+
   # Flag and Notification retain independent Priority and observation policies.
   if tama_automatic_flag_is_eligible; then
     flag='yes'
