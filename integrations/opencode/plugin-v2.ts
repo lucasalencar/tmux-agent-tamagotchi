@@ -11,7 +11,7 @@ import {
   type ProcessExecutor,
 } from "./effect-runner"
 import { createOpenCodeRuntime, type OpenCodeRuntime } from "./runtime"
-import { buildResyncEvents, canonicalize, isActiveSessionValue, isInstanceScope, kindFromParentId, raceSessionWait, sameDirectory, unwrapKeyedMap, type WaitTimer } from "./resync"
+import { buildResyncEvents, canonicalize, isInstanceScope, kindFromParentId, raceSessionWait, sameDirectory, type WaitTimer } from "./resync"
 
 // Structural subset of the OpenCode v2 plugin context used here. Kept local so
 // the plugin has no v2 package dependency at load time; v2 validates the
@@ -22,11 +22,10 @@ export type PluginContextV2 = Readonly<{
     get(input: Readonly<{ sessionID: string }>): Promise<unknown>
     context(input: Readonly<{ sessionID: string }>): Promise<unknown>
     // Present on newer hosts (2.2+); absent on the pinned 2.0.10 types.
-    // Always probed defensively so one host never breaks another. Note
-    // `active` is absent even on 2.2 hosts (verified live); `wait` doubles
-    // as the running-state oracle instead (see RESYNC_WAIT_MS).
+    // Always probed defensively so one host never breaks another. `wait`
+    // doubles as the running-state oracle (see RESYNC_WAIT_MS): it resolves
+    // at once on idle sessions and pends on running ones.
     list?(input?: unknown): Promise<unknown>
-    active?(): Promise<unknown>
     wait?(input: unknown): Promise<unknown>
   }>
   permission?: Readonly<{
@@ -172,10 +171,10 @@ export function createTmuxAgentTamagotchiPluginV2(
 }
 
 // Re-establishes pane state from the v2 session snapshot. Best effort by
-// contract: unknown hosts (no list/active/wait), lookup failures, and
-// pagination limits settle to presence or skip the session, and never reject
-// into OpenCode or delay setup beyond the snapshot reads plus one wait
-// deadline (races run in parallel, so the deadline is a flat cost).
+// contract: unknown hosts (no list/wait), lookup failures, and pagination
+// limits settle to presence or skip the session, and never reject into
+// OpenCode or delay setup beyond the snapshot reads plus one wait deadline
+// (races run in parallel, so the deadline is a flat cost).
 async function resyncV2(
   ctx: PluginContextV2,
   directory: string | undefined,
@@ -186,7 +185,6 @@ async function resyncV2(
     const session = ctx.session as {
       get(input: Readonly<{ sessionID: string }>): Promise<unknown>
       list?(input?: unknown): Promise<unknown>
-      active?(): Promise<unknown>
       wait?(input: unknown): Promise<unknown>
     }
     const waitTimeoutMs = options.waitTimeoutMs ?? RESYNC_WAIT_MS
@@ -214,40 +212,13 @@ async function resyncV2(
         cursor = next
       }
     }
-    const activeIds = new Set<string>()
-    if (typeof session.active === "function") {
-      try {
-        const raw = await session.active()
-        for (const [sessionId, info] of Object.entries(unwrapKeyedMap(raw))) {
-          if (!sessionId) continue
-          if (!isActiveSessionValue(info)) continue
-          activeIds.add(sessionId)
-        }
-      } catch {
-        // Without the running set every listed session settles to idle
-        // presence, still better than the cleared pane.
-      }
-    }
-    // Active sessions the list omitted (delegated children are not
-    // top-level): only running ones justify an extra lookup.
-    for (const sessionId of Array.from(activeIds)) {
-      if (byId.has(sessionId)) continue
-      const fetched = await getSession(ctx, sessionId).catch(() => undefined)
-      if (!fetched) continue
-      if (!isInstanceScope(fetched.directory, directory)) continue
-      byId.set(sessionId, fetched)
-    }
     if (byId.size === 0) return
-    // Running state per session: the active set wins when the host exposes
-    // it; otherwise each session races its own idleness against the deadline
-    // in parallel. A fulfilled wait is idle now, a pending one is running.
+    // Running state per session: each session races its own idleness against
+    // the deadline in parallel. A fulfilled wait is idle now, a pending one
+    // is running.
     const canRace = typeof session.wait === "function"
     const statuses = new Map<string, "busy" | "idle">()
     await Promise.all(Array.from(byId).map(async ([sessionId]) => {
-      if (activeIds.has(sessionId)) {
-        statuses.set(sessionId, "busy")
-        return
-      }
       if (!canRace) {
         statuses.set(sessionId, "idle")
         return

@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test"
 
 import {
   buildResyncEvents,
-  isActiveSessionValue,
   isInstanceScope,
   kindFromParentId,
   raceSessionWait,
@@ -82,25 +81,6 @@ describe("statusFromServerType", () => {
     expect(statusFromServerType("idle")).toBe("idle")
     expect(statusFromServerType("unknown")).toBe("idle")
     expect(statusFromServerType(undefined)).toBe("idle")
-  })
-})
-
-describe("isActiveSessionValue", () => {
-  test("running, busy, and retry entries are active", () => {
-    expect(isActiveSessionValue({ type: "running" })).toBe(true)
-    expect(isActiveSessionValue({ type: "busy" })).toBe(true)
-    expect(isActiveSessionValue({ type: "retry" })).toBe(true)
-  })
-
-  test("missing or non-record values stay lenient", () => {
-    expect(isActiveSessionValue({})).toBe(true)
-    expect(isActiveSessionValue(undefined)).toBe(true)
-    expect(isActiveSessionValue("running")).toBe(true)
-  })
-
-  test("explicit non-running types opt out", () => {
-    expect(isActiveSessionValue({ type: "idle" })).toBe(false)
-    expect(isActiveSessionValue({ type: "succeeded" })).toBe(false)
   })
 })
 

@@ -314,20 +314,22 @@ describe("v2 setup", () => {
     expect(tamaCalls(commandCalls)).toEqual([])
   })
 
-  test("resyncs running sessions from the list/active snapshot before live events", async () => {
+  test("resyncs running sessions from the wait race before live events", async () => {
     const commandCalls: string[][] = []
-    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const setup = createTmuxAgentTamagotchiPluginV2({
+      execute: fakeExecute(commandCalls),
+      resyncWaitMs: 20,
+    })
     const events: unknown[] = [
       { type: "session.idle", data: { sessionID: "root-a" } },
     ]
     const cleanup = await setup(fakeContextV2(events, { "root-a": {} }, {}, {
       list: [{ id: "root-a" }],
-      // A busy vocabulary entry counts as running work, like "running" does.
-      active: { "root-a": { type: "busy" } },
+      waits: { "root-a": "running" },
     }))
     await settle()
 
-    // Presence, then activity from the snapshot, then the live idle lands last.
+    // Presence, then activity from the wait race, then the live idle lands last.
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
@@ -336,24 +338,27 @@ describe("v2 setup", () => {
     await cleanup()
   })
 
-  test("resyncs idle presence without active and follows paginated lists", async () => {
+  test("resyncs running sessions from later list pages", async () => {
     const commandCalls: string[][] = []
-    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const setup = createTmuxAgentTamagotchiPluginV2({
+      execute: fakeExecute(commandCalls),
+      resyncWaitMs: 20,
+    })
     const cleanup = await setup(fakeContextV2(
       [],
-      // root-b is deliberately absent here so only the second list page can
-      // provide it: the active-only lookup cannot resolve it either.
       { "root-a": {} },
       {},
       {
         listPages: [[{ id: "root-a" }], [{ id: "root-b" }]],
-        active: { "root-b": { type: "running" } },
+        waits: { "root-a": "idle", "root-b": "running" },
       },
     ))
     await settle()
 
     // The second page is read (its running root lights the pane); a dropped
-    // cursor would leave only the first page's idle behind.
+    // cursor would leave only the first page's idle behind. root-b resolves
+    // through the second page itself: the wait race, not a lookup fallback,
+    // decides its activity.
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
@@ -361,22 +366,24 @@ describe("v2 setup", () => {
     await cleanup()
   })
 
-  test("resyncs active sessions the list omits via lookup", async () => {
+  test("tracks delegated sessions listed with a running wait", async () => {
     const commandCalls: string[][] = []
-    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const setup = createTmuxAgentTamagotchiPluginV2({
+      execute: fakeExecute(commandCalls),
+      resyncWaitMs: 20,
+    })
     const cleanup = await setup(fakeContextV2(
       [],
       { "root-a": {}, "child-b": { parentID: "root-a" } },
       {},
       {
-        list: [{ id: "root-a" }],
-        active: { "child-b": { type: "running" } },
+        list: [{ id: "root-a" }, { id: "child-b", parentID: "root-a" }],
+        waits: { "root-a": "idle", "child-b": "running" },
       },
     ))
     await settle()
 
-    // child-b never appears in the top-level list, yet its delegated work is
-    // tracked from the active set.
+    // Delegated work found in the list is tracked from the wait race.
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "subagent-start", "--pane", PANE, "--", "child-b"],
@@ -386,14 +393,16 @@ describe("v2 setup", () => {
 
   test("resync ignores foreign sessions and restores waiting from permissions", async () => {
     const commandCalls: string[][] = []
-    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const setup = createTmuxAgentTamagotchiPluginV2({
+      execute: fakeExecute(commandCalls),
+      resyncWaitMs: 20,
+    })
     const cleanup = await setup(fakeContextV2(
       [],
       {
         "root-a": {},
         "root-foreign": { location: { directory: "/elsewhere" } },
         "child-foreign": { parentID: "root-foreign", location: { directory: "/elsewhere" } },
-        "ghost-foreign": { parentID: "root-foreign", location: { directory: "/elsewhere" } },
       },
       {},
       {
@@ -402,12 +411,7 @@ describe("v2 setup", () => {
           { id: "root-foreign", location: { directory: "/elsewhere" } },
           { id: "child-foreign", parentID: "root-foreign", location: { directory: "/elsewhere" } },
         ],
-        active: {
-          "root-a": { type: "running" },
-          "root-foreign": { type: "running" },
-          "child-foreign": { type: "running" },
-          "ghost-foreign": { type: "running" },
-        },
+        waits: { "root-a": "running" },
         permissions: { "root-a": ["request-a"] },
       },
     ))
@@ -415,7 +419,7 @@ describe("v2 setup", () => {
 
     // Only the local session reaches tama; its pending permission overlays
     // waiting above the resynced running state. The foreign delegated work
-    // (listed and active-only alike) must not start subagent tracking.
+    // must not start subagent tracking.
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
@@ -424,7 +428,7 @@ describe("v2 setup", () => {
     await cleanup()
   })
 
-  test("setup without list/active on old hosts publishes nothing by itself", async () => {
+  test("setup without list/wait on old hosts publishes nothing by itself", async () => {
     const commandCalls: string[][] = []
     const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
     const cleanup = await setup(fakeContextV2([], {}, {}))
@@ -434,7 +438,7 @@ describe("v2 setup", () => {
     await cleanup()
   })
 
-  test("derives running from the wait race when active is absent", async () => {
+  test("derives running from the wait race", async () => {
     const commandCalls: string[][] = []
     const setup = createTmuxAgentTamagotchiPluginV2({
       execute: fakeExecute(commandCalls),
@@ -526,7 +530,6 @@ function fakeContextV2(
   snapshot?: {
     list?: Array<Record<string, unknown>>
     listPages?: Array<Array<Record<string, unknown>>>
-    active?: Record<string, unknown>
     waits?: Record<string, "idle" | "running">
     permissions?: Record<string, string[]>
   },
@@ -552,9 +555,6 @@ function fakeContextV2(
             return { data: snapshot.list ?? [], cursor: {} }
           },
         }
-        : {}),
-      ...(snapshot && "active" in snapshot
-        ? { active: async () => snapshot.active ?? {} }
         : {}),
       ...(snapshot && "waits" in snapshot
         ? {
