@@ -29,6 +29,11 @@ load helper
 # mark asserted in a race with the sweep that a client attaching fires — so it is worth
 # doing again after anything here or in tama_backend_auto moves.
 setup() {
+  # Tolerance for the async hook path only: hooks run via `run-shell -b`,
+  # so a loaded CI runner can observe a call as started before its argv
+  # files land. Narrow on purpose — retries anywhere else would mask real
+  # isolation failures. Needs bats >= 1.8; older installs ignore the var.
+  export BATS_TEST_RETRIES=2
   # Before the server boots: the backend is reached from tmux hooks too — a window
   # selection dismissing a banner — and a hook's `run-shell` inherits the environment the
   # server was started with, not the one the test has now.
