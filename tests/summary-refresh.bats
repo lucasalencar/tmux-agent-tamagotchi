@@ -4,8 +4,21 @@ bats_require_minimum_version 1.7.0
 
 load helper
 
+# One tmux server per file (see tama_shared_server_setup_file). Clients
+# attach to the fresh `t` session each test and teardown kills them before
+# the next setup kills the sessions; isolation is the fresh session plus a
+# reset of the one global this file assigns.
+setup_file() {
+  tama_shared_server_setup_file || return 1
+}
+
+teardown_file() {
+  tama_shared_server_teardown_file
+}
+
 setup() {
-  tama_start_server
+  tama_shared_server_test_setup || return 1
+  tmux_test_server_run set -gu @tama_gc_shells
   CLIENT_PIDS=''
   FIFO_PIDS=''
 }
@@ -15,7 +28,7 @@ teardown() {
   for pid in $CLIENT_PIDS $FIFO_PIDS; do
     kill "$pid" 2>/dev/null || true
   done
-  tmux_test_server_stop
+  tama_detach_client
 }
 
 attach_client() { # <session> <name>
