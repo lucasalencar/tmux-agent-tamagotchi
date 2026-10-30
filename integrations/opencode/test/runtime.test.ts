@@ -279,6 +279,122 @@ describe("OpenCode runtime", () => {
       { type: "subagent-stop", sessionId: "child-a" },
     ])
   })
+
+  test("resync re-establishes running roots and delegated tracking without completions", async () => {
+    const effects: StateMachineEffect[] = []
+    const runtime = createOpenCodeRuntime({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      runEffect: async (effect) => {
+        effects.push(effect)
+      },
+      clearPane: async () => undefined,
+    })
+
+    await runtime.resync([
+      { type: "session-created", sessionId: "root-a", kind: "root" },
+      { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+      { type: "session-created", sessionId: "child-a", kind: "delegated" },
+      { type: "session-status", sessionId: "child-a", kind: "delegated", status: "busy" },
+      { type: "permission-asked", requestId: "request-a", sessionId: "root-a", kind: "root" },
+    ])
+
+    // Presence, activity, subagent tracking, then waiting — and no
+    // completion-eligible for work the seed never observed finishing.
+    expect(effects).toEqual([
+      { type: "pane-state", state: "idle" },
+      { type: "pane-state", state: "running" },
+      { type: "subagent-start", sessionId: "child-a" },
+      { type: "pane-state", state: "waiting" },
+    ])
+  })
+
+  test("resync with an empty seed publishes nothing", async () => {
+    const effects: StateMachineEffect[] = []
+    const runtime = createOpenCodeRuntime({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      runEffect: async (effect) => {
+        effects.push(effect)
+      },
+      clearPane: async () => undefined,
+    })
+
+    await runtime.resync([])
+
+    expect(effects).toEqual([])
+  })
+
+  test("live events order behind an admitted resync", async () => {
+    const releaseResync = deferred<void>()
+    const effects: StateMachineEffect[] = []
+    const runtime = createOpenCodeRuntime({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      runEffect: async (effect) => {
+        if (effect.type === "pane-state" && effect.state === "running") {
+          await releaseResync.promise
+        }
+        effects.push(effect)
+      },
+      clearPane: async () => undefined,
+    })
+
+    const resynced = runtime.resync([
+      { type: "session-created", sessionId: "root-a", kind: "root" },
+      { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+    ])
+    const live = runtime.event(statusEvent("root-a", "idle"))
+    expect(effects).toEqual([])
+
+    releaseResync.resolve()
+    await expect(Promise.all([resynced, live])).resolves.toEqual([undefined, undefined])
+    expect(effects).toEqual([
+      { type: "pane-state", state: "idle" },
+      { type: "pane-state", state: "running" },
+      { type: "pane-state", state: "idle" },
+    ])
+  })
+
+  test("resync contains effect failures without suppressing the remaining seed", async () => {
+    const attempted: StateMachineEffect[] = []
+    const runtime = createOpenCodeRuntime({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      runEffect: async (effect) => {
+        attempted.push(effect)
+        if (effect.type === "pane-state" && effect.state === "idle") {
+          throw new Error("tama unavailable")
+        }
+      },
+      clearPane: async () => undefined,
+    })
+
+    await runtime.resync([
+      { type: "session-created", sessionId: "root-a", kind: "root" },
+      { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+    ])
+
+    expect(attempted).toEqual([
+      { type: "pane-state", state: "idle" },
+      { type: "pane-state", state: "running" },
+    ])
+  })
+
+  test("resync after disposal publishes nothing", async () => {    const effects: StateMachineEffect[] = []
+    const runtime = createOpenCodeRuntime({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      runEffect: async (effect) => {
+        effects.push(effect)
+      },
+      clearPane: async () => undefined,
+    })
+
+    await runtime.dispose()
+    effects.length = 0
+    await runtime.resync([
+      { type: "session-created", sessionId: "root-a", kind: "root" },
+      { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+    ])
+
+    expect(effects).toEqual([])
+  })
 })
 
 function statusEvent(sessionID: string, type: "busy" | "retry" | "idle") {

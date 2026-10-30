@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Plugin, PluginInput } from "@opencode-ai/plugin"
 
 import {
   createCompletionScheduler,
@@ -11,7 +11,8 @@ import {
   executeWithBun,
   type ProcessExecutor,
 } from "./effect-runner"
-import { createOpenCodeRuntime } from "./runtime"
+import { createOpenCodeRuntime, type OpenCodeRuntime } from "./runtime"
+import { buildResyncEvents, isInstanceScope, kindFromParentId, statusFromServerType, statusTypeOf, unwrapKeyedMap } from "./resync"
 
 export type PluginDependencies = Readonly<{
   execute?: ProcessExecutor
@@ -85,9 +86,124 @@ export function createTmuxAgentTamagotchiPlugin(dependencies: PluginDependencies
       ),
     })
 
+    // The background service can restart under a live turn (update, config
+    // reload): the new plugin instance starts with empty in-memory lifecycle
+    // while the server keeps the sessions. Re-read the authoritative snapshot
+    // before returning the hooks so later live events order behind it.
+    await resyncV1(input, runtime)
+
     return {
       event: ({ event }) => runtime.event(event),
       dispose: runtime.dispose,
     }
   }
+}
+
+// Re-establishes pane state from the v1 list/status snapshot. Best effort by
+// contract: any lookup failure settles to presence (idle) or skips the
+// session, and never rejects into OpenCode or delays setup.
+async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<void> {
+  try {
+    const directory = typeof input.directory === "string" ? input.directory : undefined
+    const sessionClient = (input as unknown as { client?: { session?: Record<string, unknown> } }).client?.session
+    if (!sessionClient || typeof sessionClient.list !== "function") return
+    const listed = unwrapSessionArray(
+      await (sessionClient.list as (args: unknown) => Promise<unknown>)({
+        query: directory !== undefined ? { directory } : {},
+      }).catch(() => undefined),
+    )
+    let statuses: Record<string, unknown> = {}
+    if (typeof sessionClient.status === "function") {
+      statuses = unwrapKeyedMap(
+        await (sessionClient.status as (args: unknown) => Promise<unknown>)({
+          query: directory !== undefined ? { directory } : {},
+        }).catch(() => undefined),
+      )
+    }
+    if (listed.length === 0 && Object.keys(statuses).length === 0) return
+    const byId = new Map<string, { parentID?: unknown; directory?: unknown }>()
+    for (const session of listed) {
+      if (typeof session.id !== "string" || !session.id) continue
+      if (!isInstanceScope(
+        typeof session.directory === "string" ? session.directory : undefined,
+        directory,
+      )) {
+        continue
+      }
+      byId.set(session.id, session)
+    }
+    // Statuses can name sessions the list omitted (deleted races, filters):
+    // only running ones are worth an extra lookup, since idle only affects
+    // presence the list already established.
+    if (typeof sessionClient.get === "function") {
+      for (const sessionId of Object.keys(statuses)) {
+        if (byId.has(sessionId)) continue
+        if (statusFromServerType(statusTypeOf(statuses[sessionId])) === "idle") continue
+        try {
+          const fetched = unwrapSessionRecord(
+            await (sessionClient.get as (args: unknown) => Promise<unknown>)({
+              path: { id: sessionId },
+              query: directory !== undefined ? { directory } : {},
+            }).catch(() => undefined),
+          )
+          if (!fetched) continue
+          if (!isInstanceScope(
+            typeof fetched.directory === "string" ? fetched.directory : undefined,
+            directory,
+          )) {
+            continue
+          }
+          byId.set(sessionId, fetched)
+        } catch {
+          continue
+        }
+      }
+    }
+    const events = buildResyncEvents(
+      Array.from(byId).flatMap(([sessionId, session]) => {
+        const kind = kindFromParentId(session.parentID)
+        if (!kind) return []
+        return [{
+          sessionId,
+          kind,
+          status: statusFromServerType(statusTypeOf(statuses[sessionId])),
+          ...(directory !== undefined ? { directory } : {}),
+        }]
+      }),
+    )
+    if (events.length > 0) await runtime.resync(events)
+  } catch {
+    // Resync must never break plugin setup.
+  }
+}
+
+type ListedSession = { id: string; parentID?: unknown; directory?: unknown }
+
+function unwrapSessionArray(response: unknown): ListedSession[] {
+  const data = isRecord(response) && "data" in response ? response.data : response
+  if (!Array.isArray(data)) return []
+  const sessions: ListedSession[] = []
+  for (const entry of data) {
+    if (!isRecord(entry) || typeof entry.id !== "string" || !entry.id) continue
+    sessions.push({
+      id: entry.id,
+      ...(Object.prototype.hasOwnProperty.call(entry, "parentID") ? { parentID: entry.parentID } : {}),
+      ...(typeof entry.directory === "string" ? { directory: entry.directory } : {}),
+    })
+  }
+  return sessions
+}
+
+function unwrapSessionRecord(response: unknown): ListedSession | undefined {
+  const data = isRecord(response) && "data" in response ? response.data : response
+  if (!isRecord(data) || typeof data.id !== "string" || !data.id) return undefined
+  return {
+    id: data.id,
+    ...(Object.prototype.hasOwnProperty.call(data, "parentID") ? { parentID: data.parentID } : {}),
+    ...(typeof data.directory === "string" ? { directory: data.directory } : {}),
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
 }

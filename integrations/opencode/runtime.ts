@@ -1,5 +1,11 @@
 import { createEventAdapter, type EventAdapter, type EventAdapterDependencies } from "./adapter"
-import { createLifecycleState, reduceLifecycle, type StateMachineEffect } from "./state-machine"
+import {
+  createLifecycleState,
+  reduceLifecycle,
+  type LifecycleEvent,
+  type Reduction,
+  type StateMachineEffect,
+} from "./state-machine"
 import type { LogContext, LogObservation } from "./effect-runner"
 
 export type OpenCodeRuntimeDependencies = EventAdapterDependencies & Readonly<{
@@ -13,6 +19,7 @@ export type OpenCodeRuntimeDependencies = EventAdapterDependencies & Readonly<{
 
 export type OpenCodeRuntime = Readonly<{
   event(event: unknown): Promise<void>
+  resync(events: readonly LifecycleEvent[]): Promise<void>
   enqueueLateWork(work: () => Promise<void>): Promise<void>
   dispose(): Promise<void>
 }>
@@ -63,16 +70,7 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
           event: eventName,
           outcome: "applied",
         }))
-        const reduction = reduceLifecycle(state, lifecycleEvent)
-        state = reduction.state
-        for (const effect of reduction.effects) {
-          if (phase !== "active") break
-          try {
-            await dependencies.runEffect(effect, context)
-          } catch {
-            // One effect failure must not suppress the remaining reduction effects.
-          }
-        }
+        await applyReduction(reduceLifecycle(state, lifecycleEvent), context)
       } catch {
         if (context) await settle(() => dependencies.observeEvent?.({
           ...context,
@@ -86,6 +84,36 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
   }
 
   const enqueueLateWork = (work: () => Promise<void>) => enqueue(work)
+
+  // Re-establishes pane state from an authoritative server snapshot after the
+  // background service restarts. The seed runs as one FIFO unit so live
+  // events that arrive later cannot interleave halfway through the snapshot;
+  // callers must therefore finish their snapshot reads before subscribing.
+  // Resync carries no log correlation: it replays known state, not a new
+  // upstream event.
+  function resync(events: readonly LifecycleEvent[]): Promise<void> {
+    if (events.length === 0) return Promise.resolve()
+    return enqueue(async () => {
+      for (const lifecycleEvent of events) {
+        await applyReduction(reduceLifecycle(state, lifecycleEvent))
+      }
+    })
+  }
+
+  // Applies one reduction's effects in order. Shared by live events (with
+  // their log correlation) and resync seeds (replayed state, no correlation):
+  // one effect failure must not suppress the remaining effects.
+  async function applyReduction(reduction: Reduction, context?: LogContext): Promise<void> {
+    state = reduction.state
+    for (const effect of reduction.effects) {
+      if (phase !== "active") break
+      try {
+        await dependencies.runEffect(effect, context)
+      } catch {
+        // One effect failure must not suppress the remaining reduction effects.
+      }
+    }
+  }
 
   function dispose(): Promise<void> {
     if (disposal) return disposal
@@ -111,7 +139,7 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
     return disposal
   }
 
-  return { event, enqueueLateWork, dispose }
+  return { event, resync, enqueueLateWork, dispose }
 }
 
 function observableEventName(event: unknown): string {

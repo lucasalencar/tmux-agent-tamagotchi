@@ -130,6 +130,39 @@ Sessions are classified conservatively from `parentID`, using an exact SDK looku
 does not include session information. Unattributed errors and events whose session metadata cannot
 be recovered are ignored. Unknown or malformed events and operational failures are silent.
 
+## Restart recovery
+
+OpenCode runs this plugin inside its background service, so a service restart (update, config
+reload, `opencode service restart`) replaces the plugin instance and its in-memory lifecycle
+while the sessions themselves survive. The previous instance clears the pane on disposal; the
+new instance then re-reads the authoritative snapshot before subscribing to live events, so the
+pane returns to the state the server reports instead of staying cleared:
+
+- v1 reads `session.list` with `session.status` for the instance directory.
+- v2 reads `session.list` (plus pending permission requests when those are exposed),
+  following list cursors. Each listed session then races its own `session.wait` against a
+  one-second deadline, in parallel: a fulfilled wait is idle now, a wait still pending at
+  the deadline is running (verified live: idle waits resolve in about a millisecond,
+  running ones pend indefinitely). `session.active` is not used: it exists on the client
+  API but is absent from the plugin context on every host checked, so relying on it would
+  silently degrade to idle presence. (Waiting-state recovery is v2-only: the v1
+  API exposes no pending-permission listing, so a v1 restart under a permission prompt
+  returns to `running`/`idle` until the next live event.)
+
+The subscription starts before the snapshot reads and buffers arrivals: resume transitions
+emitted while the snapshot runs replay after the seed instead of being lost, and the FIFO
+still orders seed-before-live. Each known session seeds presence (`idle`) then activity
+(`running` for busy roots, subagent tracking for busy delegated sessions, `waiting` for
+pending permissions on v2). Snapshots are scoped to the instance directory (v1 live events
+remain unscoped and attribute every session they see, so a foreign live event can still
+light the pane after recovery). The seed never synthesizes
+terminal assistant messages, so recovery itself never raises a completion notification;
+the next live `idle` may still complete a pre-restart turn it can attribute, which is
+the normal completion path observing real work finish. List reads follow cursors up to
+ten pages of one hundred sessions; larger fleets resync partially and silently by
+contract. Snapshot failures are silent and leave live events to establish state as
+before; hosts without the newer list/permission/wait methods simply resync less.
+
 ## Completion notifications
 
 An eligible successful turn sets the pane to `idle` immediately, then waits five seconds before
