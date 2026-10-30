@@ -47,6 +47,14 @@ assert_launchctl_called() { # <subcommand>
   fi
 }
 
+@test "the plist template is valid XML" {
+  # Guards the example itself: placeholders live only at functional sites, and
+  # no comment carries a double hyphen, both of which break XML parsing.
+  run python3 -c 'import plistlib, sys; plistlib.load(open(sys.argv[1], "rb"))' \
+    "$PLUGIN_ROOT/examples/remote-receiver.plist"
+  assert_success
+}
+
 @test "one command installs the receiver and prints the tmux side" {
   shim_launchctl
 
@@ -88,12 +96,14 @@ assert_launchctl_called() { # <subcommand>
     --token "$hostile_token" --ssh-target 'user@vm' --python "$python" --port 8765
   assert_success
 
-  # Exact-string rendering: a token holding shell and sed metacharacters must
-  # arrive byte-identical, never read as a pattern.
-  assert_contains "$(installed_plist_content)" "$hostile_token" 'the plist'
+  # Rendered, not templated — and valid XML: & must arrive escaped, or plutil
+  # rejects the plist on a Mac and launchd chokes on it everywhere.
+  assert_contains "$(installed_plist_content)" 'a&amp;b|c"d\e$f' 'the plist'
   assert_contains "$(installed_plist_content)" '<string>--ssh-target</string>' 'the plist'
   assert_contains "$(installed_plist_content)" 'user@vm' 'the plist'
   assert_contains "$(installed_plist_content)" "$python" 'the plist'
+  # And decoding the plist hands the exact token back: escaping must not corrupt it.
+  assert_equal "$(python3 -c 'import plistlib, sys; print(plistlib.load(open(sys.argv[1], "rb"))["EnvironmentVariables"]["TAMA_REMOTE_TOKEN"])' "$(installed_plist)")" "$hostile_token"
 }
 
 installed_plist_content() {

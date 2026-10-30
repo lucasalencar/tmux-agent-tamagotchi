@@ -32,22 +32,30 @@ main() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --port)
-        [ "$#" -ge 2 ] && [ -n "$2" ] || die_usage '--port needs a port number'
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--port needs a port number'
+        fi
         port="$2"
         shift 2
         ;;
       --token)
-        [ "$#" -ge 2 ] && [ -n "$2" ] || die_usage '--token needs a token'
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--token needs a token'
+        fi
         token="$2"
         shift 2
         ;;
       --ssh-target)
-        [ "$#" -ge 2 ] && [ -n "$2" ] || die_usage '--ssh-target needs a destination'
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--ssh-target needs a destination'
+        fi
         ssh_target="$2"
         shift 2
         ;;
       --python)
-        [ "$#" -ge 2 ] && [ -n "$2" ] || die_usage '--python needs a path'
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--python needs a path'
+        fi
         python="$2"
         shift 2
         ;;
@@ -67,14 +75,16 @@ main() {
   command -v launchctl >/dev/null 2>&1 ||
     fail 'needs macOS: no launchctl here (run this where the banners show)'
   [ -n "${HOME:-}" ] || fail 'HOME is not set, so there is no LaunchAgents to install into'
-  [ -f "$TAMA_RECEIVER_TEMPLATE" ] && [ -r "$TAMA_RECEIVER_TEMPLATE" ] ||
+  if [ ! -f "$TAMA_RECEIVER_TEMPLATE" ] || [ ! -r "$TAMA_RECEIVER_TEMPLATE" ]; then
     fail "no template at $TAMA_RECEIVER_TEMPLATE; this plugin directory is incomplete"
+  fi
 
   if [ -z "$python" ]; then
     python="$(command -v python3 2>/dev/null)" || python=''
   fi
-  [ -n "$python" ] && [ -f "$python" ] && [ -x "$python" ] ||
+  if [ -z "$python" ] || [ ! -f "$python" ] || [ ! -x "$python" ]; then
     fail 'no Python 3 interpreter (pass --python or put python3 on PATH)'
+  fi
 
   if [ -z "$token" ]; then
     token="${TAMA_REMOTE_TOKEN:-}"
@@ -95,7 +105,9 @@ main() {
   trap 'rm -f "${tmp:-}"' EXIT
 
   # Exact-string replacement in Python: values are user data (a token may hold
-  # shell and sed metacharacters) and must never be read as a pattern.
+  # shell metacharacters) and must never be read as a pattern. Every value is
+  # XML-escaped: a raw & or < would render a malformed plist (plutil rejects it
+  # on a Mac, and launchd would choke on it everywhere).
   TAMA_TEMPLATE="$TAMA_RECEIVER_TEMPLATE" TAMA_DEST="$tmp" \
     TAMA_TOKEN="$token" TAMA_PORT="$port" \
     TAMA_PYTHON="$python" TAMA_SSH_TARGET="$ssh_target" \
@@ -108,10 +120,10 @@ ssh_args = ''
 if ssh_target:
     ssh_args = ('<string>--ssh-target</string>\n    <string>%s</string>\n    ' %
                 escape(ssh_target, {'"': '&quot;'}))
-rendered = (template.replace('%%PLUGIN_DIR%%', os.environ['TAMA_PLUGIN_DIR'])
-                    .replace('%%TOKEN%%', os.environ['TAMA_TOKEN'])
-                    .replace('%%PORT%%', os.environ['TAMA_PORT'])
-                    .replace('%%PYTHON_BIN%%', os.environ['TAMA_PYTHON'])
+rendered = (template.replace('%%PLUGIN_DIR%%', escape(os.environ['TAMA_PLUGIN_DIR']))
+                    .replace('%%TOKEN%%', escape(os.environ['TAMA_TOKEN']))
+                    .replace('%%PORT%%', escape(os.environ['TAMA_PORT']))
+                    .replace('%%PYTHON_BIN%%', escape(os.environ['TAMA_PYTHON']))
                     .replace('%%SSH_TARGET_ARGS%%', ssh_args))
 open(os.environ['TAMA_DEST'], 'w').write(rendered)
 PYEOF

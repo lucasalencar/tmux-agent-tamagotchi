@@ -8,21 +8,14 @@
 
     bin/tama install-receiver
 
-  which renders the placeholders below (%%PLUGIN_DIR%%, %%TOKEN%%, %%PYTHON_BIN%%, %%PORT%%,
-  %%SSH_TARGET_ARGS%%), installs to ~/Library/LaunchAgents/ and loads it. Pass
-  --port, --token, --ssh-target or --python to override the defaults; without
-  --token one is generated and printed for @tama_remote_token. By hand instead:
+  which fills the five placeholders in this file (plugin directory, token,
+  interpreter, port, ssh target), installs to ~/Library/LaunchAgents/ and loads
+  it. The installer options override the defaults, and a missing token is
+  generated and printed for the tmux side. By hand instead, copy this file and
+  replace each placeholder with a real value; the mapping is in
+  backends/README.md under "The remote backend".
 
-    sed -e "s|%%PLUGIN_DIR%%|$HOME/code/tmux-agent-tamagotchi|" \
-        -e "s|%%TOKEN%%|a-shared-secret|" \
-        -e "s|%%PYTHON_BIN%%|/opt/homebrew/bin/python3|" \
-        -e "s|%%PORT%%|8765|" \
-        -e "s|%%SSH_TARGET_ARGS%%||" \
-        %%PLUGIN_DIR%%/examples/remote-receiver.plist \
-        >~/Library/LaunchAgents/com.tamagotchi.remote-receiver.plist
-    launchctl load ~/Library/LaunchAgents/com.tamagotchi.remote-receiver.plist
-
-  Logs go to /tmp/tama-remote-receiver.log. Unload with `launchctl unload` on
+  Logs go to /tmp/tama-remote-receiver.log. Unload with launchctl unload on
   the same path. The token sits in this file in cleartext with the usual
   home-directory permissions; prefer a user-only checkout on a shared machine.
 -->
@@ -33,8 +26,7 @@
   <key>ProgramArguments</key>
   <array>
     <!-- Homebrew python if you have it, else /usr/bin/python3 (which may first
-         ask you to install Xcode's command line tools). Any Python 3.7+ works.
-         install-receiver fills %%PYTHON_BIN%% with the python3 it finds. -->
+         ask you to install Xcode's command line tools). Any Python 3.7+ works. -->
     <string>%%PYTHON_BIN%%</string>
     <string>%%PLUGIN_DIR%%/backends/remote/receiver.py</string>
     <string>--port</string>
