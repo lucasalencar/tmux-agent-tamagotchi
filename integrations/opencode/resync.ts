@@ -113,6 +113,52 @@ export function isInstanceScope(
   return sameDirectory(itemDirectory, instanceDirectory)
 }
 
+export type WaitTimer = Readonly<{
+  setTimeout(callback: () => void, delayMs: number): unknown
+  clearTimeout(handle: unknown): void
+}>
+
+const systemTimer: WaitTimer = {
+  setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+}
+
+// Races session idleness against a timeout: a fulfilled wait means the
+// session is idle now, while a wait still pending at the deadline means it is
+// running. Verified against the live host: wait resolves in ~0ms on idle
+// sessions and pends past 3s on running ones. Rejections settle to idle
+// presence rather than failing setup.
+export function raceSessionWait(
+  wait: () => Promise<unknown>,
+  timeoutMs: number,
+  timer: WaitTimer = systemTimer,
+): Promise<"busy" | "idle"> {
+  return new Promise((resolve) => {
+    let handle: unknown
+    let settled = false
+    const finish = (status: "busy" | "idle") => {
+      if (settled) return
+      settled = true
+      if (handle !== undefined) timer.clearTimeout(handle)
+      resolve(status)
+    }
+    handle = timer.setTimeout(() => finish("busy"), timeoutMs)
+    try {
+      const pending = wait()
+      if (pending && typeof (pending as Promise<unknown>).then === "function") {
+        ;(pending as Promise<unknown>).then(
+          () => finish("idle"),
+          () => finish("idle"),
+        )
+      } else {
+        finish("idle")
+      }
+    } catch {
+      finish("idle")
+    }
+  })
+}
+
 // Compares working directories with symlinks resolved, so /tmp and
 // /private/tmp compare equal on macOS. Shared by the v1 and v2 resync paths
 // so both scope snapshots exactly like the live v2 event filter.

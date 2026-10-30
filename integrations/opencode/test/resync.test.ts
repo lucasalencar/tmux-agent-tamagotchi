@@ -5,9 +5,11 @@ import {
   isActiveSessionValue,
   isInstanceScope,
   kindFromParentId,
+  raceSessionWait,
   statusFromServerType,
   unwrapKeyedMap,
 } from "../resync"
+import { FakeClock } from "./fake-clock"
 
 describe("buildResyncEvents", () => {
   test("seeds created before status for every session", () => {
@@ -128,5 +130,36 @@ describe("isInstanceScope", () => {
   test("known directories must match", () => {
     expect(isInstanceScope("/workspace", "/workspace")).toBe(true)
     expect(isInstanceScope("/elsewhere", "/workspace")).toBe(false)
+  })
+})
+
+describe("raceSessionWait", () => {
+  test("a fulfilled wait is idle without waiting for the deadline", async () => {
+    const clock = new FakeClock()
+    const raced = raceSessionWait(async () => undefined, 1000, clock)
+
+    await expect(raced).resolves.toBe("idle")
+  })
+
+  test("a pending wait is busy once the deadline passes", async () => {
+    const clock = new FakeClock()
+    const raced = raceSessionWait(() => new Promise(() => {}), 1000, clock)
+
+    const verdict = new Promise<string>((resolve) => {
+      void raced.then((status) => resolve(status))
+    })
+    await clock.advance(999)
+    await clock.advance(1)
+
+    await expect(verdict).resolves.toBe("busy")
+  })
+
+  test("a rejected wait settles to idle presence", async () => {
+    const clock = new FakeClock()
+    const raced = raceSessionWait(async () => {
+      throw new Error("session gone")
+    }, 1000, clock)
+
+    await expect(raced).resolves.toBe("idle")
   })
 })

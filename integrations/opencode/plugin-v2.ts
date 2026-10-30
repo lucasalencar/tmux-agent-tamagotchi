@@ -11,7 +11,7 @@ import {
   type ProcessExecutor,
 } from "./effect-runner"
 import { createOpenCodeRuntime, type OpenCodeRuntime } from "./runtime"
-import { buildResyncEvents, canonicalize, isActiveSessionValue, isInstanceScope, kindFromParentId, sameDirectory, unwrapKeyedMap } from "./resync"
+import { buildResyncEvents, canonicalize, isActiveSessionValue, isInstanceScope, kindFromParentId, raceSessionWait, sameDirectory, unwrapKeyedMap, type WaitTimer } from "./resync"
 
 // Structural subset of the OpenCode v2 plugin context used here. Kept local so
 // the plugin has no v2 package dependency at load time; v2 validates the
@@ -22,9 +22,12 @@ export type PluginContextV2 = Readonly<{
     get(input: Readonly<{ sessionID: string }>): Promise<unknown>
     context(input: Readonly<{ sessionID: string }>): Promise<unknown>
     // Present on newer hosts (2.2+); absent on the pinned 2.0.10 types.
-    // Always probed defensively so one host never breaks another.
+    // Always probed defensively so one host never breaks another. Note
+    // `active` is absent even on 2.2 hosts (verified live); `wait` doubles
+    // as the running-state oracle instead (see RESYNC_WAIT_MS).
     list?(input?: unknown): Promise<unknown>
     active?(): Promise<unknown>
+    wait?(input: unknown): Promise<unknown>
   }>
   permission?: Readonly<{
     list?(input: unknown): Promise<unknown>
@@ -39,6 +42,9 @@ export type PluginV2Dependencies = Readonly<{
   clock?: CompletionClock
   onCompletionEligible?(completion: CompletionReference): Promise<void>
   disposeLateWork?(): Promise<void> | void
+  // How long the setup snapshot waits per session to tell running apart from
+  // idle (see RESYNC_WAIT_MS). Tests use a small value with fakes.
+  resyncWaitMs?: number
 }>
 
 type SetupCleanup = () => Promise<void> | void
@@ -47,6 +53,11 @@ type SetupCleanup = () => Promise<void> | void
 // page is one RPC the setup awaits before subscribing to live events.
 const RESYNC_LIST_LIMIT = 100
 const RESYNC_LIST_MAX_PAGES = 10
+// Deadline per session for the idleness race below. Idle sessions resolve
+// their wait in about a millisecond while running ones pend indefinitely
+// (verified against the live host), so one second is generous without
+// holding setup hostage; races run in parallel, so this is a flat cost.
+const RESYNC_WAIT_MS = 1000
 
 export function createTmuxAgentTamagotchiPluginV2(
   dependencies: PluginV2Dependencies = {},
@@ -120,12 +131,14 @@ export function createTmuxAgentTamagotchiPluginV2(
 
     // The background service can restart under a live turn (update, config
     // reload): the new plugin instance starts with empty in-memory lifecycle
-    // while the server keeps the sessions. The snapshot is read before the
-    // subscription starts so live events order behind it instead of racing a
-    // stale idle over fresh activity.
-    await resyncV2(ctx, directory, runtime)
-
+    // while the server keeps the sessions. The subscription starts first and
+    // buffers: resume transitions emitted while the snapshot reads run are
+    // replayed after the seed instead of being lost, and the FIFO orders
+    // seed-before-live. The release below runs with no awaits in between, so
+    // no event can slip between the buffered batch and the live tail.
     const controller = new AbortController()
+    const buffered: unknown[] = []
+    let released = false
     void (async () => {
       try {
         for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
@@ -134,12 +147,22 @@ export function createTmuxAgentTamagotchiPluginV2(
             const eventDirectory = eventDirectoryV2(event)
             if (eventDirectory !== undefined && !sameDirectory(eventDirectory, directory)) continue
           }
-          void runtime.event(event)
+          if (!released) buffered.push(event)
+          else void runtime.event(event)
         }
       } catch {
         // Aborted during unload or the transport closed underneath the stream.
       }
     })()
+
+    await resyncV2(ctx, directory, runtime, {
+      waitTimeoutMs: dependencies.resyncWaitMs ?? RESYNC_WAIT_MS,
+      timer: dependencies.clock,
+    })
+
+    released = true
+    const pending = buffered.splice(0, buffered.length)
+    for (const event of pending) void runtime.event(event)
 
     return async () => {
       controller.abort()
@@ -148,21 +171,25 @@ export function createTmuxAgentTamagotchiPluginV2(
   }
 }
 
-// Re-establishes pane state from the v2 list/active snapshot. Best effort by
-// contract: unknown hosts (no list/active), lookup failures, and pagination
-// limits settle to presence or skip the session, and never reject into
-// OpenCode or delay setup beyond the snapshot reads.
+// Re-establishes pane state from the v2 session snapshot. Best effort by
+// contract: unknown hosts (no list/active/wait), lookup failures, and
+// pagination limits settle to presence or skip the session, and never reject
+// into OpenCode or delay setup beyond the snapshot reads plus one wait
+// deadline (races run in parallel, so the deadline is a flat cost).
 async function resyncV2(
   ctx: PluginContextV2,
   directory: string | undefined,
   runtime: OpenCodeRuntime,
+  options: Readonly<{ waitTimeoutMs?: number; timer?: WaitTimer }> = {},
 ): Promise<void> {
   try {
     const session = ctx.session as {
       get(input: Readonly<{ sessionID: string }>): Promise<unknown>
       list?(input?: unknown): Promise<unknown>
       active?(): Promise<unknown>
+      wait?(input: unknown): Promise<unknown>
     }
+    const waitTimeoutMs = options.waitTimeoutMs ?? RESYNC_WAIT_MS
     type KnownSession = { parentID?: unknown; directory?: string }
     const byId = new Map<string, KnownSession>()
     if (typeof session.list === "function") {
@@ -211,6 +238,33 @@ async function resyncV2(
       byId.set(sessionId, fetched)
     }
     if (byId.size === 0) return
+    // Running state per session: the active set wins when the host exposes
+    // it; otherwise each session races its own idleness against the deadline
+    // in parallel. A fulfilled wait is idle now, a pending one is running.
+    const canRace = typeof session.wait === "function"
+    const statuses = new Map<string, "busy" | "idle">()
+    await Promise.all(Array.from(byId).map(async ([sessionId]) => {
+      if (activeIds.has(sessionId)) {
+        statuses.set(sessionId, "busy")
+        return
+      }
+      if (!canRace) {
+        statuses.set(sessionId, "idle")
+        return
+      }
+      try {
+        statuses.set(
+          sessionId,
+          await raceSessionWait(
+            () => (session.wait as (input: unknown) => Promise<unknown>)({ sessionID: sessionId }),
+            waitTimeoutMs,
+            options.timer,
+          ),
+        )
+      } catch {
+        statuses.set(sessionId, "idle")
+      }
+    }))
     const permissions: Array<{ requestId: string; sessionId: string; kind: "root" | "delegated"; directory?: string }> = []
     const listPermission = ctx.permission?.list
     if (typeof listPermission === "function") {
@@ -243,7 +297,7 @@ async function resyncV2(
           {
             sessionId,
             kind,
-            status: activeIds.has(sessionId) ? ("busy" as const) : ("idle" as const),
+            status: statuses.get(sessionId) ?? ("idle" as const),
             ...(directory !== undefined ? { directory } : {}),
           },
         ]

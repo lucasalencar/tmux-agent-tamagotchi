@@ -433,6 +433,78 @@ describe("v2 setup", () => {
     expect(tamaCalls(commandCalls)).toEqual([])
     await cleanup()
   })
+
+  test("derives running from the wait race when active is absent", async () => {
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({
+      execute: fakeExecute(commandCalls),
+      resyncWaitMs: 20,
+    })
+    const cleanup = await setup(fakeContextV2([], { "root-a": {}, "root-b": {} }, {}, {
+      list: [{ id: "root-a" }, { id: "root-b" }],
+      waits: { "root-a": "running", "root-b": "idle" },
+    }))
+    await settle()
+
+    // root-a pends past the deadline (busy) while root-b resolves at once.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
+    ])
+    await cleanup()
+  })
+
+  test("buffers live events emitted during the snapshot and replays them after the seed", async () => {
+    const commandCalls: string[][] = []
+    const order: string[] = []
+    let resolveList!: () => void
+    const listGate = new Promise<void>((resolve) => {
+      resolveList = resolve
+    })
+    const fallback = setTimeout(() => resolveList(), 1000)
+    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    const context = fakeContextV2(
+      [{ type: "session.execution.started", data: { sessionID: "root-a" } }],
+      { "root-a": {} },
+      {},
+    )
+    const slowListContext = {
+      ...context,
+      session: {
+        ...context.session,
+        list: async () => {
+          order.push("list-start")
+          await listGate
+          order.push("list-end")
+          return { data: [{ id: "root-a" }], cursor: {} }
+        },
+      },
+      event: {
+        subscribe: async function* (options?: { signal?: AbortSignal }) {
+          order.push("subscribed")
+          resolveList()
+          yield { type: "session.execution.started", data: { sessionID: "root-a" } }
+          await new Promise<void>((resolve) => {
+            if (options?.signal?.aborted) return resolve()
+            options?.signal?.addEventListener("abort", () => resolve(), { once: true })
+          })
+        },
+      },
+    }
+    const cleanup = await setup(slowListContext)
+    await settle()
+    clearTimeout(fallback)
+
+    // The subscription starts before the snapshot completes, so the resume
+    // transition survives instead of being lost in the gap; the FIFO still
+    // orders the idle seed before it.
+    expect(order.indexOf("subscribed")).toBeLessThan(order.indexOf("list-end"))
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
+    ])
+    await cleanup()
+  })
 })
 
 function fakeExecute(commandCalls: string[][]) {
@@ -455,6 +527,7 @@ function fakeContextV2(
     list?: Array<Record<string, unknown>>
     listPages?: Array<Array<Record<string, unknown>>>
     active?: Record<string, unknown>
+    waits?: Record<string, "idle" | "running">
     permissions?: Record<string, string[]>
   },
 ): PluginContextV2 {
@@ -482,6 +555,16 @@ function fakeContextV2(
         : {}),
       ...(snapshot && "active" in snapshot
         ? { active: async () => snapshot.active ?? {} }
+        : {}),
+      ...(snapshot && "waits" in snapshot
+        ? {
+          wait: async (input: unknown) => {
+            const sessionID = (input as { sessionID?: unknown }).sessionID
+            if (typeof sessionID === "string" && snapshot.waits?.[sessionID] === "running") {
+              await new Promise<void>(() => {})
+            }
+          },
+        }
         : {}),
     },
     ...(snapshot && "permissions" in snapshot

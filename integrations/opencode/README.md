@@ -139,23 +139,29 @@ new instance then re-reads the authoritative snapshot before subscribing to live
 pane returns to the state the server reports instead of staying cleared:
 
 - v1 reads `session.list` with `session.status` for the instance directory.
-- v2 reads `session.list` with `session.active` for the instance directory, plus pending
-  permission requests when the host exposes them, following list cursors and resolving
-  active sessions the top-level list omits. (Waiting-state recovery is v2-only: the v1
-  API exposes no pending-permission listing, so a v1 restart under a permission prompt
-  returns to `running`/`idle` until the next live event.)
+- v2 reads `session.list` with `session.active` when the host exposes it (plus pending
+  permission requests when those are exposed), following list cursors and resolving
+  sessions the top-level list omits. Because the pinned hosts expose neither, each listed
+  session additionally races its own `session.wait` against a one-second deadline, in
+  parallel: a fulfilled wait is idle now, a wait still pending at the deadline is running
+  (verified live: idle waits resolve in about a millisecond, running ones pend
+  indefinitely). (Waiting-state recovery is v2-only: the v1 API exposes no
+  pending-permission listing, so a v1 restart under a permission prompt returns to
+  `running`/`idle` until the next live event.)
 
-Each known session seeds presence (`idle`) then activity (`running` for busy roots,
-subagent tracking for busy delegated sessions, `waiting` for pending permissions on v2).
-Snapshots are scoped to the instance directory (v1 live events remain unscoped and
-attribute every session they see, so a foreign live event can still light the pane after
-recovery). The seed never synthesizes
+The subscription starts before the snapshot reads and buffers arrivals: resume transitions
+emitted while the snapshot runs replay after the seed instead of being lost, and the FIFO
+still orders seed-before-live. Each known session seeds presence (`idle`) then activity
+(`running` for busy roots, subagent tracking for busy delegated sessions, `waiting` for
+pending permissions on v2). Snapshots are scoped to the instance directory (v1 live events
+remain unscoped and attribute every session they see, so a foreign live event can still
+light the pane after recovery). The seed never synthesizes
 terminal assistant messages, so recovery itself never raises a completion notification;
 the next live `idle` may still complete a pre-restart turn it can attribute, which is
 the normal completion path observing real work finish. List reads follow cursors up to
 ten pages of one hundred sessions; larger fleets resync partially and silently by
 contract. Snapshot failures are silent and leave live events to establish state as
-before; hosts without the newer list/active methods simply resync nothing.
+before; hosts without the newer list/active/wait methods simply resync less.
 
 ## Completion notifications
 
