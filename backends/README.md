@@ -139,7 +139,10 @@ missing URL, or a URL that is not `http(s)://` is silence rather than a failed
 turn; `tama doctor` fails on the configuration instead.
 
 The other side runs `backends/remote/receiver.py` (standard library only, so any
-Python 3.7 or newer will do):
+Python 3.7 or newer will do). It is copied to the showing computer, not shared:
+after updating this plugin, update the clone there too and restart the receiver
+(`launchctl kickstart -k` for a plist install), or new sender fields are
+silently ignored by the old receiver until then:
 
 ```sh
 python3 backends/remote/receiver.py --port 8765 --token 'a-shared-secret'

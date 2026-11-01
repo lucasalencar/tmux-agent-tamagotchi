@@ -863,6 +863,12 @@ assert_notifier_flag() { # <flag> <expected>
   assert_notifier_flag group 'tmux-window-@7'
   assert_notifier_flag activate 'com.mitchellh.ghostty'
 
+  # A missing subtitle draws nothing extra: no -subtitle flag at all.
+  if [ -e "$TAMA_NOTIFIER_DIR/subtitle" ]; then
+    printf 'expected no subtitle flag, got: %s\n' "$(cat "$TAMA_NOTIFIER_DIR/subtitle")" >&2
+    return 1
+  fi
+
   # The health contract the doctor probe and monitoring rely on.
   local health
   health="$(curl -s "$TAMA_RECEIVER_URL/health")"
@@ -906,6 +912,30 @@ assert_notifier_flag() { # <flag> <expected>
     --data-binary '{"title":"t","message":"m"}'
   assert_success
   assert_equal "$output" '200'
+}
+
+@test "the receiver draws nothing extra for an empty subtitle" {
+  start_real_receiver
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    --data-binary '{"title":"t","subtitle":"","message":"m"}'
+  assert_success
+  assert_equal "$output" '200'
+
+  local waited=0
+  while [ "$(wc -l <"$TAMA_NOTIFIER_DIR/calls")" -eq 0 ]; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || {
+      printf 'the notifier was never started\n' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  assert_notifier_flag title 't'
+  if [ -e "$TAMA_NOTIFIER_DIR/subtitle" ]; then
+    printf 'expected no subtitle flag, got: %s\n' "$(cat "$TAMA_NOTIFIER_DIR/subtitle")" >&2
+    return 1
+  fi
 }
 
 @test "the receiver guards dismissal like the backend does" {
@@ -1112,7 +1142,7 @@ assert_notifier_flag() { # <flag> <expected>
   done
 
   run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
-    --data-binary '{"title":"t","subtitle":"my-vm","message":"say \"hi\"\nsecond line"}'
+    --data-binary '{"title":"t","subtitle":"a\"b\\c","message":"say \"hi\"\nsecond line"}'
   assert_success
   assert_equal "$output" '200'
 
@@ -1127,7 +1157,26 @@ assert_notifier_flag() { # <flag> <expected>
   done
   assert_contains "$(cat "$TAMA_OSASCRIPT_DIR/script")" 'display notification' 'the script'
   assert_contains "$(cat "$TAMA_OSASCRIPT_DIR/script")" 'say \"hi\"' 'the escaped message'
-  assert_contains "$(cat "$TAMA_OSASCRIPT_DIR/script")" 'subtitle "my-vm"' 'the subtitle'
+  assert_contains "$(cat "$TAMA_OSASCRIPT_DIR/script")" 'subtitle "a\"b\\c"' 'the escaped subtitle'
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    --data-binary '{"title":"t2","subtitle":"","message":"m2"}'
+  assert_success
+  assert_equal "$output" '200'
+
+  waited=0
+  while [ "$(wc -l <"$TAMA_OSASCRIPT_DIR/calls")" -lt 2 ]; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || {
+      printf 'osascript was never started again\n' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  if grep -qF 'subtitle "' "$TAMA_OSASCRIPT_DIR/script"; then
+    printf 'expected no subtitle clause, got: %s\n' "$(cat "$TAMA_OSASCRIPT_DIR/script")" >&2
+    return 1
+  fi
   # One line: a literal newline would end the AppleScript string early and the
   # banner would never draw. Compared numerically: BSD wc pads its output.
   [ "$(wc -l <"$TAMA_OSASCRIPT_DIR/script")" -eq 0 ]
