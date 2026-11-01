@@ -169,17 +169,30 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
       }
       return adaptSessionStatus(data.sessionID, status, provenance)
     }
+    if (event.type === "session.execution.started") {
+      // An explicit start is a definitive new turn: unlike trailing step/tool
+      // busy noise after a completion, it must clear the previous turn's
+      // completion guard so the second prompt reports running again.
+      if (!isIdentifier(data.sessionID)) return { status: "malformed" }
+      if (directory === undefined && !(await ownsSession(data.sessionID))) {
+        return { status: "unknown" }
+      }
+      const kind = await classify(data.sessionID)
+      if (!kind) return { status: "malformed" }
+      return {
+        status: "adapted",
+        event: { type: "execution-started", sessionId: data.sessionID, kind, ...provenance },
+      }
+    }
     if (
-      event.type === "session.execution.started"
-      || event.type === "session.execution.succeeded"
+      event.type === "session.execution.succeeded"
       || event.type === "session.execution.interrupted"
     ) {
       // Successful v2 turns run on execution events without session.status or
-      // session.idle transitions: started means the turn is running while
-      // succeeded and interrupted both leave the session idle.
+      // session.idle transitions: succeeded and interrupted both leave the
+      // session idle.
       if (!isIdentifier(data.sessionID)) return { status: "malformed" }
-      const status = event.type === "session.execution.started" ? "busy" : "idle"
-      return adaptSessionStatus(data.sessionID, status, provenance)
+      return adaptSessionStatus(data.sessionID, "idle", provenance)
     }
     if (event.type === "session.step.started" || event.type === "session.retry.scheduled") {
       // Step activity rescues a turn whose execution start was missed (late

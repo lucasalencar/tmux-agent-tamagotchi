@@ -6,6 +6,7 @@ export type LifecycleEvent =
   | { type: "session-created"; sessionId: string; kind: SessionKind; directory?: string }
   | { type: "session-deleted"; sessionId: string; kind: SessionKind; directory?: string }
   | { type: "session-status"; sessionId: string; kind: SessionKind; status: SessionStatus; directory?: string }
+  | { type: "execution-started"; sessionId: string; kind: SessionKind; directory?: string }
   | { type: "user-message"; sessionId: string; kind: SessionKind; messageId: string; directory?: string }
   | { type: "session-error"; sessionId: string; kind: SessionKind; message?: string; directory?: string }
   | {
@@ -65,6 +66,7 @@ function establishesPaneState(event: LifecycleEvent): boolean {
     case "session-deleted":
     case "session-error":
     case "session-status":
+    case "execution-started":
     case "user-message":
       return event.kind === "root"
     case "permission-replied":
@@ -100,6 +102,20 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
     permissions.forEach((sessionId, requestId) => {
       if (sessionId === event.sessionId) permissions.delete(requestId)
     })
+  } else if (event.type === "execution-started") {
+    // An explicit execution start is a definitive new turn, unlike trailing
+    // step/tool busy noise after a completion. It must clear the previous
+    // turn's completion guard so the second prompt reports running again.
+    if (event.kind === "delegated") {
+      if (!activeDelegatedSessions.has(event.sessionId)) {
+        activeDelegatedSessions.add(event.sessionId)
+        delegatedEffect = { type: "subagent-start", sessionId: event.sessionId }
+      }
+    } else {
+      roots.set(event.sessionId, "running")
+      terminalAssistantMessages.delete(event.sessionId)
+      completedRootMessages.delete(event.sessionId)
+    }
   } else if (event.kind === "delegated") {
     if (event.type === "session-status") {
       if (event.status === "idle") {

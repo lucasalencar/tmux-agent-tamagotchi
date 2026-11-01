@@ -122,7 +122,7 @@ describe("v2 flat events", () => {
       data: { sessionID: "root-a" },
     })).toEqual({
       status: "adapted",
-      event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+      event: { type: "execution-started", sessionId: "root-a", kind: "root" },
     })
     expect(await adapter.adapt({
       type: "session.execution.succeeded",
@@ -203,7 +203,7 @@ describe("v2 flat events", () => {
       data: { sessionID: "root-a" },
     })).toEqual({
       status: "adapted",
-      event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+      event: { type: "execution-started", sessionId: "root-a", kind: "root" },
     })
     expect(lookups).toBeGreaterThan(0)
   })
@@ -218,7 +218,7 @@ describe("v2 flat events", () => {
       data: { sessionID: "root-foreign" },
     })).toEqual({
       status: "adapted",
-      event: { type: "session-status", sessionId: "root-foreign", kind: "root", status: "busy" },
+      event: { type: "execution-started", sessionId: "root-foreign", kind: "root" },
     })
   })
 
@@ -233,7 +233,7 @@ describe("v2 flat events", () => {
       data: { sessionID: "root-a" },
     })).toEqual({
       status: "adapted",
-      event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+      event: { type: "execution-started", sessionId: "root-a", kind: "root" },
     })
   })
 
