@@ -285,6 +285,30 @@ tama_remote_origin_icon() {
   return 0
 }
 
+# The `[icon origin]` badge prepended to remote banner titles, in
+# TAMA_REMOTE_BADGE. Empty when no badge is drawn — an empty origin disables
+# the whole badge, icon included — rather than failing a turn. The one owner
+# of the badge join, shared by the backend drawing it and the diagnostics
+# describing it.
+# shellcheck disable=SC2034  # TAMA_REMOTE_BADGE is read by the caller
+tama_remote_title_badge() {
+  local origin icon
+  tama_remote_origin
+  origin="$TAMA_REMOTE_ORIGIN"
+  if [ -z "$origin" ]; then
+    TAMA_REMOTE_BADGE=''
+    return 0
+  fi
+  tama_remote_origin_icon
+  icon="$TAMA_REMOTE_ORIGIN_ICON"
+  if [ -n "$icon" ]; then
+    TAMA_REMOTE_BADGE="[$icon $origin]"
+  else
+    TAMA_REMOTE_BADGE="[$origin]"
+  fi
+  return 0
+}
+
 # Escapes an arbitrary value for use inside JSON double quotes, on stdout. A message
 # is text an agent wrote and may hold quotes, backslashes and newlines; without this
 # the payload would be malformed JSON or, worse, a second object the receiver decodes

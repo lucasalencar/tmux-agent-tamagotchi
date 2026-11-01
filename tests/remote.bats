@@ -214,6 +214,42 @@ agent_pane_elsewhere() {
   assert_contains "$title" 'claude-code - ' 'the title'
 }
 
+@test "a configured icon pairs with the hostname when the origin is unset" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin_icon '🚀'
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  local expected_origin title
+  expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  [ -n "$expected_origin" ] || skip 'this machine has no hostname to prefix with'
+  title="$(remote_json_value notify title)"
+  case "$title" in
+    "[🚀 $expected_origin] "*) ;;
+    *)
+      printf 'expected "[🚀 %s] ..." prefix, got: %s\n' "$expected_origin" "$title" >&2
+      return 1
+      ;;
+  esac
+  assert_contains "$title" 'claude-code - ' 'the title'
+}
+
+@test "an empty title draws the badge alone" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin 'my-vm'
+  tmux_test_server_run set -g @tama_title_format ''
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  assert_remote_json_value notify title '[💻 my-vm]'
+}
+
 @test "an empty icon draws the origin without one" {
   start_fake_remote_server
   tmux_test_server_run set -g @tama_remote_origin 'my-vm'
@@ -555,7 +591,7 @@ healthy_remote_server() {
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains "@tama_remote_origin is unset: forwarded titles start with [$expected_origin]"
+  assert_output_contains "@tama_remote_origin is unset: forwarded titles start with [💻 $expected_origin]"
 
   tmux_test_server_run set -g @tama_remote_origin 'my-vm'
   run "$PLUGIN_ROOT/bin/tama" doctor
@@ -586,6 +622,11 @@ healthy_remote_server() {
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains '@tama_remote_origin_icon is empty: forwarded titles draw the origin without an icon'
+
+  tmux_test_server_run set -g @tama_remote_origin ''
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_remote_origin draws no prefix, so @tama_remote_origin_icon has no effect'
 }
 
 @test "doctor warns when something that is not the receiver answers 200" {
@@ -1197,6 +1238,18 @@ NOTIFIER
   done
   assert_notifier_flag message 'permission needed'
   assert_notifier_flag group "tmux-window-$window"
+
+  local expected_origin
+  expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  [ -n "$expected_origin" ] || skip 'this machine has no hostname to prefix with'
+  case "$(notifier_flag title)" in
+    "[💻 $expected_origin] claude-code - "*) ;;
+    *)
+      printf 'expected "[💻 %s] claude-code - ..." title, got: %s\n' \
+        "$expected_origin" "$(notifier_flag title)" >&2
+      return 1
+      ;;
+  esac
 
   run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
   assert_success
