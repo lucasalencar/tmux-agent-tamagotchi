@@ -106,7 +106,10 @@ describe("root session activity", () => {
       {
         event: { type: "execution-started", sessionId: "root-a", kind: "root" },
         paneState: "running",
-        effects: [{ type: "pane-state", state: "running" }],
+        effects: [
+          { type: "pane-state", state: "running" },
+          { type: "agent-state", agentId: "root-a", state: "running" },
+        ],
       },
       {
         event: {
@@ -119,13 +122,17 @@ describe("root session activity", () => {
         paneState: "idle",
         effects: [
           { type: "pane-state", state: "idle" },
-          { type: "completion-eligible", sessionId: "root-a", messageId: "message-a" },
+          { type: "agent-state", agentId: "root-a", state: "idle" },
+          { type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" },
         ],
       },
       {
         event: { type: "execution-started", sessionId: "root-a", kind: "root" },
         paneState: "running",
-        effects: [{ type: "pane-state", state: "running" }],
+        effects: [
+          { type: "pane-state", state: "running" },
+          { type: "agent-state", agentId: "root-a", state: "running" },
+        ],
       },
       {
         event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
@@ -140,7 +147,10 @@ describe("root session activity", () => {
       {
         event: { type: "execution-started", sessionId: "root-a", kind: "root" },
         paneState: "running",
-        effects: [{ type: "pane-state", state: "running" }],
+        effects: [
+          { type: "pane-state", state: "running" },
+          { type: "agent-state", agentId: "root-a", state: "running" },
+        ],
       },
       {
         event: {
@@ -153,13 +163,27 @@ describe("root session activity", () => {
         paneState: "idle",
         effects: [
           { type: "pane-state", state: "idle" },
-          { type: "completion-eligible", sessionId: "root-a", messageId: "message-a" },
+          { type: "agent-state", agentId: "root-a", state: "idle" },
+          { type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" },
         ],
       },
       {
         event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
         paneState: "idle",
         effects: [],
+      },
+    ])
+  })
+
+  test("a delegated execution start tracks under its owning root", () => {
+    run(createLifecycleState(), [
+      {
+        event: { type: "execution-started", sessionId: "child-a", kind: "delegated", parentId: "root-a" },
+        paneState: "idle",
+        effects: [
+          { type: "agent-state", agentId: "root-a", state: "idle" },
+          { type: "agent-subagent-start", agentId: "root-a", subagentId: "child-a" },
+        ],
       },
     ])
   })

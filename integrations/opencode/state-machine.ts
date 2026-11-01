@@ -279,9 +279,16 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
     // step/tool busy noise after a completion. It must clear the previous
     // turn's completion guard so the second prompt reports running again.
     if (event.kind === "delegated") {
-      if (!activeDelegatedSessions.has(event.sessionId)) {
+      // Like a busy status: a delegated start tracks under its owning root so
+      // the per-agent twin fires; without a recoverable parent it stays in
+      // the global set and cancels pending completions conservatively.
+      const rootId = owningRoot(event)
+      if (rootId === undefined) {
+        if (!activeDelegatedSessions.has(event.sessionId)) trackDelegatedStart(event.sessionId, undefined)
+      } else if (!delegatedForRoot(rootDelegated, rootId).has(event.sessionId)) {
+        trackDelegatedStart(event.sessionId, rootId)
+      } else if (!activeDelegatedSessions.has(event.sessionId)) {
         activeDelegatedSessions.add(event.sessionId)
-        delegatedEffect = { type: "subagent-start", sessionId: event.sessionId }
       }
     } else {
       roots.set(event.sessionId, "running")
