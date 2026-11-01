@@ -24,6 +24,12 @@ setup() {
   mkdir -p "$TAMA_REMOTE_DIR"
   : >"$TAMA_REMOTE_DIR/requests"
 
+  # The documented setup exports TAMA_REMOTE_TOKEN in shell init, so a
+  # developer shell leaks it here. The receivers booted below must not gate
+  # on it unless a test passes --token explicitly, or every no-token test
+  # fails locally while CI stays green.
+  unset TAMA_REMOTE_TOKEN
+
   tama_start_server
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
@@ -775,6 +781,8 @@ ThreadingHTTPServer(("127.0.0.1", int(sys.argv[3])), Handler).serve_forever()
 
 # The real receiver, with the notifier replaced by the fixture that records the
 # command line — the whole showing half, without a banner appearing anywhere.
+# Booted with no ambient token: an explicitly passed --token still wins, but a
+# leaked developer token must never gate the no-token tests.
 start_real_receiver() { # [extra args…]
   export TAMA_NOTIFIER_DIR="$BATS_TEST_TMPDIR/notifier"
   mkdir -p "$TAMA_NOTIFIER_DIR"
@@ -783,7 +791,8 @@ start_real_receiver() { # [extra args…]
   port="$(free_port)"
   TAMA_RECEIVER_URL="http://127.0.0.1:$port"
   export TAMA_RECEIVER_URL
-  python3 "$PLUGIN_ROOT/backends/remote/receiver.py" --host 127.0.0.1 --port "$port" \
+  env -u TAMA_REMOTE_TOKEN python3 "$PLUGIN_ROOT/backends/remote/receiver.py" \
+    --host 127.0.0.1 --port "$port" \
     --terminal-notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier" "$@" \
     >/dev/null 2>&1 &
   TAMA_REMOTE_SERVER_PID=$!
@@ -843,6 +852,20 @@ assert_notifier_flag() { # <flag> <expected>
   health="$(curl -s "$TAMA_RECEIVER_URL/health")"
   assert_equal "$(python3 -c 'import json, sys; print(json.load(sys.stdin)["ok"])' <<<"$health")" 'True'
   assert_equal "$(python3 -c 'import json, sys; print(json.load(sys.stdin)["notifier"])' <<<"$health")" 'terminal-notifier'
+}
+
+@test "a leaked developer token does not gate the test receiver" {
+  # The documented setup exports TAMA_REMOTE_TOKEN in shell init, so a
+  # developer shell leaks it into every test process. A receiver booted
+  # without --token must stay open despite that, or every no-token test
+  # fails locally while CI stays green.
+  export TAMA_REMOTE_TOKEN='developer-shell-token'
+  start_real_receiver
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    --data-binary '{"title":"t","message":"m"}'
+  assert_success
+  assert_equal "$output" '200'
 }
 
 @test "the receiver guards dismissal like the backend does" {

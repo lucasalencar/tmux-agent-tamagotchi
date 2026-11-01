@@ -20,6 +20,10 @@ setup() {
   : >"$TAMA_LAUNCHCTL_DIR/calls"
   unset TAMA_LAUNCHCTL_FAIL
 
+  # The documented setup exports TAMA_REMOTE_TOKEN in shell init; a leak here
+  # would stand in for generation instead of the installer minting a token.
+  unset TAMA_REMOTE_TOKEN
+
   export TEST_HOME="$BATS_TEST_TMPDIR/home"
   mkdir -p "$TEST_HOME"
 }
