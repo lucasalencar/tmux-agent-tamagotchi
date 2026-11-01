@@ -813,52 +813,23 @@ doctor_backend_named() { # <how it was named>
 # Which sending machine a forwarded banner names in its title. Explicit
 # configuration wins; an explicitly empty one draws without a prefix; when
 # never configured the short hostname is used so two tmux hosts sharing one
-# desktop stay distinguishable without configuration. The badge is read through
-# the shared builder, so this verdict names the exact prefix the banner draws.
+# desktop stay distinguishable without configuration.
 doctor_remote_origin() {
   local configured origin
   if configured="$(tmux_run show -gv @tama_remote_origin 2>/dev/null)"; then
-    if [ -z "$configured" ]; then
+    if [ -n "$configured" ]; then
+      doctor_ok "@tama_remote_origin is '$configured': forwarded titles start with [$configured]"
+    else
       doctor_ok '@tama_remote_origin is empty: forwarded titles draw without a prefix'
-      return 0
     fi
   else
     tama_remote_origin
     origin="$TAMA_REMOTE_ORIGIN"
-    if [ -z "$origin" ]; then
-      doctor_ok '@tama_remote_origin is unset and no hostname resolves: forwarded titles draw without a prefix'
-      return 0
-    fi
-  fi
-  tama_remote_title_badge
-  if [ -n "${configured:-}" ]; then
-    doctor_ok "@tama_remote_origin is '$configured': forwarded titles start with $TAMA_REMOTE_BADGE"
-  else
-    doctor_ok "@tama_remote_origin is unset: forwarded titles start with $TAMA_REMOTE_BADGE (short hostname)"
-  fi
-}
-
-# Which computer icon a forwarded banner pairs with the origin in its title.
-# Explicit configuration wins; an explicitly empty one draws the origin
-# without an icon; when never configured a default laptop is used. When the
-# origin draws no prefix the icon has nothing to pair with, and this says so.
-doctor_remote_origin_icon() {
-  local configured origin
-  tama_remote_origin
-  origin="$TAMA_REMOTE_ORIGIN"
-  if [ -z "$origin" ]; then
-    doctor_ok '@tama_remote_origin draws no prefix, so @tama_remote_origin_icon has no effect'
-    return 0
-  fi
-  if configured="$(tmux_run show -gv @tama_remote_origin_icon 2>/dev/null)"; then
-    if [ -n "$configured" ]; then
-      doctor_ok "@tama_remote_origin_icon is '$configured': forwarded titles pair [$configured] with the origin"
+    if [ -n "$origin" ]; then
+      doctor_ok "@tama_remote_origin is unset: forwarded titles start with [$origin] (short hostname)"
     else
-      doctor_ok '@tama_remote_origin_icon is empty: forwarded titles draw the origin without an icon'
+      doctor_ok '@tama_remote_origin is unset and no hostname resolves: forwarded titles draw without a prefix'
     fi
-  else
-    tama_remote_origin_icon
-    doctor_ok "@tama_remote_origin_icon is unset: forwarded titles pair [$TAMA_REMOTE_ORIGIN_ICON] with the origin"
   fi
 }
 
@@ -910,7 +881,6 @@ doctor_remote_receiver() {
   fi
 
   doctor_remote_origin
-  doctor_remote_origin_icon
   doctor_remote_timeout
   doctor_remote_probe
 }

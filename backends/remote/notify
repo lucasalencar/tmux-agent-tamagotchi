@@ -23,7 +23,7 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 main() {
-  local title="${1-}" message="${2-}" payload badge
+  local title="${1-}" message="${2-}" payload origin
 
   # A banner with nothing to say would only be a request started to say it. The core
   # does not send one; a user's own caller might.
@@ -31,13 +31,13 @@ main() {
 
   # The sending machine stays visible where the banner lands: a local banner and a
   # forwarded one would otherwise be indistinguishable on the showing computer.
-  tama_remote_title_badge
-  badge="$TAMA_REMOTE_BADGE"
-  if [ -n "$badge" ]; then
+  tama_remote_origin
+  origin="$TAMA_REMOTE_ORIGIN"
+  if [ -n "$origin" ]; then
     if [ -n "$title" ]; then
-      title="$badge $title"
+      title="[$origin] $title"
     else
-      title="$badge"
+      title="[$origin]"
     fi
   fi
 

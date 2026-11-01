@@ -57,10 +57,6 @@ TAMA_REMOTE_CURL_DIRS='/opt/homebrew/bin /usr/local/bin /usr/bin'
 TAMA_REMOTE_TIMEOUT_DEFAULT='5'
 TAMA_REMOTE_TIMEOUT_MAX='300'
 
-# The computer icon drawn next to the origin in remote banner titles when
-# `@tama_remote_origin_icon` is never configured.
-TAMA_REMOTE_ORIGIN_ICON_DEFAULT='💻'
-
 # The status for "this capability does not exist here". 127 is what a shell reports
 # for a command it could not find, which is exactly what happened.
 TAMA_BACKEND_UNSUPPORTED=127
@@ -265,42 +261,6 @@ tama_remote_origin() {
     TAMA_REMOTE_ORIGIN="$configured"
   else
     TAMA_REMOTE_ORIGIN="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
-  fi
-  return 0
-}
-
-# The computer icon drawn next to the origin in remote banner titles, in
-# TAMA_REMOTE_ORIGIN_ICON. Explicit configuration wins; an explicitly empty
-# one draws the origin without an icon; when never configured a default laptop
-# is used so the badge reads the same everywhere without configuration.
-# Always succeeds.
-# shellcheck disable=SC2034  # TAMA_REMOTE_ORIGIN_ICON is read by the caller
-tama_remote_origin_icon() {
-  TAMA_REMOTE_ORIGIN_ICON="$(tama_opt tama_remote_origin_icon \
-    "$TAMA_REMOTE_ORIGIN_ICON_DEFAULT")"
-  return 0
-}
-
-# The `[icon origin]` badge prepended to remote banner titles, in
-# TAMA_REMOTE_BADGE. Empty when no badge is drawn — an empty origin disables
-# the whole badge, icon included — rather than failing a turn. The one owner
-# of the badge join, shared by the backend drawing it and the diagnostics
-# describing it.
-# shellcheck disable=SC2034  # TAMA_REMOTE_BADGE is read by the caller
-tama_remote_title_badge() {
-  local origin icon
-  tama_remote_origin
-  origin="$TAMA_REMOTE_ORIGIN"
-  if [ -z "$origin" ]; then
-    TAMA_REMOTE_BADGE=''
-    return 0
-  fi
-  tama_remote_origin_icon
-  icon="$TAMA_REMOTE_ORIGIN_ICON"
-  if [ -n "$icon" ]; then
-    TAMA_REMOTE_BADGE="[$icon $origin]"
-  else
-    TAMA_REMOTE_BADGE="[$origin]"
   fi
   return 0
 }
