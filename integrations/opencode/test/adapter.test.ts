@@ -15,7 +15,7 @@ describe("OpenCode event adapter", () => {
       properties: { info: { id: "child-a", parentID: "root-a" } },
     })).resolves.toEqual({
       status: "adapted",
-      event: { type: "session-created", sessionId: "child-a", kind: "delegated" },
+      event: { type: "session-created", sessionId: "child-a", kind: "delegated", parentId: "root-a" },
     })
     await expect(adapter.adapt({
       type: "session.created",
@@ -34,6 +34,7 @@ describe("OpenCode event adapter", () => {
         sessionId: "child-a",
         kind: "delegated",
         status: "busy",
+        parentId: "root-a",
       },
     })
   })
@@ -224,10 +225,47 @@ describe("OpenCode event adapter", () => {
       properties: { info: { id: "child-a", parentID: "root-a" } },
     })).resolves.toEqual({
       status: "adapted",
-      event: { type: "session-deleted", sessionId: "child-a", kind: "delegated" },
+      event: { type: "session-deleted", sessionId: "child-a", kind: "delegated", parentId: "root-a" },
     })
     sessions.delete("child-a")
     await expect(adapter.adapt(statusEvent("child-a"))).resolves.toEqual({ status: "malformed" })
+  })
+
+  test("attributes delegated permission and error events to their owning root", async () => {
+    const adapter = createEventAdapter({
+      lookupSession: async (sessionId) => sessionId === "child-a"
+        ? { id: "child-a", parentID: "root-a" }
+        : sessionId === "root-a"
+          ? { id: "root-a" }
+          : undefined,
+    })
+
+    await expect(adapter.adapt({
+      type: "permission.asked",
+      properties: { id: "request-a", sessionID: "child-a" },
+    })).resolves.toEqual({
+      status: "adapted",
+      event: {
+        type: "permission-asked",
+        requestId: "request-a",
+        sessionId: "child-a",
+        kind: "delegated",
+        parentId: "root-a",
+      },
+    })
+    await expect(adapter.adapt({
+      type: "session.error",
+      properties: { sessionID: "child-a", error: { message: "delegated failed" } },
+    })).resolves.toEqual({
+      status: "adapted",
+      event: {
+        type: "session-error",
+        sessionId: "child-a",
+        kind: "delegated",
+        message: "delegated failed",
+        parentId: "root-a",
+      },
+    })
   })
 
   test("distinguishes unknown event types from malformed known events", async () => {

@@ -124,7 +124,10 @@ export function createTmuxAgentTamagotchiPluginV2(
       },
       notify: (message, completion) => runner.notify(
         message,
-        completion.correlationId ? { correlationId: completion.correlationId } : undefined,
+        {
+          agentId: completion.agentId,
+          ...(completion.correlationId ? { correlationId: completion.correlationId } : {}),
+        },
       ),
     })
 
@@ -190,6 +193,9 @@ async function resyncV2(
     const waitTimeoutMs = options.waitTimeoutMs ?? RESYNC_WAIT_MS
     type KnownSession = { parentID?: unknown; directory?: string }
     const byId = new Map<string, KnownSession>()
+    // Only a fully consumed snapshot may drop agent entries: resyncing from
+    // a truncated page would mistake live agents for ghosts.
+    let complete = true
     if (typeof session.list === "function") {
       let cursor: string | undefined
       for (let page = 0; page < RESYNC_LIST_MAX_PAGES; page += 1) {
@@ -201,6 +207,9 @@ async function resyncV2(
               : { limit: RESYNC_LIST_LIMIT, ...(cursor !== undefined ? { cursor } : {}) },
           )
         } catch {
+          // A failed page leaves sessions behind it unread: the snapshot is
+          // partial, so it may seed but must never drop agent entries.
+          complete = false
           break
         }
         const { items, next } = unwrapSessionPage(raw)
@@ -210,6 +219,7 @@ async function resyncV2(
         }
         if (next === undefined) break
         cursor = next
+        if (page === RESYNC_LIST_MAX_PAGES - 1) complete = false
       }
     }
     if (byId.size === 0) return
@@ -236,7 +246,13 @@ async function resyncV2(
         statuses.set(sessionId, "idle")
       }
     }))
-    const permissions: Array<{ requestId: string; sessionId: string; kind: "root" | "delegated"; directory?: string }> = []
+    const permissions: Array<{
+      requestId: string
+      sessionId: string
+      kind: "root" | "delegated"
+      parentId?: string
+      directory?: string
+    }> = []
     const listPermission = ctx.permission?.list
     if (typeof listPermission === "function") {
       for (const [sessionId, sessionInfo] of Array.from(byId)) {
@@ -245,6 +261,9 @@ async function resyncV2(
         // pin the pane to waiting with no presence to clear it.
         const kind = kindFromParentId(sessionInfo.parentID)
         if (!kind) continue
+        const parent = kind === "delegated" && typeof sessionInfo.parentID === "string" && sessionInfo.parentID
+          ? { parentId: sessionInfo.parentID }
+          : {}
         try {
           const raw = await listPermission({ sessionID: sessionId }).catch(() => undefined)
           for (const requestId of unwrapPermissionIds(raw)) {
@@ -252,6 +271,7 @@ async function resyncV2(
               requestId,
               sessionId,
               kind,
+              ...parent,
               ...(directory !== undefined ? { directory } : {}),
             })
           }
@@ -260,21 +280,26 @@ async function resyncV2(
         }
       }
     }
-    const events = buildResyncEvents(
-      Array.from(byId).flatMap(([sessionId, sessionInfo]) => {
-        const kind = kindFromParentId(sessionInfo.parentID)
-        if (!kind) return []
-        return [
-          {
-            sessionId,
-            kind,
-            status: statuses.get(sessionId) ?? ("idle" as const),
-            ...(directory !== undefined ? { directory } : {}),
-          },
-        ]
-      }),
-      permissions,
-    )
+    const seeds = Array.from(byId).flatMap(([sessionId, sessionInfo]) => {
+      const kind = kindFromParentId(sessionInfo.parentID)
+      if (!kind) return []
+      const parent = kind === "delegated" && typeof sessionInfo.parentID === "string" && sessionInfo.parentID
+        ? { parentId: sessionInfo.parentID }
+        : {}
+      return [
+        {
+          sessionId,
+          kind,
+          status: statuses.get(sessionId) ?? ("idle" as const),
+          ...parent,
+          ...(directory !== undefined ? { directory } : {}),
+        },
+      ]
+    })
+    const events = buildResyncEvents(seeds, permissions)
+    if (complete) {
+      await runtime.reconcileAgents(seeds.flatMap((session) => session.kind === "root" ? [session.sessionId] : []))
+    }
     if (events.length > 0) await runtime.resync(events)
   } catch {
     // Resync must never break plugin setup.

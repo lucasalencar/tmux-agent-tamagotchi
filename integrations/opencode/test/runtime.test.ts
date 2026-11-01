@@ -96,7 +96,9 @@ describe("OpenCode runtime", () => {
     await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined])
     expect(effects).toEqual([
       { type: "pane-state", state: "running" },
+      { type: "agent-state", agentId: "root-a", state: "running" },
       { type: "pane-state", state: "waiting" },
+      { type: "agent-state", agentId: "root-a", state: "waiting" },
     ])
   })
 
@@ -127,7 +129,9 @@ describe("OpenCode runtime", () => {
     await expect(Promise.all([running, waiting])).resolves.toEqual([undefined, undefined])
     expect(attempted).toEqual([
       { type: "pane-state", state: "running" },
+      { type: "agent-state", agentId: "root-a", state: "running" },
       { type: "pane-state", state: "waiting" },
+      { type: "agent-state", agentId: "root-a", state: "waiting" },
     ])
 
     await expect(runtime.dispose()).resolves.toBeUndefined()
@@ -195,12 +199,13 @@ describe("OpenCode runtime", () => {
       type: "permission.asked",
       properties: { id: "late-request", sessionID: "root-a" },
     })
-    expect(log).toEqual(["state:idle", "state:error", "cancel-late-work"])
+    expect(log).toEqual(["state:idle", "agent-state", "state:error", "cancel-late-work"])
 
     releaseErrorEffect.resolve()
     await expect(Promise.all([admitted, late, disposal])).resolves.toEqual([undefined, undefined, undefined])
     expect(log).toEqual([
       "state:idle",
+      "agent-state",
       "state:error",
       "cancel-late-work",
       "cancel-late-work",
@@ -228,8 +233,9 @@ describe("OpenCode runtime", () => {
     await runtime.dispose()
 
     expect(log).toEqual([
-      "subagent-start:child-a",
-      "subagent-stop:child-a",
+      "agent-state",
+      "agent-subagent-start",
+      "agent-subagent-stop",
       "clear",
     ])
   })
@@ -273,8 +279,11 @@ describe("OpenCode runtime", () => {
 
     expect(effects).toEqual([
       { type: "pane-state", state: "idle" },
-      { type: "subagent-start", sessionId: "child-a" },
+      { type: "agent-state", agentId: "root-a", state: "idle" },
+      { type: "agent-subagent-start", agentId: "root-a", subagentId: "child-a" },
       { type: "pane-state", state: "waiting" },
+      { type: "agent-state", agentId: "root-a", state: "waiting" },
+      { type: "agent-clear", agentId: "root-a" },
       { type: "pane-state", state: "idle" },
       { type: "subagent-stop", sessionId: "child-a" },
     ])
@@ -293,8 +302,8 @@ describe("OpenCode runtime", () => {
     await runtime.resync([
       { type: "session-created", sessionId: "root-a", kind: "root" },
       { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
-      { type: "session-created", sessionId: "child-a", kind: "delegated" },
-      { type: "session-status", sessionId: "child-a", kind: "delegated", status: "busy" },
+      { type: "session-created", sessionId: "child-a", kind: "delegated", parentId: "root-a" },
+      { type: "session-status", sessionId: "child-a", kind: "delegated", status: "busy", parentId: "root-a" },
       { type: "permission-asked", requestId: "request-a", sessionId: "root-a", kind: "root" },
     ])
 
@@ -302,9 +311,12 @@ describe("OpenCode runtime", () => {
     // completion-eligible for work the seed never observed finishing.
     expect(effects).toEqual([
       { type: "pane-state", state: "idle" },
+      { type: "agent-state", agentId: "root-a", state: "idle" },
       { type: "pane-state", state: "running" },
-      { type: "subagent-start", sessionId: "child-a" },
+      { type: "agent-state", agentId: "root-a", state: "running" },
+      { type: "agent-subagent-start", agentId: "root-a", subagentId: "child-a" },
       { type: "pane-state", state: "waiting" },
+      { type: "agent-state", agentId: "root-a", state: "waiting" },
     ])
   })
 
@@ -348,8 +360,11 @@ describe("OpenCode runtime", () => {
     await expect(Promise.all([resynced, live])).resolves.toEqual([undefined, undefined])
     expect(effects).toEqual([
       { type: "pane-state", state: "idle" },
+      { type: "agent-state", agentId: "root-a", state: "idle" },
       { type: "pane-state", state: "running" },
+      { type: "agent-state", agentId: "root-a", state: "running" },
       { type: "pane-state", state: "idle" },
+      { type: "agent-state", agentId: "root-a", state: "idle" },
     ])
   })
 
@@ -373,7 +388,9 @@ describe("OpenCode runtime", () => {
 
     expect(attempted).toEqual([
       { type: "pane-state", state: "idle" },
+      { type: "agent-state", agentId: "root-a", state: "idle" },
       { type: "pane-state", state: "running" },
+      { type: "agent-state", agentId: "root-a", state: "running" },
     ])
   })
 

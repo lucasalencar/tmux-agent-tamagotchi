@@ -11,7 +11,7 @@ describe("completion scheduler", () => {
   test("notifies with the exact visible response five seconds after eligible completion", async () => {
     const clock = new FakeClock()
     const notifications: string[] = []
-    const lookups: Array<{ sessionId: string; messageId: string }> = []
+    const lookups: Array<{ agentId: string; sessionId: string; messageId: string }> = []
     const scheduler = createScheduler({
       clock,
       lookupMessage: async (completion) => {
@@ -25,12 +25,12 @@ describe("completion scheduler", () => {
       },
     })
 
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(4_999)
     expect(notifications).toEqual([])
 
     await clock.advance(1)
-    expect(lookups).toEqual([{ sessionId: "root-a", messageId: "message-a" }])
+    expect(lookups).toEqual([{ agentId: "root-a", sessionId: "root-a", messageId: "message-a" }])
     expect(notifications).toEqual(["Finished **safely**."])
   })
 
@@ -47,9 +47,9 @@ describe("completion scheduler", () => {
       },
     })
 
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(4_900)
-    scheduler.handle({ type: "pane-state", state: "running" })
+    scheduler.handle({ type: "agent-state", agentId: "root-a", state: "running" })
     await clock.advance(5_000)
 
     expect(notifications).toEqual([])
@@ -70,16 +70,18 @@ describe("completion scheduler", () => {
 
     scheduler.handle({
       type: "completion-eligible",
+      agentId: "root-a",
       sessionId: "root-a",
       messageId: "message-old",
     })
     await clock.advance(2_500)
-    scheduler.handle({ type: "pane-state", state: "running" })
+    scheduler.handle({ type: "agent-state", agentId: "root-a", state: "running" })
     await clock.advance(5_000)
     expect(notifications).toEqual([])
 
     scheduler.handle({
       type: "completion-eligible",
+      agentId: "root-a",
       sessionId: "root-a",
       messageId: "message-new",
     })
@@ -104,9 +106,9 @@ describe("completion scheduler", () => {
       },
     })
 
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(4_900)
-    scheduler.handle({ type: "subagent-start", sessionId: "child-a" })
+    scheduler.handle({ type: "agent-subagent-start", agentId: "root-a", subagentId: "child-a" })
     await clock.advance(5_000)
 
     expect(notifications).toEqual([])
@@ -125,9 +127,9 @@ describe("completion scheduler", () => {
       },
     })
 
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(2_500)
-    scheduler.handle({ type: "pane-state", state: "idle" })
+    scheduler.handle({ type: "agent-state", agentId: "root-a", state: "idle" })
     await clock.advance(2_499)
     expect(notifications).toEqual([])
     await clock.advance(1)
@@ -147,7 +149,7 @@ describe("completion scheduler", () => {
       },
     })
 
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(4_999)
     expect(notifications).toEqual([])
     await clock.advance(1)
@@ -170,7 +172,7 @@ describe("completion scheduler", () => {
       },
     })
 
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(1_999)
     lookup.resolve(message("root-a", "message-a", [{ type: "text", text: "just in time" }]))
     await clock.advance(3_001)
@@ -199,7 +201,7 @@ describe("completion scheduler", () => {
       },
     })
 
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(5_000)
 
     expect(notifications).toEqual(["First **visible** line\nSecond\tline"])
@@ -234,7 +236,7 @@ describe("completion scheduler", () => {
       },
     })
 
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(5_000)
 
     expect(notifications).toEqual(["OpenCode finished its turn"])
@@ -254,7 +256,7 @@ describe("completion scheduler", () => {
       },
     })
 
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(5_000)
 
     const [notification] = notifications
@@ -264,7 +266,7 @@ describe("completion scheduler", () => {
     expect(notification.endsWith("word")).toBe(true)
   })
 
-  test("a newer concurrent completion owns the pane generation", async () => {
+  test("concurrent completions for different agents notify independently", async () => {
     const clock = new FakeClock()
     const firstLookup = deferred<MessageResponse | undefined>()
     const notifications: string[] = []
@@ -278,15 +280,21 @@ describe("completion scheduler", () => {
       },
     })
 
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    // Neither agent's turn cancels the other's pending completion.
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(1_000)
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-b", messageId: "message-b" })
-    firstLookup.resolve(message("root-a", "message-a", [{ type: "text", text: "stale result" }]))
-    await clock.advance(4_999)
+    scheduler.handle({ type: "agent-state", agentId: "root-b", state: "running" })
+    firstLookup.resolve(message("root-a", "message-a", [{ type: "text", text: "first result" }]))
+    await clock.advance(3_999)
     expect(notifications).toEqual([])
     await clock.advance(1)
 
-    expect(notifications).toEqual(["second result"])
+    expect(notifications).toEqual(["first result"])
+
+    scheduler.handle({ type: "completion-eligible", agentId: "root-b", sessionId: "root-b", messageId: "message-b" })
+    await clock.advance(5_000)
+
+    expect(notifications).toEqual(["first result", "second result"])
   })
 
   test("rechecks pane activity immediately before running an admitted notification", async () => {
@@ -306,14 +314,37 @@ describe("completion scheduler", () => {
       },
     })
 
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(5_000)
     expect(admitted).toHaveLength(1)
 
-    scheduler.handle({ type: "pane-state", state: "running" })
+    scheduler.handle({ type: "agent-state", agentId: "root-a", state: "running" })
     await admitted[0]()
 
     expect(notifications).toEqual([])
+  })
+
+  test("legacy aggregate effects do not cancel a pending agent completion", async () => {
+    const clock = new FakeClock()
+    const notifications: string[] = []
+    const scheduler = createScheduler({
+      clock,
+      lookupMessage: async () => message("root-a", "message-a", [
+        { type: "text", text: "done" },
+      ]),
+      notify: async (text) => {
+        notifications.push(text)
+      },
+    })
+
+    // The legacy twin of an agent transition rides the same FIFO; only the
+    // agent-scoped one may cancel its own agent's completion.
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "pane-state", state: "running" })
+    scheduler.handle({ type: "subagent-start", sessionId: "child-a" })
+    await clock.advance(5_000)
+
+    expect(notifications).toEqual(["done"])
   })
 
   test("disposal cancels timers and suppresses late lookup work", async () => {
@@ -328,11 +359,32 @@ describe("completion scheduler", () => {
       },
     })
 
-    scheduler.handle({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await clock.advance(1_999)
     scheduler.dispose()
     lookup.resolve(message("root-a", "message-a", [{ type: "text", text: "too late" }]))
     await clock.advance(20_000)
+
+    expect(notifications).toEqual([])
+  })
+
+  test("clearing an agent cancels its pending completion", async () => {
+    const clock = new FakeClock()
+    const notifications: string[] = []
+    const scheduler = createScheduler({
+      clock,
+      lookupMessage: async () => message("root-a", "message-a", [
+        { type: "text", text: "stale completion" },
+      ]),
+      notify: async (text) => {
+        notifications.push(text)
+      },
+    })
+
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
+    await clock.advance(4_900)
+    scheduler.handle({ type: "agent-clear", agentId: "root-a" })
+    await clock.advance(5_000)
 
     expect(notifications).toEqual([])
   })
@@ -351,14 +403,14 @@ describe("completion scheduler", () => {
     })
 
     scheduler.handle(
-      { type: "completion-eligible", sessionId: "root-a", messageId: "message-a" },
+      { type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" },
       { correlationId: "oc-1" },
     )
     await clock.advance(10_000)
 
     expect(notified).toEqual([{
       text: "done",
-      completion: { sessionId: "root-a", messageId: "message-a", correlationId: "oc-1" },
+      completion: { agentId: "root-a", sessionId: "root-a", messageId: "message-a", correlationId: "oc-1" },
     }])
   })
 })

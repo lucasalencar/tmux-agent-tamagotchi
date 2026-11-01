@@ -340,14 +340,14 @@ describe("v2 flat events", () => {
       data: { sessionID: "child-a" },
     })).toEqual({
       status: "adapted",
-      event: { type: "session-status", sessionId: "child-a", kind: "delegated", status: "busy" },
+      event: { type: "session-status", sessionId: "child-a", kind: "delegated", status: "busy", parentId: "root-a" },
     })
     expect(await adapter.adapt({
       type: "session.tool.called",
       data: { sessionID: "child-a" },
     })).toEqual({
       status: "adapted",
-      event: { type: "session-status", sessionId: "child-a", kind: "delegated", status: "busy" },
+      event: { type: "session-status", sessionId: "child-a", kind: "delegated", status: "busy", parentId: "root-a" },
     })
   })
 
@@ -404,7 +404,7 @@ describe("v2 flat events", () => {
     })
     expect(await delegated.adapt({ type: "session.idle", data: { sessionID: "child-a" } })).toEqual({
       status: "adapted",
-      event: { type: "session-status", sessionId: "child-a", kind: "delegated", status: "idle" },
+      event: { type: "session-status", sessionId: "child-a", kind: "delegated", status: "idle", parentId: "root-a" },
     })
   })
 
@@ -458,6 +458,49 @@ describe("v2 flat events", () => {
     })).toEqual({
       status: "adapted",
       event: { type: "session-error", sessionId: "root-a", kind: "root", message: "Blew up." },
+    })
+  })
+
+  test("attributes delegated permission, failure, and deletion to the inline parent", async () => {
+    const adapter = createEventAdapterV2({
+      lookupSession: async () => {
+        throw new Error("inline parent IDs need no lookup")
+      },
+    })
+
+    await adapter.adapt({ type: "session.created", data: { sessionID: "child-a", parentID: "root-a" } })
+    expect(await adapter.adapt({
+      type: "permission.asked",
+      data: { id: "request-a", sessionID: "child-a" },
+    })).toEqual({
+      status: "adapted",
+      event: {
+        type: "permission-asked",
+        requestId: "request-a",
+        sessionId: "child-a",
+        kind: "delegated",
+        parentId: "root-a",
+      },
+    })
+    expect(await adapter.adapt({
+      type: "session.execution.failed",
+      data: { sessionID: "child-a", error: { message: "delegated blew up" } },
+    })).toEqual({
+      status: "adapted",
+      event: {
+        type: "session-error",
+        sessionId: "child-a",
+        kind: "delegated",
+        message: "delegated blew up",
+        parentId: "root-a",
+      },
+    })
+    expect(await adapter.adapt({
+      type: "session.deleted",
+      data: { sessionID: "child-a" },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-deleted", sessionId: "child-a", kind: "delegated", parentId: "root-a" },
     })
   })
 

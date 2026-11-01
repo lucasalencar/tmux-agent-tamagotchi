@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 #
-# dismiss — take down the banner a window has pending.
+# dismiss [--agent <agent_id>] [--pane <pane_id>] [<window_target>] — take down
+# the banner a window has pending. With --agent only that agent's banner goes
+# down; without it the legacy banner and every agent banner go down, so
+# acknowledgement by navigation clears the whole window at once.
 #
-#   tama dismiss [--pane <pane_id>] [<window_target>]
+#   tama dismiss [--agent <agent_id>] [--pane <pane_id>] [<window_target>]
 #
 # The user arriving at a window is what normally calls this, through `tama
 # on-select`: notification centre should not accumulate things already dealt with.
@@ -23,7 +26,41 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 main() {
-  tama_optional_window_target dismiss "$@"
+  local agent='' pane='' target='' positional=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --agent)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--agent needs an agent id'
+        fi
+        [ -z "$agent" ] || die_usage '--agent may only be given once'
+        agent="$2"
+        shift 2
+        ;;
+      --pane)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--pane needs a pane id'
+        fi
+        pane="$2"
+        shift 2
+        ;;
+      -*) die_usage "unknown option: $1" ;;
+      *)
+        positional=$((positional + 1))
+        [ "$positional" -eq 1 ] || die_usage "dismiss takes at most one target, got: $1"
+        [ -n "$1" ] || die_usage "dismiss needs a window target"
+        target="$1"
+        shift
+        ;;
+    esac
+  done
+  if [ -n "$agent" ]; then
+    tama_agent_id_is_valid "$agent" ||
+      die_usage "an agent id may only hold letters, digits, dot, underscore, and dash: $agent"
+  fi
+
+  # shellcheck disable=SC2034  # read by the caller after parsing
+  TAMA_WINDOW_TARGET="${target:-${pane:-${TMUX_PANE:-}}}"
   if [ -z "$TAMA_WINDOW_TARGET" ]; then
     tama_log_command_result skipped
     exit 0
@@ -40,7 +77,7 @@ main() {
     tama_log_command_result skipped
     exit 0
   fi
-  tama_notify_dismiss
+  tama_notify_dismiss "$agent"
   tama_log_command_result "$TAMA_NOTIFY_DISMISS_STATUS"
 }
 

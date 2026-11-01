@@ -5,8 +5,11 @@
 # editor or pager opened by a live agent; only an allowlisted shell confirms it.
 
 # tmux performs the comparisons so free-form command names cannot shift fields.
-# The fourth digit also exposes residue on panes that have no main state.
-TAMA_STALE_READ_FORMAT='#{pane_id} #{window_id} #{?@tama_pane_state_main,1,0}#{?@tama_pane_cmd,1,0}#{==:#{@tama_pane_cmd},#{pane_current_command}}#{?#{@tama_pane_subagents}#{@tama_pane_cmd}#{@tama_pane_agent}#{@tama_pane_cwd}#{@tama_pane_label},1,0} #{pane_current_command}'
+# The fourth digit also exposes residue on panes that have no main state. Agent
+# entries get their own fifth digit rather than joining that concatenation:
+# the encoded record holds literal commas, which would split the #{?,,}
+# conditional apart.
+TAMA_STALE_READ_FORMAT='#{pane_id} #{window_id} #{?@tama_pane_state_main,1,0}#{?@tama_pane_cmd,1,0}#{==:#{@tama_pane_cmd},#{pane_current_command}}#{?#{@tama_pane_subagents}#{@tama_pane_cmd}#{@tama_pane_agent}#{@tama_pane_cwd}#{@tama_pane_label},1,0}#{?@tama_pane_agents,1,0} #{pane_current_command}'
 
 # Only a known shell is evidence that the agent returned to a prompt.
 TAMA_STALE_SHELLS_DEFAULT='sh bash zsh fish dash ksh mksh ash csh tcsh'
@@ -78,14 +81,16 @@ _tama_stale_sweep() { # <list-panes …>
     current="${flags#* }"
     flags="${flags%% *}"
 
-    # Flags: main state, snapshot, snapshot match, and any plugin residue.
+    # Flags: main state, snapshot, snapshot match, any plugin residue, and any
+    # agent entry. The agent digit is separate because the encoded record holds
+    # literal commas, which would split a #{?,,} conditional apart.
     case "$flags" in
-      0??0) continue ;;
+      0???00) continue ;;
       # Residue without state cannot heal because the pane draws no icon.
-      0??1) ;;
-      111?) continue ;;
+      0??1?|0???1) ;;
+      111??) continue ;;
       # A mismatch is stale only when the pane has returned to a known shell.
-      1???) tama_stale_is_shell "$current" || continue ;;
+      1????) tama_stale_is_shell "$current" || continue ;;
       # Malformed records must not clear a possibly live agent.
       *) continue ;;
     esac

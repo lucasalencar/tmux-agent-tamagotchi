@@ -59,7 +59,19 @@ tama_icons_query() { # <window>
   done <<EOF
 $TAMA_ICON_OPTIONS
 EOF
-  set -- "$@" ';' list-panes -t "$target" -F "$TAMA_PANE_RENDER_FORMAT"
+  set -- "$@" ';' list-panes -t "$target" -F '#{pane_id} #{@tama_pane_state_main} #{@tama_pane_subagents}'
+  # Agent entries ride a second pane listing in the same round trip, joined by
+  # pane id below. They cannot join the render format above: the flat subagent
+  # list holds arbitrary ids, so no separator reliably tells where it ends and
+  # an encoded record begins. An unset option expands empty, which reads back
+  # as a bare pane id.
+  # Agent entries ride a second pane listing in the same round trip, joined by
+  # pane id below. They cannot join the render format above: the flat subagent
+  # list holds arbitrary ids, so no separator reliably tells where it ends and
+  # an encoded record begins. An unset option expands empty, which reads back
+  # as a bare pane id.
+  set -- "$@" ';' display-message -p -t "$target" "$TAMA_ICONS_MARKER"
+  set -- "$@" ';' list-panes -t "$target" -F '#{pane_id} #{@tama_pane_agents}'
 
   tmux_run "$@" 2>/dev/null
 }
@@ -171,7 +183,12 @@ main() {
 
   tama_icons_defaults
 
-  local line mark='' index=0 found=0 pending='' icons=''
+  # Pane lines accumulate during the parse and render afterwards: the agent
+  # block arrives after the legacy block, and a pane draws its agents when it
+  # has any, its legacy state otherwise. Joining is by pane id, not position,
+  # so a pane that closes mid-read cannot shift every attribution after it.
+  local line mark='' index=0 found=0 pending='' icons='' phase='config'
+  local legacy_panes='' agent_panes=''
   # A here-document rather than a pipe: a pipe would put this loop in a subshell,
   # and this command exists to run without forking. Taking a pane's record apart
   # is the library's job, so the field order is stated in one place.
@@ -179,38 +196,119 @@ main() {
   # A configuration value with a newline in it arrives as several lines and the
   # last one wins; the markers mean it cannot shift anything else.
   while IFS= read -r line; do
-    if [ "$index" -ge "$TAMA_ICON_OPTION_COUNT" ]; then
-      tama_pane_derive_record "$line"
-      tama_icons_glyph "$TAMA_PANE_DERIVED"
-      # A pane with nothing to draw contributes no separator either.
-      [ -n "$TAMA_ICON_GLYPH" ] || continue
-      icons="${icons:+$icons$TAMA_ICON_SEPARATOR}$TAMA_ICON_GLYPH"
-      continue
-    fi
+    if [ "$phase" = config ]; then
+      if [ "$index" -ge "$TAMA_ICON_OPTION_COUNT" ]; then
+        phase='legacy'
+      else
+        if [ -z "$mark" ]; then
+          # An empty marker is a window that is gone: tmux says so by expanding
+          # #{window_id} to nothing rather than by failing.
+          mark="$line"
+          [ -n "$mark" ] || exit 0
+          continue
+        fi
 
-    if [ -z "$mark" ]; then
-      # An empty marker is a window that is gone: tmux says so by expanding
-      # #{window_id} to nothing rather than by failing.
-      mark="$line"
-      [ -n "$mark" ] || exit 0
-      continue
+        if [ "$line" = "$mark" ]; then
+          tama_icons_take "$index" "$found" "$pending"
+          index=$((index + 1))
+          found=0
+          pending=''
+          # Everything after the last option is a pane, so the glyphs have to be
+          # settled before the next line arrives.
+          if [ "$index" -lt "$TAMA_ICON_OPTION_COUNT" ]; then
+            continue
+          fi
+          tama_icons_resolve
+          phase='legacy'
+          continue
+        fi
+
+        pending="$line"
+        found=1
+        continue
+      fi
     fi
 
     if [ "$line" = "$mark" ]; then
-      tama_icons_take "$index" "$found" "$pending"
-      index=$((index + 1))
-      found=0
-      pending=''
-      # Everything after the last option is a pane, so the glyphs have to be
-      # settled before the next line arrives.
-      [ "$index" -lt "$TAMA_ICON_OPTION_COUNT" ] || tama_icons_resolve
+      # The second marker ends the legacy pane block and starts the agent
+      # block. A pane line can never equal the marker: pane ids start with
+      # `%` and legacy states come from a fixed set.
+      phase='agents'
       continue
     fi
 
-    pending="$line"
-    found=1
+    if [ "$phase" = legacy ]; then
+      legacy_panes="${legacy_panes:+$legacy_panes
+}$line"
+    else
+      agent_panes="${agent_panes:+$agent_panes
+}$line"
+    fi
   done <<EOF
 $raw
+EOF
+
+  local pane_id pane_record agent_record derived pane_glyphs rest entry
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    pane_id="${line%% *}"
+    if [ "$pane_id" = "$line" ]; then
+      pane_record=''
+    else
+      pane_record="${line#* }"
+    fi
+    agent_record=''
+    rest="$agent_panes"
+    while [ -n "$rest" ]; do
+      entry="${rest%%$'\n'*}"
+      if [ "$entry" = "$rest" ]; then rest=''; else rest="${rest#*$'\n'}"; fi
+      case "$entry" in
+        "$pane_id"|"$pane_id "*)
+          if [ "$entry" = "$pane_id" ]; then
+            agent_record=''
+          else
+            agent_record="${entry#* }"
+          fi
+          break
+          ;;
+      esac
+    done
+    pane_glyphs=''
+    if [ -n "$agent_record" ]; then
+      derived="$(tama_agents_display "$agent_record" 2>/dev/null)" || derived=''
+      if [ -n "$derived" ]; then
+        local state
+        set -f
+        # shellcheck disable=SC2086 # deliberate: derived states are single words
+        for state in $derived; do
+          tama_icons_glyph "$state"
+          [ -n "$TAMA_ICON_GLYPH" ] || continue
+          pane_glyphs="${pane_glyphs:+$pane_glyphs$TAMA_ICON_SEPARATOR}$TAMA_ICON_GLYPH"
+        done
+        set +f
+      fi
+    fi
+    if [ -z "$pane_glyphs" ]; then
+      if [ -n "$agent_record" ]; then
+        # A malformed agent record draws nothing rather than a neighbour's
+        # bytes; the legacy half still owns this pane when it has a state.
+        tama_pane_derive_record "$pane_record"
+        if [ -n "$TAMA_PANE_STATE_MAIN" ]; then
+          tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS"
+          tama_icons_glyph "$TAMA_PANE_DERIVED"
+          [ -n "$TAMA_ICON_GLYPH" ] && pane_glyphs="$TAMA_ICON_GLYPH"
+        fi
+      else
+        tama_pane_derive_record "$pane_record"
+        tama_icons_glyph "$TAMA_PANE_DERIVED"
+        [ -n "$TAMA_ICON_GLYPH" ] && pane_glyphs="$TAMA_ICON_GLYPH"
+      fi
+    fi
+    # A pane with nothing to draw contributes no separator either.
+    [ -n "$pane_glyphs" ] || continue
+    icons="${icons:+$icons$TAMA_ICON_SEPARATOR}$pane_glyphs"
+  done <<EOF
+$legacy_panes
 EOF
 
   # The prefix exists only when there is something to separate from the window

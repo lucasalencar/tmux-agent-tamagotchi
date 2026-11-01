@@ -65,10 +65,13 @@ describe("wired plugin", () => {
     ])
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "waiting", "OpenCode"],
+      ["/plugin/bin/tama", "state", "waiting", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
-      ["/plugin/bin/tama", "state", "subagent-start", "--", "child;not shell"],
-      ["/plugin/bin/tama", "state", "subagent-stop", "--", "child;not shell"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
+      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "root-a", "--", "child;not shell"],
+      ["/plugin/bin/tama", "state", "subagent-stop", "--agent", "root-a", "--", "child;not shell"],
       ["/plugin/bin/tama", "state", "clear"],
     ])
   })
@@ -123,10 +126,12 @@ describe("wired plugin", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
     ])
     await clock.advance(4_999)
-    expect(tamaCalls(commandCalls)).toHaveLength(2)
+    expect(tamaCalls(commandCalls)).toHaveLength(4)
     await clock.advance(1)
 
     expect(clientCalls).toEqual([
@@ -144,8 +149,10 @@ describe("wired plugin", () => {
     ])
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
-      ["/plugin/bin/tama", "notify", "--", "OpenCode", "Delivered from the SDK."],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
+      ["/plugin/bin/tama", "notify", "--agent", "root-a", "--", "OpenCode", "Delivered from the SDK."],
     ])
   })
 
@@ -187,12 +194,14 @@ describe("wired plugin", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
     ])
     await clock.advance(5_000)
 
     expect(tamaCalls(commandCalls)).toContainEqual([
-      "/plugin/bin/tama", "notify", "--", "OpenCode", "Finished without an idle event.",
+      "/plugin/bin/tama", "notify", "--agent", "root-a", "--", "OpenCode", "Finished without an idle event.",
     ])
   })
 
@@ -235,12 +244,14 @@ describe("wired plugin", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
     ])
     await clock.advance(5_000)
 
     expect(tamaCalls(commandCalls)).toContainEqual([
-      "/plugin/bin/tama", "notify", "--", "OpenCode", "Still finished.",
+      "/plugin/bin/tama", "notify", "--agent", "root-a", "--", "OpenCode", "Still finished.",
     ])
   })
 
@@ -279,12 +290,14 @@ describe("wired plugin", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
     ])
     await clock.advance(5_000)
 
     expect(tamaCalls(commandCalls)).toContainEqual([
-      "/plugin/bin/tama", "notify", "--", "OpenCode", "Recovered from the session.",
+      "/plugin/bin/tama", "notify", "--agent", "root-a", "--", "OpenCode", "Recovered from the session.",
     ])
   })
 
@@ -331,12 +344,14 @@ describe("wired plugin", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "clear"],
     ])
   })
 
-  test("activity from another root invalidates the pane-level completion", async () => {
+  test("activity from another root leaves its own completion alone", async () => {
     const clock = new FakeClock()
     const commandCalls: string[][] = []
     const plugin = createTmuxAgentTamagotchiPlugin({
@@ -371,14 +386,20 @@ describe("wired plugin", () => {
       } as never,
     })
     await hooks.event?.({ event: statusEvent("root-a", "idle") as never })
+    // Another root getting busy neither cancels root-a's pending completion
+    // nor stops its banner from arriving on schedule.
     await clock.advance(4_900)
     await hooks.event?.({ event: statusEvent("root-b", "busy") as never })
     await clock.advance(5_000)
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-b"],
+      ["/plugin/bin/tama", "notify", "--agent", "root-a", "--", "OpenCode", "root A finished"],
     ])
   })
 
@@ -416,9 +437,11 @@ describe("wired plugin", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
-      ["/plugin/bin/tama", "state", "subagent-start", "--", "child-a"],
-      ["/plugin/bin/tama", "state", "subagent-stop", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
+      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "root-a", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "subagent-stop", "--agent", "root-a", "--", "child-a"],
     ])
   })
 
@@ -450,7 +473,7 @@ describe("wired plugin", () => {
     await completeTurn(hooks, "root-a", "message-a")
     await clock.advance(5_000)
     expect(tamaCalls(commandCalls).at(-1)).toEqual([
-      "/plugin/bin/tama", "notify", "--", "OpenCode", "finished",
+      "/plugin/bin/tama", "notify", "--agent", "root-a", "--", "OpenCode", "finished",
     ])
     await notificationStarted.promise
 
@@ -461,7 +484,7 @@ describe("wired plugin", () => {
     releaseNotification.resolve()
     await activity
     expect(tamaCalls(commandCalls).at(-1)).toEqual([
-      "/plugin/bin/tama", "state", "running", "OpenCode",
+      "/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-b",
     ])
   })
 
@@ -534,11 +557,16 @@ describe("wired plugin", () => {
       },
     ))
 
-    // Presence, then activity, then delegated tracking — before any live event.
+    // Reconcile drops ghosts, then presence, then activity, then delegated
+    // tracking on its owning agent — before any live event.
     expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--", "root-a", "root-idle"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
-      ["/plugin/bin/tama", "state", "subagent-start", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
+      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "root-a", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-idle"],
     ])
 
     // Later live events order behind the seed: the turn ending returns to idle
@@ -546,11 +574,16 @@ describe("wired plugin", () => {
     await hooks.event?.({ event: statusEvent("child-a", "idle") as never })
     await hooks.event?.({ event: statusEvent("root-a", "idle") as never })
     expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--", "root-a", "root-idle"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
-      ["/plugin/bin/tama", "state", "subagent-start", "--", "child-a"],
-      ["/plugin/bin/tama", "state", "subagent-stop", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
+      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "root-a", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-idle"],
+      ["/plugin/bin/tama", "state", "subagent-stop", "--agent", "root-a", "--", "child-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
     ])
     await hooks.dispose?.()
   })
@@ -591,11 +624,14 @@ describe("wired plugin", () => {
       },
     ))
 
-    // child-b is absent from the list but busy, so it is resolved and tracked;
-    // the foreign sessions never reach tama despite being busy.
+    // child-b is absent from the list but busy, so it is resolved and tracked
+    // on its owning agent; the foreign sessions never reach tama despite
+    // being busy.
     expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--", "root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
-      ["/plugin/bin/tama", "state", "subagent-start", "--", "child-b"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
+      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "root-a", "--", "child-b"],
     ])
     await hooks.dispose?.()
   })
@@ -621,10 +657,13 @@ describe("wired plugin", () => {
     ))
 
     // An empty list must not skip the status snapshot: the busy session still
-    // re-establishes presence and activity.
+    // re-establishes presence and activity, for its own agent as well.
     expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--", "root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a"],
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
     ])
     await hooks.dispose?.()
   })
@@ -648,6 +687,7 @@ describe("wired plugin", () => {
     await hooks.event?.({ event: statusEvent("root-a", "busy") as never })
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a"],
     ])
     await hooks.dispose?.()
   })

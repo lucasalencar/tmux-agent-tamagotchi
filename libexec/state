@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 #
-#   tama state <running|waiting|idle|error|clear> [agent_name] [--pane <pane_id>]
-#   tama state subagent-start <id> [--pane <pane_id>]
-#   tama state subagent-stop  <id> [--pane <pane_id>]
-#   tama state subagent-reconcile [<id>…] [--pane <pane_id>]
+#   tama state <running|waiting|idle|error|clear> [agent_name] [--agent <agent_id>] [--pane <pane_id>]
+#   tama state subagent-start <id> [--agent <agent_id>] [--pane <pane_id>]
+#   tama state subagent-stop  <id> [--agent <agent_id>] [--pane <pane_id>]
+#   tama state subagent-reconcile [<id>…] [--agent <agent_id>] [--pane <pane_id>]
+#   tama state agent-reconcile [<agent-id>…] [--pane <pane_id>]
 #
 # Agent names are sticky, unknown states are ignored for forward compatibility,
 # and attention states raise their flag on every event rather than only on changes.
+#
+# With --agent, the report addresses one entry of the pane's agent record instead
+# of the pane's single legacy state: each entry keeps its own main state and its
+# own subagent list, and the pane draws one icon per entry. Without --agent,
+# everything behaves exactly as before, and a pane with no agent entries is
+# untouched by the agent paths.
 
 set -o nounset
 
@@ -124,7 +131,7 @@ clear_pane() {
   # Nothing of ours is on this pane, so there is nothing to unset — which is what
   # keeps clearing a pane that never ran an agent free of a write and of the read
   # per option that asking one at a time would cost.
-  local trace="$TAMA_PANE_STATE_MAIN$TAMA_PANE_SUBAGENTS$TAMA_PANE_CMD"
+  local trace="$TAMA_PANE_STATE_MAIN$TAMA_PANE_SUBAGENTS$TAMA_PANE_AGENTS$TAMA_PANE_CMD"
   trace="$trace$TAMA_PANE_AGENT$TAMA_PANE_CWD"
   if [ -z "$trace" ]; then
     [ "$logging" = no ] || tama_log_state_decision clear_state skipped \
@@ -430,8 +437,370 @@ check_subagent_id() { # <verb> <id>
   esac
 }
 
+# Agent ids travel inside option names and the encoded agent record, so the
+# rule is stricter than the subagent one: only letters, digits, dot,
+# underscore, and dash survive both intact.
+check_agent_reconcile_id() { # <id>
+  [ -n "$1" ] || die_usage 'agent-reconcile needs an agent id'
+  tama_agent_id_is_valid "$1" ||
+    die_usage "an agent id may only hold letters, digits, dot, underscore, and dash: $1"
+}
+
+# Reports one agent entry's main state, registering the entry on first sight.
+# Mirrors report(): the same snapshot is staged, only a changed display redraws
+# every client, and waiting/error raise the flag on the event, not the write.
+agent_report() { # <pane> <agent> <state> <name>
+  local pane="$1" agent="$2" state_main="$3" name="$4" refresh='no'
+  local state_before_derived='' state_after_derived logged_after_main outcome reason subagent_count=0
+  if ! tama_pane_read "$pane"; then
+    tama_log_command_result skipped
+    exit 0
+  fi
+
+  if [ -n "${TAMA_LOG_FILE:-}" ]; then
+    logged_after_main="$state_main"
+    state_before_derived="$(tama_pane_agent_display "$TAMA_PANE_AGENTS" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")"
+    tama_subagents_count "$TAMA_PANE_SUBAGENTS"
+    subagent_count="$TAMA_SUBAGENTS_COUNT"
+  fi
+
+  local record
+  record="$(tama_agents_set_state "$TAMA_PANE_AGENTS" "$agent" "$state_main")" || {
+    tama_log_command_result failed
+    exit 0
+  }
+  state_after_derived="$(tama_pane_agent_display "$record" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")"
+  tama_pane_display_changed "$state_before_derived" "$state_after_derived" && refresh='yes'
+
+  local snapshot_cmd="$TAMA_PANE_CURRENT_CMD" snapshot_cwd="$TAMA_PANE_CURRENT_PATH"
+  tama_pane_value_is_storable "$snapshot_cmd" || snapshot_cmd=''
+  tama_pane_value_is_storable "$snapshot_cwd" || snapshot_cwd=''
+
+  tama_batch_reset
+  tama_pane_stage "$TAMA_PANE_ID" agents "$record" "$TAMA_PANE_AGENTS"
+  tama_pane_stage "$TAMA_PANE_ID" cmd "$snapshot_cmd" "$TAMA_PANE_CMD"
+  tama_pane_stage "$TAMA_PANE_ID" agent "${name:-$TAMA_PANE_AGENT}" "$TAMA_PANE_AGENT"
+  tama_pane_stage "$TAMA_PANE_ID" cwd "$snapshot_cwd" "$TAMA_PANE_CWD"
+  tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID" || true
+
+  if [ -n "${TAMA_LOG_FILE:-}" ]; then
+    outcome="$TAMA_BATCH_WRITE_STATUS"
+    reason=''
+    case "$outcome" in
+      skipped) reason=pane_record_unchanged ;;
+      failed)
+        reason=write_pane_record_failed
+        logged_after_main="$TAMA_PANE_STATE_MAIN"
+        state_after_derived="$state_before_derived"
+        ;;
+    esac
+    tama_log_state_decision report_state "$outcome" "$reason" "$TAMA_PANE_ID" \
+      "$TAMA_PANE_WINDOW_ID" "$TAMA_PANE_STATE_MAIN" "$state_before_derived" \
+      "$subagent_count" "$logged_after_main" "$state_after_derived" "$subagent_count"
+  fi
+
+  # Deliberately after the flush and outside it, like the legacy path: the flag
+  # answers to the *event*, and an agent already in `waiting` that asks again
+  # stages nothing above.
+  case "$state_main" in
+    waiting | error)
+      TAMA_FLAG_WRITE_STATUS=''
+      tama_flag_raise_automatic "$TAMA_PANE_ID"
+      if [ -n "${TAMA_LOG_FILE:-}" ] && [ -n "$TAMA_FLAG_WRITE_STATUS" ]; then
+        tama_log_effect effect.completed flag_write "e-$$-${RANDOM:-0}" \
+          "$TAMA_FLAG_WRITE_STATUS" '' ''
+      fi
+      ;;
+  esac
+}
+
+# Removes one agent entry. When the entry is absent there is nothing to unset;
+# when the record empties and no other trace is left, the pane is
+# indistinguishable from one that never ran an agent — the same rule clear
+# itself follows.
+agent_clear() { # <pane> <agent>
+  local pane="$1" agent="$2" refresh='no' logging=no before_derived='' before_count=0
+  if ! tama_pane_read "$pane"; then
+    tama_log_command_result skipped
+    exit 0
+  fi
+  if [ -n "${TAMA_LOG_FILE:-}" ]; then
+    logging=yes
+    before_derived="$(tama_pane_agent_display "$TAMA_PANE_AGENTS" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")"
+    tama_subagents_count "$TAMA_PANE_SUBAGENTS"
+    before_count="$TAMA_SUBAGENTS_COUNT"
+  fi
+
+  local record after_derived
+  record="$(tama_agents_remove "$TAMA_PANE_AGENTS" "$agent")" || {
+    tama_log_command_result failed
+    exit 0
+  }
+  if [ "$record" = "$TAMA_PANE_AGENTS" ]; then
+    [ "$logging" = no ] || tama_log_state_decision clear_state skipped \
+      pane_record_unchanged "$TAMA_PANE_ID" "$TAMA_PANE_WINDOW_ID" \
+      "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count" \
+      "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count"
+    return 0
+  fi
+  after_derived="$(tama_pane_agent_display "$record" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")"
+  tama_pane_display_changed "$before_derived" "$after_derived" && refresh='yes'
+
+  tama_batch_reset
+  tama_pane_stage "$TAMA_PANE_ID" agents "$record" "$TAMA_PANE_AGENTS"
+  tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID" || true
+  if [ "$logging" = yes ]; then
+    if [ "$TAMA_BATCH_WRITE_STATUS" = applied ]; then
+      tama_log_state_decision clear_state applied '' "$TAMA_PANE_ID" \
+        "$TAMA_PANE_WINDOW_ID" "$TAMA_PANE_STATE_MAIN" "$before_derived" \
+        "$before_count" '' '' 0
+    else
+      tama_log_state_decision clear_state failed write_pane_record_failed \
+        "$TAMA_PANE_ID" "$TAMA_PANE_WINDOW_ID" "$TAMA_PANE_STATE_MAIN" \
+        "$before_derived" "$before_count" "$TAMA_PANE_STATE_MAIN" \
+        "$before_derived" "$before_count"
+    fi
+  fi
+}
+
+# Adds or removes a subagent id on one agent entry, with the same optimistic
+# read-modify-write as the flat list: verify our own slice on read-back, retry
+# a bounded number of times, and never resurrect an entry a clear or a
+# reconcile took away while this call was in flight.
+agent_subagent() { # <pane> <agent> <verb> <id>
+  local target="$1" agent="$2" verb="$3" id="$4" attempt=1 wanted was refresh
+  local entry_subs new_subs
+  local before_count=0 after_count=0 before_derived='' logging=no
+  [ -n "${TAMA_LOG_FILE:-}" ] && logging=yes
+  while :; do
+    if ! tama_pane_read "$target"; then
+      tama_log_command_result skipped
+      exit 0
+    fi
+    target="$TAMA_PANE_ID"
+    was="$(tama_pane_agent_display "$TAMA_PANE_AGENTS" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")"
+    if [ "$logging" = yes ]; then
+      before_derived="$was"
+      tama_subagents_count "$TAMA_PANE_SUBAGENTS"
+      before_count="$TAMA_SUBAGENTS_COUNT"
+    fi
+
+    entry_subs="$(tama_agents_subs "$TAMA_PANE_AGENTS" "$agent")" || entry_subs=''
+    # Stopping an id on an entry that is not there is a no-op, like the flat list.
+    if [ "$verb" = subagent-stop ] && ! tama_agents_has "$TAMA_PANE_AGENTS" "$agent"; then
+      [ "$logging" = no ] || tama_log_subagent_attempt skipped \
+        subagent_state_unchanged "$attempt" "$target" "$TAMA_PANE_WINDOW_ID" \
+        '' "$before_derived" "$before_count" '' "$before_derived" "$before_count"
+      return 0
+    fi
+
+    case "$verb" in
+      subagent-start)
+        tama_subagents_add "$entry_subs" "$id"
+        new_subs="$TAMA_SUBAGENTS_NEW"
+        ;;
+      subagent-stop)
+        tama_subagents_remove "$entry_subs" "$id"
+        new_subs="$TAMA_SUBAGENTS_NEW"
+        ;;
+    esac
+    wanted="$(tama_agents_set_subs "$TAMA_PANE_AGENTS" "$agent" "$new_subs")" || {
+      tama_log_command_result failed
+      return 0
+    }
+
+    refresh='no'
+    tama_pane_display_changed "$was" "$(tama_pane_agent_display "$wanted" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")" && refresh='yes'
+
+    tama_batch_reset
+    tama_pane_stage "$target" agents "$wanted" "$TAMA_PANE_AGENTS"
+    if ! tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID"; then
+      [ "$logging" = no ] || tama_log_subagent_attempt skipped \
+        subagent_state_unchanged "$attempt" "$target" "$TAMA_PANE_WINDOW_ID" \
+        '' "$before_derived" "$before_count" '' "$before_derived" "$before_count"
+      return 0
+    fi
+
+    if [ "$TAMA_BATCH_WRITE_STATUS" = failed ]; then
+      [ "$logging" = no ] || tama_log_subagent_attempt failed \
+        write_pane_record_failed "$attempt" "$target" '' '' \
+        "$before_derived" "$before_count" '' "$before_derived" "$before_count"
+      return 0
+    fi
+
+    if ! tama_pane_read "$target"; then
+      [ "$logging" = no ] || tama_log_subagent_attempt failed \
+        read_pane_state_failed "$attempt" "$target" '' '' \
+        "$before_derived" "$before_count" '' "$before_derived" "$before_count"
+      return 0
+    fi
+
+    # The entry vanishing under this write means a clear or a reconcile took it
+    # away: standing down is the only move that does not resurrect it.
+    if ! tama_agents_has "$TAMA_PANE_AGENTS" "$agent"; then
+      [ "$logging" = no ] || tama_log_subagent_attempt skipped pane_cleared "$attempt" "$target" \
+        "$TAMA_PANE_WINDOW_ID" '' "$before_derived" \
+        "$before_count" '' "$before_derived" "$before_count"
+      return 0
+    fi
+
+    entry_subs="$(tama_agents_subs "$TAMA_PANE_AGENTS" "$agent")" || entry_subs=''
+    if [ "$verb" = subagent-start ]; then
+      if tama_subagents_contains "$entry_subs" "$id"; then settled=yes; else settled=no; fi
+    else
+      if tama_subagents_contains "$entry_subs" "$id"; then settled=no; else settled=yes; fi
+    fi
+    if [ "$settled" = yes ]; then
+      [ "$refresh" = 'yes' ] ||
+        ! tama_pane_display_changed "$was" "$(tama_pane_agent_display "$TAMA_PANE_AGENTS" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")" ||
+        tama_summary_refresh_window "$TAMA_PANE_WINDOW_ID"
+      if [ "$logging" = yes ]; then
+        tama_subagents_count "$TAMA_PANE_SUBAGENTS"
+        after_count="$TAMA_SUBAGENTS_COUNT"
+        tama_log_subagent_attempt applied '' "$attempt" "$target" \
+          "$TAMA_PANE_WINDOW_ID" '' "$before_derived" \
+          "$before_count" '' "$before_derived" "$after_count"
+      fi
+      return 0
+    fi
+
+    attempt=$((attempt + 1))
+    if [ "$attempt" -gt "$TAMA_SUBAGENT_ATTEMPTS" ]; then
+      [ "$logging" = no ] || tama_log_subagent_attempt failed retries_exhausted "$TAMA_SUBAGENT_ATTEMPTS" \
+        "$target" "$TAMA_PANE_WINDOW_ID" '' "$before_derived" \
+        "$before_count" '' "$before_derived" "$before_count"
+      return 0
+    fi
+    [ "$logging" = no ] || tama_log_subagent_attempt skipped write_conflict "$((attempt - 1))" "$target" \
+      "$TAMA_PANE_WINDOW_ID" '' "$before_derived" \
+      "$before_count" '' "$before_derived" "$before_count"
+    sleep "$TAMA_SUBAGENT_RETRY_DELAY" 2>/dev/null || true
+  done
+}
+
+# Replaces one entry's subagent list with an authoritative snapshot, without
+# weakening the stop of an unknown id into an arbitrary decrement. An unknown
+# agent is left alone: a reconcile describes what is live, and inventing an
+# entry for it would draw attention to nothing.
+agent_reconcile_subs() { # <pane> <agent> <space-separated-live-ids>
+  local pane="$1" agent="$2" reconcile_list="$3" refresh='no' was='' wanted=''
+  local before_derived='' before_count=0 logging=no
+  [ -n "${TAMA_LOG_FILE:-}" ] && logging=yes
+  if ! tama_pane_read "$pane"; then
+    tama_log_command_result skipped
+    exit 0
+  fi
+  pane="$TAMA_PANE_ID"
+  was="$(tama_pane_agent_display "$TAMA_PANE_AGENTS" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")"
+  if [ "$logging" = yes ]; then
+    before_derived="$was"
+    tama_subagents_count "$TAMA_PANE_SUBAGENTS"
+    before_count="$TAMA_SUBAGENTS_COUNT"
+  fi
+  if ! tama_agents_has "$TAMA_PANE_AGENTS" "$agent"; then
+    [ "$logging" = no ] || tama_log_state_decision reconcile_subagents skipped \
+      subagent_state_unchanged "$pane" "$TAMA_PANE_WINDOW_ID" \
+      "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count" \
+      "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count"
+    return 0
+  fi
+  local id subs=''
+  set -f
+  # shellcheck disable=SC2086 # deliberate: the reconcile list is space separated
+  for id in $reconcile_list; do
+    check_subagent_id subagent-reconcile "$id"
+    tama_subagents_add "$subs" "$id"
+    subs="$TAMA_SUBAGENTS_NEW"
+  done
+  set +f
+  wanted="$(tama_agents_set_subs "$TAMA_PANE_AGENTS" "$agent" "$subs")" || {
+    tama_log_command_result failed
+    return 0
+  }
+  tama_pane_display_changed "$was" "$(tama_pane_agent_display "$wanted" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")" && refresh='yes'
+
+  tama_batch_reset
+  tama_pane_stage "$pane" agents "$wanted" "$TAMA_PANE_AGENTS"
+  if ! tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID"; then
+    [ "$logging" = no ] || tama_log_state_decision reconcile_subagents skipped \
+      subagent_state_unchanged "$pane" "$TAMA_PANE_WINDOW_ID" \
+      "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count" \
+      "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count"
+    return 0
+  fi
+  if [ "$logging" = yes ]; then
+    if [ "$TAMA_BATCH_WRITE_STATUS" = applied ]; then
+      tama_log_state_decision reconcile_subagents applied '' "$pane" \
+        "$TAMA_PANE_WINDOW_ID" "$TAMA_PANE_STATE_MAIN" "$before_derived" \
+        "$before_count" "$TAMA_PANE_STATE_MAIN" \
+        "$(tama_pane_agent_display "$wanted" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")" "$before_count"
+    else
+      tama_log_state_decision reconcile_subagents failed write_pane_record_failed \
+        "$pane" "$TAMA_PANE_WINDOW_ID" "$TAMA_PANE_STATE_MAIN" "$before_derived" \
+        "$before_count" "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count"
+    fi
+  fi
+}
+
+# Replaces the agent set with an authoritative snapshot: listed ids survive
+# with state and subagents intact, anything else is dropped. Nothing listed
+# empties the record. Ghost healing for integrations that can enumerate their
+# live agents; integrations that cannot keep using explicit unregister.
+agent_reconcile() { # <pane> <space-separated-live-ids>
+  local pane="$1" reconcile_list="$2" refresh='no' was='' wanted=''
+  local before_derived='' before_count=0 logging=no
+  [ -n "${TAMA_LOG_FILE:-}" ] && logging=yes
+  if ! tama_pane_read "$pane"; then
+    tama_log_command_result skipped
+    exit 0
+  fi
+  pane="$TAMA_PANE_ID"
+  was="$(tama_pane_agent_display "$TAMA_PANE_AGENTS" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")"
+  if [ "$logging" = yes ]; then
+    before_derived="$was"
+    tama_subagents_count "$TAMA_PANE_SUBAGENTS"
+    before_count="$TAMA_SUBAGENTS_COUNT"
+  fi
+  local id
+  set -f
+  # shellcheck disable=SC2086 # deliberate: the reconcile list is space separated
+  for id in $reconcile_list; do
+    check_agent_reconcile_id "$id"
+  done
+  # shellcheck disable=SC2086 # deliberate: word splitting is the point here
+  wanted="$(tama_agents_prune "$TAMA_PANE_AGENTS" $reconcile_list)" || {
+    set +f
+    tama_log_command_result failed
+    return 0
+  }
+  set +f
+  tama_pane_display_changed "$was" "$(tama_pane_agent_display "$wanted" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")" && refresh='yes'
+
+  tama_batch_reset
+  tama_pane_stage "$pane" agents "$wanted" "$TAMA_PANE_AGENTS"
+  if ! tama_batch_flush "$refresh" "$TAMA_PANE_WINDOW_ID"; then
+    [ "$logging" = no ] || tama_log_state_decision agent_reconcile skipped \
+      pane_record_unchanged "$pane" "$TAMA_PANE_WINDOW_ID" \
+      "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count" \
+      "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count"
+    return 0
+  fi
+  if [ "$logging" = yes ]; then
+    if [ "$TAMA_BATCH_WRITE_STATUS" = applied ]; then
+      tama_log_state_decision agent_reconcile applied '' "$pane" \
+        "$TAMA_PANE_WINDOW_ID" "$TAMA_PANE_STATE_MAIN" "$before_derived" \
+        "$before_count" "$TAMA_PANE_STATE_MAIN" \
+        "$(tama_pane_agent_display "$wanted" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")" "$before_count"
+    else
+      tama_log_state_decision agent_reconcile failed write_pane_record_failed \
+        "$pane" "$TAMA_PANE_WINDOW_ID" "$TAMA_PANE_STATE_MAIN" "$before_derived" \
+        "$before_count" "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count"
+    fi
+  fi
+}
+
 main() {
-  local pane='' state='' argument='' reconcile='' positional=0
+  local pane='' agent='' state='' argument='' reconcile='' reconcile_agents='' positional=0
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -440,6 +809,13 @@ main() {
           die_usage '--pane needs a pane id'
         fi
         pane="$2"
+        shift 2
+        ;;
+      --agent)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--agent needs an agent id'
+        fi
+        agent="$2"
         shift 2
         ;;
       --)
@@ -455,6 +831,9 @@ main() {
                 check_subagent_id "$state" "$1"
                 tama_subagents_add "$reconcile" "$1"
                 reconcile="$TAMA_SUBAGENTS_NEW"
+              elif [ "$state" = 'agent-reconcile' ]; then
+                check_agent_reconcile_id "$1"
+                reconcile_agents="${reconcile_agents:+$reconcile_agents }$1"
               else
                 argument="$1"
               fi
@@ -463,7 +842,11 @@ main() {
               if [ "$state" = 'subagent-reconcile' ]; then
                 check_subagent_id "$state" "$1"
                 tama_subagents_add "$reconcile" "$1"
+                tama_subagents_add "$reconcile" "$1"
                 reconcile="$TAMA_SUBAGENTS_NEW"
+              elif [ "$state" = 'agent-reconcile' ]; then
+                check_agent_reconcile_id "$1"
+                reconcile_agents="${reconcile_agents:+$reconcile_agents }$1"
               else
                 die_usage "state takes at most two arguments, got: $1"
               fi
@@ -482,6 +865,9 @@ main() {
               check_subagent_id "$state" "$1"
               tama_subagents_add "$reconcile" "$1"
               reconcile="$TAMA_SUBAGENTS_NEW"
+            elif [ "$state" = 'agent-reconcile' ]; then
+              check_agent_reconcile_id "$1"
+              reconcile_agents="${reconcile_agents:+$reconcile_agents }$1"
             else
               argument="$1"
             fi
@@ -491,6 +877,9 @@ main() {
               check_subagent_id "$state" "$1"
               tama_subagents_add "$reconcile" "$1"
               reconcile="$TAMA_SUBAGENTS_NEW"
+            elif [ "$state" = 'agent-reconcile' ]; then
+              check_agent_reconcile_id "$1"
+              reconcile_agents="${reconcile_agents:+$reconcile_agents }$1"
             else
               die_usage "state takes at most two arguments, got: $1"
             fi
@@ -505,6 +894,14 @@ main() {
   # variable, not a state from a version that does not exist yet.
   [ -n "$state" ] || die_usage 'state needs a state'
 
+  # Agent-scoped reports address one entry of the pane's agent record. The id
+  # is validated up front like every other shape: a value the record cannot
+  # hold would corrupt its neighbours.
+  if [ -n "$agent" ]; then
+    tama_agent_id_is_valid "$agent" ||
+      die_usage "an agent id may only hold letters, digits, dot, underscore, and dash: $agent"
+  fi
+
   # The shape of the call is checked before anything about the environment, because
   # a wrong hook must be loud wherever it runs, while the environment being wrong is
   # one of the quiet no-ops.
@@ -515,6 +912,9 @@ main() {
       check_storable "an agent name" "$argument"
       ;;
     subagent-start | subagent-stop) check_subagent_id "$state" "$argument" ;;
+    agent-reconcile)
+      [ -z "$agent" ] || die_usage 'agent-reconcile takes no --agent; it replaces the whole agent set'
+      ;;
   esac
 
   # --pane overrides the pane the hook happens to run in, which wrappers lose and
@@ -524,10 +924,35 @@ main() {
   [ -n "$pane" ] || exit 0
 
   case "$state" in
-    running | waiting | idle | error) report "$pane" "$state" "$argument" ;;
-    clear) clear_pane "$pane" ;;
-    subagent-start | subagent-stop) subagent "$pane" "$state" "$argument" ;;
-    subagent-reconcile) reconcile_subagents "$pane" "$reconcile" ;;
+    running | waiting | idle | error)
+      if [ -n "$agent" ]; then
+        agent_report "$pane" "$agent" "$state" "$argument"
+      else
+        report "$pane" "$state" "$argument"
+      fi
+      ;;
+    clear)
+      if [ -n "$agent" ]; then
+        agent_clear "$pane" "$agent"
+      else
+        clear_pane "$pane"
+      fi
+      ;;
+    subagent-start | subagent-stop)
+      if [ -n "$agent" ]; then
+        agent_subagent "$pane" "$agent" "$state" "$argument"
+      else
+        subagent "$pane" "$state" "$argument"
+      fi
+      ;;
+    subagent-reconcile)
+      if [ -n "$agent" ]; then
+        agent_reconcile_subs "$pane" "$agent" "$reconcile"
+      else
+        reconcile_subagents "$pane" "$reconcile"
+      fi
+      ;;
+    agent-reconcile) agent_reconcile "$pane" "$reconcile_agents" ;;
     # Not a state this version knows. Quiet on purpose: agents grow event types, and
     # a hook written for a newer plugin has to stay silent on an older one rather
     # than fail the turn it is reporting on.

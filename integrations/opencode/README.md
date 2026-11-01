@@ -109,24 +109,30 @@ lenient and are processed as before.
 
 ## What it reports
 
-The plugin tracks every root session observed by one OpenCode instance and reduces them into the
-pane state with the precedence `waiting > error > running > idle`:
+The plugin tracks every root session observed by one OpenCode instance. Each root owns
+one agent entry, addressed by its session id (`tama state … --agent <session-id>`); a
+pane draws one icon per entry and counts one line per entry in the summary. The legacy
+pane-state aggregate is still reported alongside with the precedence
+`waiting > error > running > idle`, so `tama list` rows, which are per pane, keep working
+untouched. Deleting a root unregisters only its entry (`agent-clear`); resync reconciles
+the pane's agent set against the snapshot before seeding, so sessions deleted while the
+plugin was down do not pin their last state.
 
 | OpenCode lifecycle | tmux-agent-tamagotchi behavior |
 | --- | --- |
 | Root session created | Sets the pane to `idle`, showing that OpenCode is present. |
-| Root `busy` or `retry` | Sets that root to `running`; retry is not reported as failure. |
-| Root step, tool, text, or reasoning activity | Sets that root to `running`. This rescues turns whose execution start was missed (late subscribe after a service restart): any activity means the session is active now, while only the execution close may idle it again. Endings and terminal tool outcomes never idle the pane. |
-| Root `idle` or terminal assistant message | Sets that root to `idle`, unless its last attributed error is still active. The terminal message is a fallback for OpenCode versions or modes that do not emit an idle event. |
-| Permission asked | Sets the pane to `waiting`, including requests from delegated sessions. Concurrent requests remain independent. |
-| Permission replied | Removes only that request and recomputes the aggregate state. |
-| Attributed root error | Sets that root to persistent `error` and raises an error notification. A later `busy` or `retry`, or deleting the root, clears the error. |
-| Attributed delegated error | Stops only that subagent; it does not fail the root pane. |
-| Delegated `busy`/`retry` | Starts subagent tracking with the opaque OpenCode session id, allowing the core to derive `background`. |
+| Root `busy` or `retry` | Sets that root's entry to `running`; retry is not reported as failure. |
+| Root step, tool, text, or reasoning activity | Sets that root's entry to `running`. This rescues turns whose execution start was missed (late subscribe after a service restart): any activity means the session is active now, while only the execution close may idle it again. Endings and terminal tool outcomes never idle the pane. |
+| Root `idle` or terminal assistant message | Sets that root's entry to `idle`, unless its last attributed error is still active. The terminal message is a fallback for OpenCode versions or modes that do not emit an idle event. |
+| Permission asked | Sets the owning root's entry to `waiting`, including requests from delegated sessions. Concurrent requests remain independent. |
+| Permission replied | Removes only that request and recomputes the owning entry and the aggregate. |
+| Attributed root error | Sets that root's entry to persistent `error` and raises a per-agent error notification (`notify --agent`). A later `busy` or `retry`, or deleting the root, clears the error. |
+| Attributed delegated error | Stops only that subagent on its owning entry; it does not fail the root pane. |
+| Delegated `busy`/`retry` | Starts subagent tracking on the owning root's entry with the opaque OpenCode session id, allowing the core to derive `background`. Without a recoverable parent, falls back to pane-level tracking. |
 | Delegated step, tool, text, or reasoning activity | Starts subagent tracking like `busy`: any delegated activity means the subagent is active now. |
-| Delegated `idle`, error, or deletion | Stops that subagent id. Duplicate transitions are harmless. |
+| Delegated `idle`, error, or deletion | Stops that subagent id on its owning entry. Duplicate transitions are harmless. |
 | Session deletion | Removes only that session and its permission requests, then recomputes the remaining aggregate. |
-| OpenCode disposal | Drains admitted work, cancels pending completion work, stops tracked subagents, and clears the pane. |
+| OpenCode disposal | Drains admitted work, cancels pending completion work, stops tracked subagents per entry, and clears the pane. |
 
 Sessions are classified conservatively from `parentID`, using an exact SDK lookup when the event
 does not include session information. Unattributed errors and events whose session metadata cannot
@@ -167,13 +173,14 @@ before; hosts without the newer list/permission/wait methods simply resync less.
 
 ## Completion notifications
 
-An eligible successful turn sets the pane to `idle` immediately, then waits five seconds before
-raising its completion banner. A terminal assistant message with `finish: "stop"` is accepted as
+An eligible successful turn sets its entry to `idle` immediately, then waits five seconds before
+raising its completion banner per agent (`notify --agent`). A terminal assistant message with `finish: "stop"` is accepted as
 the completion signal when no idle event follows; `session.status idle` and `session.idle` remain
-supported as alternate signals. Duplicate idle events do not restart that delay. New root
-activity, permission attention, or a delegated/background session starting cancels the pending
-completion; a subagent's later stop does not resurrect it. This prevents a root completion from
-announcing that the pane is finished while delegated work is still running.
+supported as alternate signals. Duplicate idle events do not restart that delay. The completing
+agent's own later activity, permission attention, or one of its delegated/background sessions
+starting cancels its pending completion; another agent's activity does not. A subagent's later
+stop does not resurrect it. This prevents a root completion from
+announcing that the pane is finished while its own delegated work is still running.
 
 Only a terminal, non-compaction assistant message qualifies. The integration retrieves that exact
 message with a two-second bound and includes only its ordered, non-empty visible text parts. It

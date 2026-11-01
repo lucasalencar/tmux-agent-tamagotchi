@@ -74,10 +74,14 @@ Usage: tama <subcommand> [args]
 
 Commands:
   state <state> [name]  Set pane state: running, waiting, idle, error, or clear.
+                        With --agent <id>, report one per-agent entry instead.
   state subagent-start <id> / subagent-stop <id>
-                        Track a delegated run by opaque id.
+                        Track a delegated run by opaque id, pane-wide or per agent with --agent.
   state subagent-reconcile [<id>…]
                         Replace delegated runs from an authoritative snapshot.
+  state agent-reconcile [<agent-id>…]
+                        Replace the pane's agent set; drops entries not listed.
+  agents [--session <s>] List per-agent entries as stable, headerless TSV.
   icons <window_id>     Print pane-state icons in pane order.
   toggle-priority --window <target>
                         Toggle Priority for one explicit tmux window.
@@ -86,7 +90,9 @@ Commands:
   flag [target]         Mark a window. No-op for the current window.
   unflag [target]       Clear a window mark.
   notify <agent> <msg>  Request eligible Flag and Notification channels.
-  dismiss [target]      Dismiss a window notification.
+                        With --agent <id>, group the banner per (window, agent).
+  dismiss [--agent <id>] [target]
+                        Dismiss a window notification, or one agent's with --agent.
   focus-window <sess>   Focus the terminal showing a tmux session.
   list [--session <s>]  List agent panes as stable, headerless TSV.
   summary <session_id>  Count agent panes using that session's summary scope.

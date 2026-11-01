@@ -66,7 +66,7 @@ describe("tama effect runner", () => {
         ? { exitCode: 0, stdout: "/repo with spaces/bin/tama\n" }
         : { exitCode: 0, stdout: "" }
     }
-    const completions: Array<{ sessionId: string; messageId: string }> = []
+    const completions: Array<{ agentId: string; sessionId: string; messageId: string }> = []
     const runner = createEffectRunner({
       execute,
       onCompletionEligible: async (completion) => {
@@ -75,17 +75,17 @@ describe("tama effect runner", () => {
     })
 
     await runner.run({ type: "pane-state", state: "waiting" })
-    await runner.run({ type: "root-error", sessionId: "root-a", message: "provider failed" })
+    await runner.run({ type: "agent-error", agentId: "root-a", message: "provider failed" })
     await runner.run({ type: "subagent-start", sessionId: "child; touch /tmp/not-executed" })
     await runner.run({ type: "subagent-stop", sessionId: "-child" })
-    await runner.run({ type: "completion-eligible", sessionId: "root-a", messageId: "message-a" })
+    await runner.run({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await runner.clearPane()
 
     expect(calls).toEqual([
       ["tmux", "show", "-gqv", "@tama_bin"],
       ["/repo with spaces/bin/tama", "state", "waiting", "OpenCode"],
       ["tmux", "show", "-gqv", "@tama_bin"],
-      ["/repo with spaces/bin/tama", "notify", "--", "OpenCode", "provider failed"],
+      ["/repo with spaces/bin/tama", "notify", "--agent", "root-a", "--", "OpenCode", "provider failed"],
       ["tmux", "show", "-gqv", "@tama_bin"],
       ["/repo with spaces/bin/tama", "state", "subagent-start", "--", "child; touch /tmp/not-executed"],
       ["tmux", "show", "-gqv", "@tama_bin"],
@@ -93,7 +93,7 @@ describe("tama effect runner", () => {
       ["tmux", "show", "-gqv", "@tama_bin"],
       ["/repo with spaces/bin/tama", "state", "clear"],
     ])
-    expect(completions).toEqual([{ sessionId: "root-a", messageId: "message-a" }])
+    expect(completions).toEqual([{ agentId: "root-a", sessionId: "root-a", messageId: "message-a" }])
   })
 
   test("contains missing executables, malformed paths, process failures, and completion failures", async () => {
@@ -115,16 +115,17 @@ describe("tama effect runner", () => {
     })
 
     await expect(runner.run({ type: "pane-state", state: "running" })).resolves.toBeUndefined()
-    await expect(runner.run({ type: "root-error", sessionId: "root-a" })).resolves.toBeUndefined()
+    await expect(runner.run({ type: "agent-error", agentId: "root-a" })).resolves.toBeUndefined()
     await expect(runner.clearPane()).resolves.toBeUndefined()
     await expect(runner.run({
       type: "completion-eligible",
+      agentId: "root-a",
       sessionId: "root-a",
       messageId: "message-a",
     })).resolves.toBeUndefined()
   })
 
-  test("sanitizes and bounds root error banners with a safe fallback", async () => {
+  test("sanitizes and bounds agent error banners with a safe fallback", async () => {
     const calls: string[][] = []
     const runner = createEffectRunner({
       execute: async (argv) => {
@@ -136,12 +137,12 @@ describe("tama effect runner", () => {
     })
     const longError = `Provider failed\u0000\r\n${"detail ".repeat(100)}tail`
 
-    await runner.run({ type: "root-error", sessionId: "root-a", message: longError })
-    await runner.run({ type: "root-error", sessionId: "root-b", message: "\u0000\u0007 " })
+    await runner.run({ type: "agent-error", agentId: "root-a", message: longError })
+    await runner.run({ type: "agent-error", agentId: "root-b", message: "\u0000\u0007 " })
 
     const messages = calls
       .filter((argv) => argv[1] === "notify")
-      .map((argv) => argv[4])
+      .map((argv) => argv[argv.indexOf("--") + 2])
     expect(messages[0]).toStartWith("Provider failed\n")
     expect(messages[0]).not.toContain("\u0000")
     expect(Array.from(messages[0]).length).toBeLessThanOrEqual(500)
@@ -161,12 +162,12 @@ describe("tama effect runner", () => {
     })
 
     await runner.run({ type: "pane-state", state: "running" })
-    await runner.notify("Done.")
+    await runner.notify("Done.", { agentId: "root-a" })
     await runner.clearPane()
 
     expect(calls.filter((argv) => argv[0] !== "tmux")).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", "%pane-a"],
-      ["/plugin/bin/tama", "notify", "--pane", "%pane-a", "--", "OpenCode", "Done."],
+      ["/plugin/bin/tama", "notify", "--agent", "root-a", "--pane", "%pane-a", "--", "OpenCode", "Done."],
       ["/plugin/bin/tama", "state", "clear", "--pane", "%pane-a"],
     ])
 
@@ -188,13 +189,13 @@ describe("tama effect runner", () => {
     // notifications still go out unattributed.
     await fallback.run({ type: "pane-state", state: "running" })
     await fallback.run({ type: "subagent-start", sessionId: "child-a" })
-    await fallback.run({ type: "root-error", sessionId: "root-a", message: "boom" })
-    await fallback.notify("Done.")
+    await fallback.run({ type: "agent-error", agentId: "root-a", message: "boom" })
+    await fallback.notify("Done.", { agentId: "root-a" })
     await fallback.clearPane()
 
     expect(fallbackCalls.filter((argv) => argv[0] !== "tmux")).toEqual([
-      ["/plugin/bin/tama", "notify", "--", "OpenCode", "boom"],
-      ["/plugin/bin/tama", "notify", "--", "OpenCode", "Done."],
+      ["/plugin/bin/tama", "notify", "--agent", "root-a", "--", "OpenCode", "boom"],
+      ["/plugin/bin/tama", "notify", "--agent", "root-a", "--", "OpenCode", "Done."],
     ])
   })
 
@@ -215,6 +216,37 @@ describe("tama effect runner", () => {
     expect(calls.filter((argv) => argv[0] !== "tmux")).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
       ["/plugin/bin/tama", "state", "clear"],
+    ])
+  })
+
+  test("addresses per-agent effects at their own entry", async () => {
+    const calls: string[][] = []
+    const runner = createEffectRunner({
+      execute: async (argv) => {
+        calls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+      resolvePane: async () => "%pane-a",
+    })
+
+    await runner.run({ type: "agent-state", agentId: "root-a", state: "running" })
+    await runner.run({ type: "agent-subagent-start", agentId: "root-a", subagentId: "child-a" })
+    await runner.run({ type: "agent-subagent-stop", agentId: "root-a", subagentId: "child-a" })
+    await runner.run({ type: "agent-clear", agentId: "root-a" })
+    await runner.run({ type: "agents-reconcile", agentIds: ["root-a", "root-b"] })
+    await runner.run({ type: "agents-reconcile", agentIds: [] })
+    await runner.run({ type: "agent-error", agentId: "root-a", message: "boom" })
+
+    expect(calls.filter((argv) => argv[0] !== "tmux")).toEqual([
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", "%pane-a"],
+      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "root-a", "--pane", "%pane-a", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "subagent-stop", "--agent", "root-a", "--pane", "%pane-a", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "clear", "--agent", "root-a", "--pane", "%pane-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", "%pane-a", "--", "root-a", "root-b"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", "%pane-a", "--"],
+      ["/plugin/bin/tama", "notify", "--agent", "root-a", "--pane", "%pane-a", "--", "OpenCode", "boom"],
     ])
   })
 })

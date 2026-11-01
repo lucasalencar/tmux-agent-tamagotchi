@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 #
-#   tama notify <agent_name> <message> [--pane <pane_id>]
+#   tama notify <agent_name> <message> [--agent <agent_id>] [--pane <pane_id>]
 #
 # Agent messages remain opaque arguments; only user-authored titles are expanded as
 # tmux formats. Each attention channel is gated before its state is written.
+#
+# With --agent the banner is grouped per (window, agent) instead of per window,
+# so two agents needing attention keep a banner each. Without it, the legacy
+# per-window grouping applies exactly as before.
 
 set -o nounset
 
@@ -11,9 +15,9 @@ set -o nounset
 # shellcheck source=../lib/common.sh
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
-deliver() { # <target> <agent_name> <message>
-  local target="$1" agent="$2" message="$3" flag='no' notification='no' eligible=no
-  local outcome=applied backend_status=0
+deliver() { # <target> <agent_name> <message> [agent_id]
+  local target="$1" agent="$2" message="$3" agent_id="${4:-}" flag='no' notification='no' eligible=no
+  local outcome=applied backend_status=0 pending_present=''
 
   if ! tama_window_read "$target"; then
     tama_log_command_result skipped
@@ -76,13 +80,24 @@ deliver() { # <target> <agent_name> <message>
 
   # A new group may name the agent or label just written above. A pending banner instead
   # reads its original identity, so a newer notification replaces it rather than making
-  # a second group for the same window.
-  tama_notify_group
-  if [ -z "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
+  # a second group for the same window. With --agent the identity is per agent.
+  tama_notify_group "$agent_id"
+  if [ -z "$agent_id" ]; then
+    pending_present="$TAMA_WINDOW_NOTIFICATION_PENDING"
+  else
+    pending_present="$(tmux_run show -wqv -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_AGENT_PREFIX$agent_id" 2>/dev/null)" || pending_present=''
+  fi
+  if [ -z "$pending_present" ]; then
     tama_batch_reset
-    tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" \
-      "$TAMA_NOTIFY_GROUP"
-    tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION" on
+    if [ -z "$agent_id" ]; then
+      tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_OPTION" \
+        "$TAMA_NOTIFY_GROUP"
+      tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_OPTION" on
+    else
+      tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_AGENT_PREFIX$agent_id" \
+        "$TAMA_NOTIFY_GROUP"
+      tama_batch_add set -w -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_AGENT_PREFIX$agent_id" on
+    fi
     tama_batch_flush 'no' || true
     [ "$TAMA_BATCH_WRITE_STATUS" != failed ] || outcome=failed
   fi
@@ -111,7 +126,7 @@ deliver() { # <target> <agent_name> <message>
 }
 
 main() {
-  local pane='' agent='' message='' positional=0
+  local pane='' agent='' agent_id='' message='' positional=0
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -120,6 +135,13 @@ main() {
           die_usage '--pane needs a pane id'
         fi
         pane="$2"
+        shift 2
+        ;;
+      --agent)
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--agent needs an agent id'
+        fi
+        agent_id="$2"
         shift 2
         ;;
       --)
@@ -162,13 +184,17 @@ main() {
   # environment, so that a wrong hook is loud wherever it runs.
   tama_pane_value_is_storable "$agent" ||
     die_usage 'an agent name cannot contain a newline or a control separator'
+  if [ -n "$agent_id" ]; then
+    tama_agent_id_is_valid "$agent_id" ||
+      die_usage "an agent id may only hold letters, digits, dot, underscore, and dash: $agent_id"
+  fi
 
   # --pane overrides the pane the hook happens to run in, which wrappers lose and
   # tests never have. Having neither is one of the quiet no-ops.
   pane="${pane:-${TMUX_PANE:-}}"
   [ -n "$pane" ] || exit 0
 
-  deliver "$pane" "$agent" "$message"
+  deliver "$pane" "$agent" "$message" "$agent_id"
 }
 
 main "$@"

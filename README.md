@@ -406,6 +406,7 @@ The plugin does not install mouse bindings.
 | `notify` / `dismiss` | Raise or dismiss a notification. |
 | `focus-window` | Bring a session's terminal window forward. |
 | `list` | List agent panes across the server as stable, headerless TSV. |
+| `agents` | List per-agent entries across the server as stable, headerless TSV. |
 | `summary` | Count unique agent panes using a session's selected scope. |
 | `summary-scope` | Select or toggle one explicitly targeted session's scope. |
 | `gc` | Clear stale pane state. |
@@ -423,6 +424,12 @@ The plugin does not install mouse bindings.
 the current server. Pass `--session <session>` with one exact session name or tmux session
 ID to limit the same output to that session; a missing or empty session produces no output.
 
+`tama agents` prints one row per tracked agent entry instead of one row per pane, in
+this fixed column order: `session_name`, `session_id`, `window_index`, `window_name`,
+`window_id`, `pane_index`, `pane_id`, `agent`, `state`, and `subagents`. `agent` is the
+integration-supplied id, `state` its derived state, and `subagents` its live subagent
+count. Panes with no agent entries never appear here; see `tama list` for those.
+
 Hook-facing commands follow these rules:
 
 - Outside tmux, they exit zero without output.
@@ -437,12 +444,13 @@ reports installation failures the same way.
 
 ## Operational notes
 
-- **Notifications:** grouped per tmux window; Attention acknowledgement dismisses the pending
-  notification.
+- **Notifications:** grouped per tmux window, or per (tmux window, agent entry)
+  with `--agent`; Attention acknowledgement dismisses the pending
+  notification — a plain dismiss clears every pending banner on the tmux window.
 - **macOS clicks:** may repurpose another tmux client's terminal window when the target
   session is not visible. See [`backends/README.md`](backends/README.md) and
   [#22](https://github.com/lucasalencar/tmux-agent-tamagotchi/issues/22).
-- **Subagents:** tracking is best effort. A leaked subagent id can leave a background icon
+- **Subagents:** tracking is best effort, pane-wide or per agent entry. A leaked subagent id can leave a background icon
   until the pane is swept ([#15](https://github.com/lucasalencar/tmux-agent-tamagotchi/issues/15)).
 - **Stale state:** a pane is cleared only after it returns to a shell listed in
   `@tama_gc_shells`. Other commands may belong to a live agent and are left alone.

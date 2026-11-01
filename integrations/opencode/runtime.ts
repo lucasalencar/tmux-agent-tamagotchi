@@ -20,6 +20,7 @@ export type OpenCodeRuntimeDependencies = EventAdapterDependencies & Readonly<{
 export type OpenCodeRuntime = Readonly<{
   event(event: unknown): Promise<void>
   resync(events: readonly LifecycleEvent[]): Promise<void>
+  reconcileAgents(agentIds: readonly string[]): Promise<void>
   enqueueLateWork(work: () => Promise<void>): Promise<void>
   dispose(): Promise<void>
 }>
@@ -85,6 +86,21 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
 
   const enqueueLateWork = (work: () => Promise<void>) => enqueue(work)
 
+  // Drops agent entries the snapshot no longer lists, so sessions deleted
+  // while the plugin was down do not pin their last state forever. Runs as
+  // its own FIFO unit ahead of the seed: reconcile preserves survivors, and
+  // the seed that follows re-establishes them.
+  function reconcileAgents(agentIds: readonly string[]): Promise<void> {
+    return enqueue(async () => {
+      if (phase !== "active") return
+      try {
+        await dependencies.runEffect({ type: "agents-reconcile", agentIds: [...agentIds] })
+      } catch {
+        // One effect failure must not break setup.
+      }
+    })
+  }
+
   // Re-establishes pane state from an authoritative server snapshot after the
   // background service restarts. The seed runs as one FIFO unit so live
   // events that arrive later cannot interleave halfway through the snapshot;
@@ -99,6 +115,8 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
       }
     })
   }
+
+  return { event, resync, reconcileAgents, enqueueLateWork, dispose }
 
   // Applies one reduction's effects in order. Shared by live events (with
   // their log correlation) and resync seeds (replayed state, no correlation):
@@ -124,8 +142,17 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
       await drained
       await lateWorkDisposed
       await settle(dependencies.disposeLateWork)
+      const rooted = new Set<string>()
+      for (const [rootId, subs] of Array.from(state.rootDelegated)) {
+        for (const subagentId of Array.from(subs)) {
+          rooted.add(subagentId)
+          await settle(() => dependencies.runEffect({ type: "agent-subagent-stop", agentId: rootId, subagentId }))
+        }
+      }
       for (const sessionId of Array.from(state.activeDelegatedSessions)) {
-        await settle(() => dependencies.runEffect({ type: "subagent-stop", sessionId }))
+        if (!rooted.has(sessionId)) {
+          await settle(() => dependencies.runEffect({ type: "subagent-stop", sessionId }))
+        }
       }
       await settle(dependencies.clearPane)
       adapter.clear()
@@ -139,7 +166,7 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
     return disposal
   }
 
-  return { event, resync, enqueueLateWork, dispose }
+  return { event, resync, reconcileAgents, enqueueLateWork, dispose }
 }
 
 function observableEventName(event: unknown): string {

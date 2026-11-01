@@ -21,7 +21,7 @@ export type EffectRunnerDependencies = Readonly<{
 export type EffectRunner = Readonly<{
   observeEvent(observation: LogObservation): Promise<void>
   run(effect: StateMachineEffect, context?: LogContext): Promise<void>
-  notify(message: string, context?: LogContext): Promise<void>
+  notify(message: string, context: Readonly<{ agentId: string; correlationId?: string }>): Promise<void>
   clearPane(): Promise<void>
 }>
 
@@ -58,7 +58,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
   async function invokeTama(
     args: readonly string[],
     integrationEvent: string,
-    context?: LogContext,
+    context?: Readonly<{ correlationId?: string }>,
     classifyEffect = true,
     pane?: string,
   ): Promise<void> {
@@ -74,7 +74,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
             TAMA_LOG_INTEGRATION: "opencode",
             TAMA_LOG_INTEGRATION_EVENT: integrationEvent,
           } : {}),
-          ...(context ? { TAMA_LOG_CORRELATION_ID: context.correlationId } : {}),
+          ...(context?.correlationId !== undefined ? { TAMA_LOG_CORRELATION_ID: context.correlationId } : {}),
         },
       )
     } catch {
@@ -91,10 +91,42 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
           await invokeTama(["state", effect.state, AGENT_NAME], effect.type, context, true, pane)
           break
         }
-        case "root-error": {
+        case "agent-state": {
+          const pane = await resolvePane()
+          if (!pane && strictPane) return
+          await invokeTama(
+            ["state", effect.state, AGENT_NAME, "--agent", effect.agentId],
+            effect.type,
+            context,
+            true,
+            pane,
+          )
+          break
+        }
+        case "agent-clear": {
+          const pane = await resolvePane()
+          if (!pane && strictPane) return
+          await invokeTama(["state", "clear", "--agent", effect.agentId], effect.type, context, true, pane)
+          break
+        }
+        case "agents-reconcile": {
+          const pane = await resolvePane()
+          if (!pane && strictPane) return
+          await invokeTama(
+            ["state", "agent-reconcile", "--", ...effect.agentIds],
+            effect.type,
+            context,
+            true,
+            pane,
+          )
+          break
+        }
+        case "agent-error": {
           const pane = await resolvePane()
           await invokeTama([
             "notify",
+            "--agent",
+            effect.agentId,
             "--",
             AGENT_NAME,
             sanitizeNotificationText(effect.message ?? "") ?? GENERIC_ERROR,
@@ -108,8 +140,23 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
           await invokeTama(["state", effect.type, "--", effect.sessionId], effect.type, context, true, pane)
           break
         }
+        case "agent-subagent-start":
+        case "agent-subagent-stop": {
+          const pane = await resolvePane()
+          if (!pane && strictPane) return
+          const verb = effect.type === "agent-subagent-start" ? "subagent-start" : "subagent-stop"
+          await invokeTama(
+            ["state", verb, "--agent", effect.agentId, "--", effect.subagentId],
+            effect.type,
+            context,
+            true,
+            pane,
+          )
+          break
+        }
         case "completion-eligible":
           await dependencies.onCompletionEligible?.({
+            agentId: effect.agentId,
             sessionId: effect.sessionId,
             messageId: effect.messageId,
             ...(context ? { correlationId: context.correlationId } : {}),
@@ -134,6 +181,8 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
       const pane = await resolvePane()
       await invokeTama([
         "notify",
+        "--agent",
+        context.agentId,
         "--",
         AGENT_NAME,
         sanitizeNotificationText(message) ?? GENERIC_COMPLETION,

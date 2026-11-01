@@ -1,6 +1,7 @@
 import type { StateMachineEffect } from "./state-machine"
 
 export type CompletionReference = Readonly<{
+  agentId: string
   sessionId: string
   messageId: string
   correlationId?: string
@@ -35,6 +36,7 @@ const NOTIFICATION_TEXT_MAX = 500
 
 type PendingCompletion = {
   generation: number
+  agentId: string
   lookupTimer?: unknown
   notificationTimer?: unknown
 }
@@ -48,30 +50,58 @@ export function createCompletionScheduler(
   dependencies: CompletionSchedulerDependencies,
 ): CompletionScheduler {
   const clock = dependencies.clock ?? systemClock
-  let generation = 0
-  let pending: PendingCompletion | undefined
+  const generations = new Map<string, number>()
+  const pending = new Map<string, PendingCompletion>()
 
-  function cancelPending(): void {
-    generation += 1
-    if (pending?.lookupTimer !== undefined) clock.clearTimeout(pending.lookupTimer)
-    if (pending?.notificationTimer !== undefined) clock.clearTimeout(pending.notificationTimer)
-    pending = undefined
-  }
-
-  function handle(effect: StateMachineEffect, context?: Readonly<{ correlationId?: string }>): void {
-    if (effect.type === "subagent-start") {
-      cancelPending()
+  function cancelPending(agentId?: string): void {
+    const cancel = (own: PendingCompletion | undefined) => {
+      if (own?.lookupTimer !== undefined) clock.clearTimeout(own.lookupTimer)
+      if (own?.notificationTimer !== undefined) clock.clearTimeout(own.notificationTimer)
+    }
+    if (agentId === undefined) {
+      pending.forEach((own) => cancel(own))
+      pending.clear()
+      generations.clear()
       return
     }
-    if (effect.type === "pane-state") {
-      if (effect.state !== "idle") cancelPending()
+    generations.set(agentId, (generations.get(agentId) ?? 0) + 1)
+    cancel(pending.get(agentId))
+    pending.delete(agentId)
+  }
+
+  function isCurrent(own: PendingCompletion): boolean {
+    return pending.get(own.agentId) === own
+      && own.generation === (generations.get(own.agentId) ?? 0)
+  }
+
+  // Completion is tracked per agent: only the completing agent's own later
+  // activity cancels its pending notification, and two agents finishing
+  // together each keep their own. Legacy aggregate effects carry no agent and
+  // are ignored here — every legacy transition an agented integration reports
+  // arrives alongside its per-agent twin, which is the one this scheduler
+  // answers to.
+  function handle(effect: StateMachineEffect, context?: Readonly<{ correlationId?: string }>): void {
+    if (effect.type === "agent-subagent-start") {
+      cancelPending(effect.agentId)
+      return
+    }
+    if (effect.type === "agent-state") {
+      if (effect.state !== "idle") cancelPending(effect.agentId)
+      return
+    }
+    if (effect.type === "agent-clear") {
+      cancelPending(effect.agentId)
       return
     }
     if (effect.type !== "completion-eligible") return
-    cancelPending()
-    const own: PendingCompletion = { generation }
-    pending = own
+    cancelPending(effect.agentId)
+    const own: PendingCompletion = {
+      generation: generations.get(effect.agentId) ?? 0,
+      agentId: effect.agentId,
+    }
+    pending.set(effect.agentId, own)
     const completion: CompletionReference = {
+      agentId: effect.agentId,
       sessionId: effect.sessionId,
       messageId: effect.messageId,
       ...(context?.correlationId ? { correlationId: context.correlationId } : {}),
@@ -106,17 +136,17 @@ export function createCompletionScheduler(
       void content.then((message) => {
         try {
           dependencies.enqueue(async () => {
-            if (pending !== own || own.generation !== generation) return
+            if (!isCurrent(own)) return
             try {
               await dependencies.notify(message || GENERIC_COMPLETION, completion)
             } catch {
               // A notification backend cannot reject into OpenCode.
             } finally {
-              if (pending === own && own.generation === generation) pending = undefined
+              if (isCurrent(own)) pending.delete(own.agentId)
             }
           })
         } catch {
-          if (pending === own && own.generation === generation) pending = undefined
+          if (isCurrent(own)) pending.delete(own.agentId)
         }
       })
     }, COMPLETION_DELAY_MS)

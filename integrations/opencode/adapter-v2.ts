@@ -12,16 +12,19 @@ import type { LifecycleEvent, SessionKind } from "./state-machine"
 // Session and message lookups reuse the v1 dependency shapes; plugin-v2
 // synthesizes those shapes from the v2 client responses at the boundary.
 export function createEventAdapterV2(dependencies: EventAdapterDependencies): EventAdapter {
-  const classifications = new Map<string, { kind: SessionKind; directory?: string }>()
+  const classifications = new Map<string, { kind: SessionKind; directory?: string; parentId?: string }>()
 
-  function store(sessionId: string, kind: SessionKind, directory?: string): void {
+  function store(sessionId: string, kind: SessionKind, directory?: string, parentId?: string): void {
     // Never let a directory-less write clobber a known directory: the next
-    // location-less event would otherwise pay for another lookup.
+    // location-less event would otherwise pay for another lookup. The same
+    // holds for a recovered parent: once known, it stays known.
     const cached = classifications.get(sessionId)
     const resolved = directory ?? cached?.directory
+    const resolvedParent = parentId ?? cached?.parentId
     classifications.set(sessionId, {
       kind,
       ...(resolved !== undefined ? { directory: resolved } : {}),
+      ...(resolvedParent !== undefined ? { parentId: resolvedParent } : {}),
     })
   }
 
@@ -30,7 +33,12 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
     const parent = readParentId(info)
     if (parent === undefined) return undefined
     const kind = parent === null ? "root" : "delegated"
-    store(info.id, kind, typeof info.directory === "string" ? info.directory : undefined)
+    store(
+      info.id,
+      kind,
+      typeof info.directory === "string" ? info.directory : undefined,
+      typeof parent === "string" ? parent : undefined,
+    )
     return kind
   }
 
@@ -53,7 +61,7 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
   ): SessionKind | undefined {
     if (typeof parentID === "string") {
       if (!isIdentifier(parentID)) return undefined
-      store(sessionId, "delegated", directory)
+      store(sessionId, "delegated", directory, parentID)
       return "delegated"
     }
     if (parentID === undefined) {
@@ -61,6 +69,12 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
       return "root"
     }
     return undefined
+  }
+
+  // The owning root of a delegated session, when the adapter recovered it:
+  // the parent it was classified from. Unknown when classification failed.
+  function parentOf(sessionId: string): string | undefined {
+    return classifications.get(sessionId)?.parentId
   }
 
   // Location-less events (execution transitions carry no directory) reach every
@@ -94,6 +108,8 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
     }
     const kind = await classify(sessionId)
     if (!kind) return { status: "malformed" }
+    const parent = kind === "delegated" ? parentOf(sessionId) : undefined
+    const parentId = parent !== undefined ? { parentId: parent } : {}
     if (kind === "root" && status === "idle") {
       try {
         const latest = await dependencies.lookupLatestMessage?.(sessionId)
@@ -116,7 +132,7 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
     }
     return {
       status: "adapted",
-      event: { type: "session-status", sessionId, kind, status, ...provenance },
+      event: { type: "session-status", sessionId, kind, status, ...parentId, ...provenance },
     }
   }
 
@@ -149,12 +165,20 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
       if (directory === undefined && !(await ownsSession(data.sessionID))) {
         return { status: "unknown" }
       }
-      const kind = classifications.get(data.sessionID)?.kind ?? (await classify(data.sessionID))
+      const cached = classifications.get(data.sessionID)
+      const kind = cached?.kind ?? (await classify(data.sessionID))
+      const parent = kind === "delegated" ? cached?.parentId ?? parentOf(data.sessionID) : undefined
       classifications.delete(data.sessionID)
       if (!kind) return { status: "malformed" }
       return {
         status: "adapted",
-        event: { type: "session-deleted", sessionId: data.sessionID, kind, ...provenance },
+        event: {
+          type: "session-deleted",
+          sessionId: data.sessionID,
+          kind,
+          ...(parent !== undefined ? { parentId: parent } : {}),
+          ...provenance,
+        },
       }
     }
     if (event.type === "session.status" || event.type === "session.idle") {
@@ -226,6 +250,7 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
       }
       const kind = await classify(data.sessionID)
       if (!kind) return { status: "malformed" }
+      const parent = kind === "delegated" ? parentOf(data.sessionID) : undefined
       return {
         status: "adapted",
         event: {
@@ -233,6 +258,7 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
           requestId: data.id,
           sessionId: data.sessionID,
           kind,
+          ...(parent !== undefined ? { parentId: parent } : {}),
           ...provenance,
         },
       }
@@ -251,14 +277,28 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
       }
       const kind = await classify(data.sessionID)
       if (!kind) return { status: "malformed" }
+      const parent = kind === "delegated" ? parentOf(data.sessionID) : undefined
       const message = isRecord(data.error) && isIdentifier(data.error.message)
         ? data.error.message
         : undefined
       return {
         status: "adapted",
         event: message
-          ? { type: "session-error", sessionId: data.sessionID, kind, message, ...provenance }
-          : { type: "session-error", sessionId: data.sessionID, kind, ...provenance },
+          ? {
+            type: "session-error",
+            sessionId: data.sessionID,
+            kind,
+            message,
+            ...(parent !== undefined ? { parentId: parent } : {}),
+            ...provenance,
+          }
+          : {
+            type: "session-error",
+            sessionId: data.sessionID,
+            kind,
+            ...(parent !== undefined ? { parentId: parent } : {}),
+            ...provenance,
+          },
       }
     }
     return { status: "unknown" }

@@ -9,6 +9,9 @@ export type ResyncSession = Readonly<{
   sessionId: string
   kind: SessionKind
   status: SessionStatus
+  /** The owning root for delegated sessions, so resynced subagent activity
+  lands on its agent instead of the pane. */
+  parentId?: string
   directory?: string
 }>
 
@@ -16,6 +19,9 @@ export type ResyncPermission = Readonly<{
   requestId: string
   sessionId: string
   kind: SessionKind
+  /** The owning root for delegated sessions, so a resynced permission prompt
+  waits its agent instead of the whole pane. */
+  parentId?: string
   directory?: string
 }>
 
@@ -33,23 +39,31 @@ export function buildResyncEvents(
   for (const session of sessions) {
     if (!session.sessionId) continue
     const provenance = session.directory !== undefined ? { directory: session.directory } : {}
+    const parent = session.kind === "delegated" && typeof session.parentId === "string" && session.parentId
+      ? { parentId: session.parentId }
+      : {}
     events.push({ type: "session-created", sessionId: session.sessionId, kind: session.kind, ...provenance })
     events.push({
       type: "session-status",
       sessionId: session.sessionId,
       kind: session.kind,
       status: session.status,
+      ...parent,
       ...provenance,
     })
   }
   for (const permission of permissions) {
     if (!permission.requestId || !permission.sessionId) continue
     const provenance = permission.directory !== undefined ? { directory: permission.directory } : {}
+    const parent = permission.kind === "delegated" && typeof permission.parentId === "string" && permission.parentId
+      ? { parentId: permission.parentId }
+      : {}
     events.push({
       type: "permission-asked",
       requestId: permission.requestId,
       sessionId: permission.sessionId,
       kind: permission.kind,
+      ...parent,
       ...provenance,
     })
   }

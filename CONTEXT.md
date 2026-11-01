@@ -23,6 +23,19 @@ Always use "terminal window," never "window" alone or "OS window."
 A pane that has reported at least one state and has not been cleared. The unit that owns a
 **state**. A **tmux window** may contain several agent panes.
 
+## Agent entry
+
+An independent per-agent report inside an **agent pane**, addressed by an **agent id**.
+Each entry keeps its own **state** and its own **subagent** list; a pane draws one icon
+per entry. Entries are written only with `--agent`; without it, the pane's single legacy
+state applies exactly as before, and a pane with no entries is untouched by the agent
+paths.
+
+## Agent id
+
+An integration-supplied opaque value naming one **agent entry**, in
+`[A-Za-z0-9._-]+`. Unknown ids are never stored; malformed records never render.
+
 ## State
 
 What an agent pane is doing, from the user's point of view. Five values:
@@ -42,8 +55,9 @@ entirely, which is different from `idle` — a cleared pane is not an agent pane
 ## Status summary
 
 A count of agent panes grouped by **state**, scoped either to the session being viewed or to
-the entire tmux server. An agent pane is counted at most once, regardless of how many sessions
-or clients expose it.
+the entire tmux server. A pane with **agent entries** counts once per entry; without them,
+the pane counts once for its legacy state. An agent pane is counted at most once per entry,
+regardless of how many sessions or clients expose it.
 
 ## Unknown bucket
 
@@ -55,7 +69,8 @@ It exposes unexpected integration data without treating that data as a new state
 A delegated agent run spawned by an agent, tracked only by an opaque id supplied by the
 agent's hooks. The plugin counts them; it knows nothing else about them. Tracking is
 conservative: uncertainty may make a pane look busier than it is, but must not hide known
-work by declaring a subagent finished without reliable evidence.
+work by declaring a subagent finished without reliable evidence. Subagents may be tracked
+pane-wide or on one **agent entry**; the two lists are independent.
 
 ## Flag
 
@@ -101,9 +116,12 @@ _Avoid_: Seen, focus, notification dismissal
 ## Notification
 
 An OS-level banner raised when an agent needs the user. Grouped per **tmux window**, so a
-newer notification for a tmux window replaces the older one. The same navigation that clears
-the tmux window's **flag** dismisses its pending notification. Suppressed when the user is
-demonstrably already looking at that tmux window.
+newer notification for a tmux window replaces the older one; with `--agent`, grouped per
+(**tmux window**, **agent entry**) instead, so two agents keep a banner each. The same
+navigation that clears the tmux window's **flag** dismisses its pending notification —
+a plain dismiss clears every pending banner on the tmux window, while `dismiss --agent`
+takes down only its own. Suppressed when the user is demonstrably already looking at
+that tmux window.
 
 ## Label
 

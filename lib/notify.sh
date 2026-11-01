@@ -2,8 +2,14 @@
 #
 # Platform-independent notification policy. Helpers operate on the last window read.
 
-# One group per window lets newer banners replace older ones.
+# One group per window lets newer banners replace older ones. Per-agent
+# banners append the agent id, so two agents needing attention keep a banner
+# each instead of replacing one another. The pending markers are per agent
+# too, on window options named after it; ids are constrained to characters
+# that survive option names and prefix enumeration.
 TAMA_NOTIFY_GROUP_DEFAULT='tmux-window-#{window_id}'
+TAMA_WINDOW_NOTIFY_GROUP_AGENT_PREFIX='@tama_window_notify_group_'
+TAMA_WINDOW_NOTIFICATION_PENDING_AGENT_PREFIX='@tama_window_notification_pending_'
 
 # tmux may intermittently omit a live pane path, so fall back to the last reported cwd.
 TAMA_NOTIFY_TITLE_DEFAULT='#{@tama_pane_agent} - #{?pane_current_path,#{b:pane_current_path},#{b:@tama_pane_cwd}}#{?@tama_pane_label, (#{@tama_pane_label}),}'
@@ -36,11 +42,31 @@ tama_attention_is_eligible() { # <flag yes|no> <notification yes|no>
 }
 
 # The group id for the window tama_window_read last read, in TAMA_NOTIFY_GROUP.
-# A pending banner keeps the group it was raised with until dismissal, so changing
-# the format cannot orphan it in the notification centre. The pending marker is
-# separate because an empty group is a valid configuration.
-tama_notify_group() {
-  local format
+# A pending banner keeps the group it was raised with until dismissal, so
+# changing the format cannot orphan it in the notification centre. The pending
+# marker is separate because an empty group is a valid configuration.
+#
+# With an agent, the pending marker and group live on per-agent window
+# options and a fresh group carries an `@agent` suffix, so two agents needing
+# attention keep a banner each. Without one, the legacy per-window options
+# apply exactly as before.
+tama_notify_group() { # [agent]
+  local format group_option pending_option pending group
+  if [ -n "${1:-}" ]; then
+    group_option="$TAMA_WINDOW_NOTIFY_GROUP_AGENT_PREFIX$1"
+    pending_option="$TAMA_WINDOW_NOTIFICATION_PENDING_AGENT_PREFIX$1"
+    pending="$(tmux_run show -wqv -t "$TAMA_WINDOW_ID" "$pending_option" 2>/dev/null)" || pending=''
+    if [ -n "$pending" ]; then
+      group="$(tmux_run show -wqv -t "$TAMA_WINDOW_ID" "$group_option" 2>/dev/null)" || group=''
+      TAMA_NOTIFY_GROUP="$group"
+      return 0
+    fi
+    format="$(tama_opt tama_group_format "$TAMA_NOTIFY_GROUP_DEFAULT")"
+    TAMA_NOTIFY_GROUP="$(tmux_run display-message -p -t "$TAMA_WINDOW_ID" \
+      "$format" 2>/dev/null)" || TAMA_NOTIFY_GROUP=''
+    TAMA_NOTIFY_GROUP="$TAMA_NOTIFY_GROUP@$1"
+    return 0
+  fi
   if [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
     tama_window_notification_group_read
     TAMA_NOTIFY_GROUP="$TAMA_WINDOW_NOTIFY_GROUP"
@@ -222,9 +248,17 @@ tama_notify_tmux_command() {
 # Nothing here asks the desktop whether there *is* one: dismissing a group with no
 # banner is a harmless no-op. The window marker only preserves the group that `notify`
 # used and says when that persisted identity should be cleared.
-tama_notify_dismiss() {
+#
+# With an agent, only that agent's banner goes down; without one, the legacy
+# banner and every agent banner go down, so acknowledgement by navigation
+# clears the whole window at once.
+tama_notify_dismiss() { # [agent]
   local backend_status=0
   TAMA_NOTIFY_DISMISS_STATUS=skipped
+  if [ -n "${1:-}" ]; then
+    tama_notify_dismiss_agent "$1"
+    return 0
+  fi
   tama_notify_group
 
   if [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
@@ -236,6 +270,8 @@ tama_notify_dismiss() {
       TAMA_NOTIFY_DISMISS_STATUS=failed
     fi
   fi
+
+  tama_notify_dismiss_agents
 
   tama_notify_export_context
   # In the environment as well as in argv, so that a backend which handles both
@@ -250,5 +286,72 @@ tama_notify_dismiss() {
     [ "$TAMA_NOTIFY_DISMISS_STATUS" = failed ] || TAMA_NOTIFY_DISMISS_STATUS=applied
   elif [ "$backend_status" -ne "$TAMA_BACKEND_UNSUPPORTED" ]; then
     TAMA_NOTIFY_DISMISS_STATUS=failed
+  fi
+}
+
+# Takes down one agent's banner and forgets its group. The agent id is validated
+# by the caller; option names only ever hold the constrained charset.
+tama_notify_dismiss_agent() { # <agent>
+  local backend_status=0 pending
+  TAMA_NOTIFY_DISMISS_STATUS=skipped
+  tama_notify_group "$1"
+  pending="$(tmux_run show -wqv -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_AGENT_PREFIX$1" 2>/dev/null)" || pending=''
+  if [ -n "$pending" ]; then
+    if tmux_run set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_AGENT_PREFIX$1" \
+      ';' set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_AGENT_PREFIX$1" \
+      >/dev/null 2>&1; then
+      TAMA_NOTIFY_DISMISS_STATUS=applied
+    else
+      TAMA_NOTIFY_DISMISS_STATUS=failed
+    fi
+  fi
+
+  tama_notify_export_context
+  TAMA_GROUP="$TAMA_NOTIFY_GROUP"
+  export TAMA_GROUP
+
+  tama_backend_invoke dismiss "$TAMA_GROUP" || backend_status=$?
+  if [ "$backend_status" -eq 0 ]; then
+    [ "$TAMA_NOTIFY_DISMISS_STATUS" = failed ] || TAMA_NOTIFY_DISMISS_STATUS=applied
+  elif [ "$backend_status" -ne "$TAMA_BACKEND_UNSUPPORTED" ]; then
+    TAMA_NOTIFY_DISMISS_STATUS=failed
+  fi
+}
+
+# Takes down every agent banner pending on the window. Enumerates per-agent
+# pending markers; ids cannot hold spaces, so the first token names the agent.
+# Best effort like the rest of dismissal: callers aggregate the status.
+tama_notify_dismiss_agents() {
+  local raw line name agent group backend_status=0
+  TAMA_NOTIFY_DISMISS_AGENTS_STATUS=applied
+  raw="$(tmux_run show -w -t "$TAMA_WINDOW_ID" 2>/dev/null)" || return 0
+  while IFS= read -r line; do
+    case "$line" in
+      "$TAMA_WINDOW_NOTIFICATION_PENDING_AGENT_PREFIX"*)
+        name="${line%% *}"
+        agent="${name#"$TAMA_WINDOW_NOTIFICATION_PENDING_AGENT_PREFIX"}"
+        tama_agent_id_is_valid "$agent" || continue
+        group="$(tmux_run show -wqv -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_AGENT_PREFIX$agent" 2>/dev/null)" || group=''
+        if tmux_run set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFY_GROUP_AGENT_PREFIX$agent" \
+          ';' set -wuq -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_AGENT_PREFIX$agent" \
+          >/dev/null 2>&1; then
+          :
+        else
+          TAMA_NOTIFY_DISMISS_AGENTS_STATUS=failed
+        fi
+        tama_notify_export_context
+        TAMA_GROUP="$group"
+        export TAMA_GROUP
+        tama_backend_invoke dismiss "$TAMA_GROUP" || backend_status=$?
+        if [ "$backend_status" -ne 0 ] && [ "$backend_status" -ne "$TAMA_BACKEND_UNSUPPORTED" ]; then
+          TAMA_NOTIFY_DISMISS_AGENTS_STATUS=failed
+        fi
+        ;;
+    esac
+  done <<EOF
+$raw
+EOF
+  if [ "$TAMA_NOTIFY_DISMISS_AGENTS_STATUS" = failed ]; then
+    [ "$TAMA_NOTIFY_DISMISS_STATUS" = failed ] || TAMA_NOTIFY_DISMISS_STATUS=failed
   fi
 }

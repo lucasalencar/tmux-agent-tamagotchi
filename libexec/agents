@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+#
+#   tama agents [--session <session_name_or_id>]
+#
+# Stable, headerless TSV inventory of per-agent entries: one row per agent a
+# pane tracks, in addition to the pane-level rows `tama list` prints.
+# `tama list` is untouched by the agent world; this command is where its
+# detail lives. Columns: session_name, session_id, window_index, window_name,
+# window_id, pane_index, pane_id, agent, state, subagents.
+#
+# Stateless entries — subagent tracking that arrived before a state report —
+# draw nothing and are not listed, like a pane with no main state.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local session='' records sorted
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --session)
+        [ -z "$session" ] || die_usage '--session may only be given once'
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+          die_usage '--session needs a session name or id'
+        fi
+        case "$2" in
+          -*) die_usage '--session needs a session name or id' ;;
+        esac
+        session="$2"
+        shift 2
+        ;;
+      -*) die_usage "unknown option: $1" ;;
+      *) die_usage "agents takes no arguments, got: $1" ;;
+    esac
+  done
+
+  records="$(tama_agents_records "$session")" || {
+    tama_log_command_result failed
+    return 0
+  }
+  [ -n "$records" ] || return 0
+  sorted="$(printf '%s\n' "$records" | LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k3,3n -k6,6n -k8,8)" || {
+    tama_log_command_result failed
+    return 0
+  }
+  [ -n "$sorted" ] && printf '%s\n' "$sorted"
+}
+
+# Build the complete snapshot before printing any of it. If any query fails,
+# the caller discards this function's captured output rather than exposing a
+# plausible-looking partial inventory to scripts.
+tama_agents_records() { # [session_name_or_id]
+  local session="$1" sessions windows panes session_id window_id pane_id
+  local window_fields pane_fields
+  local line aid astate asubs derived count parsed
+
+  window_fields='#{session_name}
+#{session_id}
+#{window_index}
+#{window_name}
+#{window_id}
+.'
+  pane_fields='#{pane_index}
+#{pane_id}
+#{@tama_pane_agents}
+.'
+  sessions="$(tama_inventory_sessions)" || return 1
+  [ -n "$sessions" ] || return 0
+
+  # tmux 3.4 escapes control characters embedded in -F formats. Enumerate only
+  # stable IDs there, then use the project's newline-field reader for values.
+  # Reading through the session/window pair preserves each linked-window record.
+  while IFS= read -r session_id; do
+    windows="$(tama_inventory_windows "$session_id")" || return 1
+    while IFS= read -r window_id; do
+      tama_agents_read_window "${session_id}:${window_id}" "$window_fields" || return 1
+      if [ -n "$session" ] && [ "$session" != "$TAMA_AGENTS_SESSION_NAME" ] && [ "$session" != "$TAMA_AGENTS_SESSION_ID" ]; then
+        continue
+      fi
+      panes="$(tama_inventory_panes "$window_id")" || return 1
+      while IFS= read -r pane_id; do
+        tama_agents_read_pane "$pane_id" "$pane_fields" || return 1
+        [ -n "$TAMA_AGENTS_RECORD" ] || continue
+        parsed="$(tama_agents_parse "$TAMA_AGENTS_RECORD")" || continue
+        while IFS= read -r line; do
+          aid="${line%% *}"
+          astate="${line#* }"; astate="${astate%% *}"
+          asubs="${line##* }"
+          if [ -z "$aid" ] || [ -z "$astate" ]; then continue; fi
+          tama_pane_derive "$astate" "$asubs"
+          derived="$TAMA_PANE_DERIVED"
+          [ -n "$derived" ] || continue
+          if [ -n "$asubs" ]; then
+            # The record joins with commas; the counter speaks spaces.
+            tama_subagents_count "${asubs//,/ }"
+            count="$TAMA_SUBAGENTS_COUNT"
+          else
+            count=0
+          fi
+          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$TAMA_AGENTS_SESSION_NAME" "$TAMA_AGENTS_SESSION_ID" \
+            "$TAMA_AGENTS_WINDOW_INDEX" "$TAMA_AGENTS_WINDOW_NAME" "$TAMA_AGENTS_WINDOW_ID" \
+            "$TAMA_AGENTS_PANE_INDEX" "$TAMA_AGENTS_PANE_ID" "$aid" "$derived" "$count"
+        done <<EOF
+$parsed
+EOF
+      done <<EOF
+$panes
+EOF
+    done <<EOF
+$windows
+EOF
+  done <<EOF
+$sessions
+EOF
+}
+
+tama_agents_read_window() { # <session:window> <fields>
+  local raw field lines=0
+  raw="$(tama_inventory_fields "$1" "$2")" || return 1
+  while IFS= read -r field; do
+    lines=$((lines + 1))
+    case "$lines" in
+      1) TAMA_AGENTS_SESSION_NAME="$field" ;;
+      2) TAMA_AGENTS_SESSION_ID="$field" ;;
+      3) TAMA_AGENTS_WINDOW_INDEX="$field" ;;
+      4) TAMA_AGENTS_WINDOW_NAME="$field" ;;
+      5) TAMA_AGENTS_WINDOW_ID="$field" ;;
+    esac
+  done <<EOF
+$raw
+EOF
+  [ "$lines" -eq 6 ] && [ -n "$TAMA_AGENTS_WINDOW_ID" ]
+}
+
+tama_agents_read_pane() { # <pane_id> <fields>
+  local raw field lines=0
+  raw="$(tama_inventory_fields "$1" "$2")" || return 1
+  while IFS= read -r field; do
+    lines=$((lines + 1))
+    case "$lines" in
+      1) TAMA_AGENTS_PANE_INDEX="$field" ;;
+      2) TAMA_AGENTS_PANE_ID="$field" ;;
+      3) TAMA_AGENTS_RECORD="$field" ;;
+    esac
+  done <<EOF
+$raw
+EOF
+  [ "$lines" -eq 4 ] && [ -n "$TAMA_AGENTS_PANE_ID" ]
+}
+
+main "$@"

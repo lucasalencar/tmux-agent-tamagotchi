@@ -82,7 +82,10 @@ export function createTmuxAgentTamagotchiPlugin(dependencies: PluginDependencies
       },
       notify: (message, completion) => runner.notify(
         message,
-        completion.correlationId ? { correlationId: completion.correlationId } : undefined,
+        {
+          agentId: completion.agentId,
+          ...(completion.correlationId ? { correlationId: completion.correlationId } : {}),
+        },
       ),
     })
 
@@ -107,9 +110,13 @@ async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<v
     const directory = typeof input.directory === "string" ? input.directory : undefined
     const sessionClient = (input as unknown as { client?: { session?: Record<string, unknown> } }).client?.session
     if (!sessionClient || typeof sessionClient.list !== "function") return
+    let listOk = false
     const listed = unwrapSessionArray(
       await (sessionClient.list as (args: unknown) => Promise<unknown>)({
         query: directory !== undefined ? { directory } : {},
+      }).then((response) => {
+        listOk = true
+        return response
       }).catch(() => undefined),
     )
     let statuses: Record<string, unknown> = {}
@@ -163,14 +170,28 @@ async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<v
       Array.from(byId).flatMap(([sessionId, session]) => {
         const kind = kindFromParentId(session.parentID)
         if (!kind) return []
+        const parent = kind === "delegated"
+          && typeof session.parentID === "string" && session.parentID
+          ? { parentId: session.parentID }
+          : {}
         return [{
           sessionId,
           kind,
           status: statusFromServerType(statusTypeOf(statuses[sessionId])),
+          ...parent,
           ...(directory !== undefined ? { directory } : {}),
         }]
       }),
     )
+    // Only a snapshot the list call itself produced may drop agent entries:
+    // statuses resolved through extra lookups can only add to what the list
+    // established.
+    if (listOk) {
+      await runtime.reconcileAgents(
+        Array.from(byId).flatMap(([sessionId, session]) =>
+          kindFromParentId(session.parentID) === "root" ? [sessionId] : []),
+      )
+    }
     if (events.length > 0) await runtime.resync(events)
   } catch {
     // Resync must never break plugin setup.

@@ -15,22 +15,43 @@ tama_summary_read_pane() { # <pane id>; 0 state, 2 no state, 1 invalid read
   raw="$(tama_inventory_fields "$1" '#{pane_id}
 #{@tama_pane_state_main}
 #{@tama_pane_subagents}
+#{@tama_pane_agents}
 .')" || return 1
 
   TAMA_SUMMARY_PANE_ID=''
   TAMA_SUMMARY_STATE=''
   TAMA_SUMMARY_SUBAGENTS=''
+  TAMA_SUMMARY_AGENTS=''
   while IFS= read -r field; do
     lines=$((lines + 1))
     case "$lines" in
       1) TAMA_SUMMARY_PANE_ID="$field" ;;
       2) TAMA_SUMMARY_STATE="$field" ;;
       3) TAMA_SUMMARY_SUBAGENTS="$field" ;;
+      4) TAMA_SUMMARY_AGENTS="$field" ;;
     esac
   done <<EOF
 $raw
 EOF
-  [ "$lines" -eq 4 ] && [ -n "$TAMA_SUMMARY_PANE_ID" ] || return 1
+  [ "$lines" -eq 5 ] && [ -n "$TAMA_SUMMARY_PANE_ID" ] || return 1
+  # A pane with agent entries counts once per entry; without them, the legacy
+  # single state counts exactly as before. A malformed record falls back to the
+  # legacy half rather than hiding the pane. The caller prints
+  # $TAMA_PANE_DERIVED after this returns, so the agent branch prints its own
+  # lines and leaves that empty.
+  local agents_display
+  agents_display="$(tama_agents_display "$TAMA_SUMMARY_AGENTS" 2>/dev/null)" || agents_display=''
+  if [ -n "$agents_display" ]; then
+    local state
+    set -f
+    # shellcheck disable=SC2086 # deliberate: derived states are single words
+    for state in $agents_display; do
+      printf '%s\n' "$state"
+    done
+    set +f
+    TAMA_PANE_DERIVED=''
+    return 0
+  fi
   [ -n "$TAMA_SUMMARY_STATE" ] || return 2
   tama_pane_derive "$TAMA_SUMMARY_STATE" "$TAMA_SUMMARY_SUBAGENTS"
   return 0

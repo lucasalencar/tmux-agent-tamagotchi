@@ -3,11 +3,10 @@
 # Pane state model. Derived state is computed on read so concurrent main-state and
 # subagent events cannot leave a stale stored derivation (ADR-0005).
 
-# Keep render format and parser together so their field order cannot drift.
-# shellcheck disable=SC2034  # read by libexec/icons, which sources this file
-TAMA_PANE_RENDER_FORMAT='#{@tama_pane_state_main} #{@tama_pane_subagents}'
-
-# Parameter expansion avoids a fork on the status-line hot path.
+# Splits a legacy `main subs…` pane record. Parameter expansion avoids a fork
+# on the status-line hot path. Icons reads panes with an explicit per-command
+# format instead, because the agent block joins by pane id rather than by
+# position.
 tama_pane_derive_record() { # <record>
   local main="${1%% *}"
   tama_pane_derive "$main" "${1#* }"
@@ -18,6 +17,7 @@ TAMA_PANE_READ_FIELDS='#{pane_id}
 #{window_id}
 #{@tama_pane_state_main}
 #{@tama_pane_subagents}
+#{@tama_pane_agents}
 #{@tama_pane_cmd}
 #{@tama_pane_agent}
 #{@tama_pane_cwd}
@@ -25,7 +25,7 @@ TAMA_PANE_READ_FIELDS='#{pane_id}
 #{pane_current_path}
 .'
 # Includes the sentinel required by tama_fields_read.
-TAMA_PANE_READ_COUNT=10
+TAMA_PANE_READ_COUNT=11
 
 # Populates TAMA_PANE_* and rejects incomplete or vanished-pane records.
 # shellcheck disable=SC2034
@@ -37,6 +37,7 @@ tama_pane_read() {
   TAMA_PANE_WINDOW_ID=''
   TAMA_PANE_STATE_MAIN=''
   TAMA_PANE_SUBAGENTS=''
+  TAMA_PANE_AGENTS=''
   TAMA_PANE_CMD=''
   TAMA_PANE_AGENT=''
   TAMA_PANE_CWD=''
@@ -49,11 +50,12 @@ tama_pane_read() {
       2) TAMA_PANE_WINDOW_ID="$field" ;;
       3) TAMA_PANE_STATE_MAIN="$field" ;;
       4) TAMA_PANE_SUBAGENTS="$field" ;;
-      5) TAMA_PANE_CMD="$field" ;;
-      6) TAMA_PANE_AGENT="$field" ;;
-      7) TAMA_PANE_CWD="$field" ;;
-      8) TAMA_PANE_CURRENT_CMD="$field" ;;
-      9) TAMA_PANE_CURRENT_PATH="$field" ;;
+      5) TAMA_PANE_AGENTS="$field" ;;
+      6) TAMA_PANE_CMD="$field" ;;
+      7) TAMA_PANE_AGENT="$field" ;;
+      8) TAMA_PANE_CWD="$field" ;;
+      9) TAMA_PANE_CURRENT_CMD="$field" ;;
+      10) TAMA_PANE_CURRENT_PATH="$field" ;;
     esac
   done <<EOF
 $raw
@@ -90,6 +92,281 @@ tama_pane_derive() { # <state_main> <subagents>
   esac
 }
 
+# Agent entries: independent per-agent reports inside one pane, for agents that
+# can name their own runs (OpenCode session ids). One option per pane holds
+# every entry, so the status line still reads the pane in a single round trip:
+#
+#   @tama_pane_agents = 'id=state/sub1,sub2;id=state/'
+#
+# An entry is `agent-id=main-state/subagent-id,subagent-id`; an empty subagent
+# list is a bare trailing `/`. Agent ids are integration-supplied opaque
+# values in `[A-Za-z0-9._-]+`: no whitespace (they travel in space-separated
+# lists and option names), no control characters (nothing storable survives
+# them), and none of the structural `= / , ;` characters. Main states are the
+# four reportable domain states; `background` is derived on read, never stored.
+#
+# Several writers share the one option, so every mutation is read-modify-write
+# with the same optimistic retry the flat subagent list uses: writers verify
+# their own slice on read-back, and a pane `clear` always wins. Concurrent
+# writes carrying identical sticky values are harmless, which is the common
+# case — states persist until something changes them.
+
+# Whether <id> may name an agent entry. Loud boundary like the subagent id
+# check, but stricter: these ids are embedded in option names and in the
+# encoded record, where whitespace, control characters, and the structural
+# `= / , ;` characters would corrupt the pane or its neighbours.
+tama_agent_id_is_valid() { # <id>
+  case "$1" in
+    '') return 1 ;;
+    *[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  tama_pane_value_is_storable "$1"
+}
+
+# Whether <state> is a reportable agent main state. Unknown states are never
+# stored: like the pane-level `state` command, a hook written for a newer
+# plugin stays silent on an older one rather than failing its turn.
+tama_agent_state_is_valid() { # <state>
+  case "$1" in
+    running | waiting | idle | error) return 0 ;;
+  esac
+  return 1
+}
+
+# Prints one `id state subs` line per entry, with an empty state for entries
+# that only track subagents so far. Unset-but-valid callers treat a missing
+# option as the empty record; anything malformed fails: rendering must never
+# draw a neighbour's bytes as an agent.
+tama_agents_parse() { # <record>
+  local rest="$1" rec id rs state subs s r2
+  [ -n "$rest" ] || return 1
+  while [ -n "$rest" ]; do
+    rec="${rest%%;*}"
+    if [ "$rec" = "$rest" ]; then rest=''; else rest="${rest#*;}"; fi
+    case "$rec" in *=*/*) ;; *) return 1 ;; esac
+    id="${rec%%=*}"
+    rs="${rec#*=}"
+    state="${rs%%/*}"
+    subs="${rs#*/}"
+    tama_agent_id_is_valid "$id" || return 1
+    if [ -n "$state" ]; then
+      tama_agent_state_is_valid "$state" || return 1
+    fi
+    if [ -n "$subs" ]; then
+      r2="$subs"
+      while :; do
+        s="${r2%%,*}"
+        tama_agent_id_is_valid "$s" || return 1
+        [ "$s" = "$r2" ] && break
+        r2="${r2#*,}"
+      done
+    fi
+    printf '%s %s %s\n' "$id" "$state" "$subs"
+  done
+}
+
+# Prints the record with <id> reporting <state>, preserving entry order: an
+# existing entry keeps its position, a new one appends. State and id are
+# validated; anything else fails before touching tmux.
+tama_agents_set_state() { # <record> <id> <state>
+  local record="$1" id="$2" state="$3" line aid astate asubs out='' found=no parsed
+  tama_agent_id_is_valid "$id" || return 1
+  tama_agent_state_is_valid "$state" || return 1
+  if [ -n "$record" ]; then
+    parsed="$(tama_agents_parse "$record")" || return 1
+    while IFS= read -r line; do
+      aid="${line%% *}"
+      astate="${line#* }"; astate="${astate%% *}"
+      asubs="${line##* }"
+      if [ "$aid" = "$id" ]; then
+        astate="$state"
+        found=yes
+      fi
+      out="${out:+$out;}$aid=$astate/$asubs"
+    done <<EOF
+$parsed
+EOF
+  fi
+  if [ "$found" = yes ]; then
+    printf '%s' "$out"
+  else
+    printf '%s' "${out:+$out;}$id=$state/"
+  fi
+}
+
+# Prints the record without <id>. An unknown id leaves the record alone, so
+# unregistering twice is harmless.
+tama_agents_remove() { # <record> <id>
+  local record="$1" id="$2" line aid astate asubs out='' parsed
+  tama_agent_id_is_valid "$id" || return 1
+  [ -n "$record" ] || { printf ''; return 0; }
+  parsed="$(tama_agents_parse "$record")" || return 1
+  while IFS= read -r line; do
+    aid="${line%% *}"
+    astate="${line#* }"; astate="${astate%% *}"
+    asubs="${line##* }"
+    [ "$aid" = "$id" ] && continue
+    out="${out:+$out;}$aid=$astate/$asubs"
+  done <<EOF
+$parsed
+EOF
+  printf '%s' "$out"
+}
+
+# Prints the record with <id>'s subagent list replaced. An unknown agent is
+# created stateless: like the flat subagent list, tracking may precede the
+# first state report, and a stateless entry draws nothing until one arrives.
+tama_agents_set_subs() { # <record> <id> <space-separated subs>
+  local record="$1" id="$2" subs="$3" line aid astate asubs out='' found=no parsed stored
+  tama_agent_id_is_valid "$id" || return 1
+  # The record joins subagents with commas while the rest of the plugin speaks
+  # space-separated lists; validate each id, then store the joined form.
+  if [ -n "$subs" ]; then
+    local r2="$subs" s
+    stored=''
+    set -f
+    # shellcheck disable=SC2086 # deliberate: the caller's list is space separated
+    for s in $subs; do
+      tama_agent_id_is_valid "$s" || { set +f; return 1; }
+      stored="${stored:+$stored,}$s"
+    done
+    set +f
+  else
+    stored=''
+  fi
+  if [ -n "$record" ]; then
+    parsed="$(tama_agents_parse "$record")" || return 1
+    while IFS= read -r line; do
+      aid="${line%% *}"
+      astate="${line#* }"; astate="${astate%% *}"
+      asubs="${line##* }"
+      if [ "$aid" = "$id" ]; then
+        asubs="$stored"
+        found=yes
+      fi
+      out="${out:+$out;}$aid=$astate/$asubs"
+    done <<EOF
+$parsed
+EOF
+  fi
+  if [ "$found" = yes ]; then
+    printf '%s' "$out"
+  else
+    printf '%s' "${out:+$out;}$id=/$stored"
+  fi
+}
+
+# Prints the record keeping only the listed ids, in listed order; states and
+# subagent lists of survivors are preserved. Nothing listed empties the
+# record. This is the existence healing the per-agent world needs: integrations
+# with an authoritative snapshot drop ghosts without touching live entries.
+tama_agents_prune() { # <record> <id>…
+  local record="$1" id out='' line aid astate asubs want parsed
+  shift
+  [ -n "$record" ] || { printf ''; return 0; }
+  for id in "$@"; do
+    tama_agent_id_is_valid "$id" || return 1
+  done
+  parsed="$(tama_agents_parse "$record")" || return 1
+  while IFS= read -r line; do
+    aid="${line%% *}"
+    astate="${line#* }"; astate="${astate%% *}"
+    asubs="${line##* }"
+    want=no
+    for id in "$@"; do
+      if [ "$aid" = "$id" ]; then want=yes; break; fi
+    done
+    [ "$want" = yes ] || continue
+    out="${out:+$out;}$aid=$astate/$asubs"
+  done <<EOF
+$parsed
+EOF
+  # Listed order, not stored order: the snapshot is authoritative.
+  local ordered='' oid rest seg sid
+  for oid in "$@"; do
+    rest="$out"
+    while [ -n "$rest" ]; do
+      seg="${rest%%;*}"
+      if [ "$seg" = "$rest" ]; then rest=''; else rest="${rest#*;}"; fi
+      sid="${seg%%=*}"
+      [ "$sid" = "$oid" ] || continue
+      ordered="${ordered:+$ordered;}$seg"
+    done
+  done
+  printf '%s' "$ordered"
+}
+
+# Whether <id> names an entry of the record, in any state.
+tama_agents_has() { # <record> <id>
+  local line aid parsed
+  [ -n "$1" ] || return 1
+  parsed="$(tama_agents_parse "$1")" || return 1
+  while IFS= read -r line; do
+    aid="${line%% *}"
+    [ "$aid" = "$2" ] && return 0
+  done <<EOF
+$parsed
+EOF
+  return 1
+}
+
+# Prints the subagent list of one entry, space separated like the flat list,
+# or nothing when the entry is unknown or stateless. The record stores them
+# comma-separated; the translation happens here so the rest of the plugin
+# keeps speaking the flat list's language.
+tama_agents_subs() { # <record> <id>
+  local line aid astate asubs parsed
+  [ -n "$1" ] || return 0
+  parsed="$(tama_agents_parse "$1")" || return 1
+  while IFS= read -r line; do
+    aid="${line%% *}"
+    if [ "$aid" = "$2" ]; then
+      astate="${line#* }"; astate="${astate%% *}"
+      asubs="${line##* }"
+      [ -n "$astate" ] || return 0
+      printf '%s' "${asubs//,/ }"
+      return 0
+    fi
+  done <<EOF
+$parsed
+EOF
+  return 0
+}
+# Space-joined derived states of one agent record, first-seen order.
+# Stateless entries contribute nothing. Empty when the pane holds no agent
+# entries — which is how every other writer knows the legacy single state
+# still owns the pane.
+tama_agents_display() { # <record>
+  local line aid astate asubs out='' parsed
+  [ -n "$1" ] || return 0
+  parsed="$(tama_agents_parse "$1")" || return 1
+  while IFS= read -r line; do
+    aid="${line%% *}"
+    astate="${line#* }"; astate="${astate%% *}"
+    asubs="${line##* }"
+    [ -n "$astate" ] || continue
+    tama_pane_derive "$astate" "$asubs"
+    out="${out:+$out }$TAMA_PANE_DERIVED"
+  done <<EOF
+$parsed
+EOF
+  printf '%s' "$out"
+}
+
+# What a pane shows: its agents when it has any, the legacy single state
+# otherwise. One rule everywhere something compares or renders a display, so
+# an agent pane never flickers between the two halves.
+tama_pane_agent_display() { # <agents record> <main> <subs>
+  local agents_display
+  agents_display="$(tama_agents_display "$1")" || agents_display=''
+  if [ -n "$agents_display" ]; then
+    printf '%s' "$agents_display"
+  else
+    tama_pane_derive "$2" "$3"
+    printf '%s' "$TAMA_PANE_DERIVED"
+  fi
+}
+
 # The subagent list: opaque ids the agent's hooks supply, space separated. The
 # plugin counts them and knows nothing else about them.
 #
@@ -112,6 +389,7 @@ tama_subagents_contains() { # <list> <id>
 
 # Number of opaque ids in the pane's space-delimited set, without exposing them.
 # The result is in TAMA_SUBAGENTS_COUNT.
+# shellcheck disable=SC2034  # read by writers in libexec/, which source this file
 tama_subagents_count() { # <list>
   TAMA_SUBAGENTS_COUNT=0
   [ -n "$1" ] || return 0
@@ -173,6 +451,7 @@ tama_pane_value_is_storable() { # <value>
 # `label` is omitted from the hot read path but still belongs in this list.
 TAMA_PANE_OPTIONS='state_main
 subagents
+agents
 cmd
 agent
 cwd
@@ -243,6 +522,7 @@ EOF
 # that client's own status-interval comes round — measured at over six seconds for
 # changes a third of a second apart. Only a change the status line would show is
 # worth that, and there is nothing to force for a snapshot nobody draws.
+# shellcheck disable=SC2034  # TAMA_BATCH_WRITE_STATUS is read by writers in libexec/
 tama_batch_flush() { # <refresh: yes|no> [changed window id]
   local refresh="$1" window_id="${2:-}"
   if [ "$TAMA_BATCH_COUNT" -eq 0 ]; then
