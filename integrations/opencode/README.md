@@ -197,6 +197,36 @@ toggle.
 - The integration deliberately contains lookup, tmux, CLI, and notification failures so they do
   not interrupt OpenCode. If OpenCode works but no state appears, use `doctor` and the path checks
   above; silence is the operational failure policy, not evidence that a command succeeded.
+- To capture the live v2 event stream when the mapping looks stale (e.g. a pane stuck in `idle`
+  while a turn runs), load a temporary logging plugin alongside this one and `opencode reload`:
+  every per-directory instance then appends `{ type, sessionID, locationDir }` to
+  `/tmp/opencode-events.jsonl`. Execution transitions arrive location-less (attributed through a
+  `session.get` lookup); step, tool, text, and reasoning events carry the directory. Remove the
+  entry and reload when done.
+
+```ts
+export default {
+  id: "tama-debug",
+  setup: async (ctx: any) => {
+    const fs = await import("node:fs");
+    const controller = new AbortController();
+    (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+          const e: any = event;
+          fs.appendFileSync("/tmp/opencode-events.jsonl", JSON.stringify({
+            instanceDirectory: ctx?.location?.directory,
+            type: e?.type,
+            sessionID: e?.data?.sessionID,
+            locationDir: e?.location?.directory ?? e?.data?.location?.directory,
+          }) + "\n");
+        }
+      } catch {}
+    })();
+    return () => controller.abort();
+  },
+};
+```
 
 ## Tested toolchain and development
 
