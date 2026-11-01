@@ -734,3 +734,25 @@ wait_until_no_icons() { # <window>
   run --separate-stderr "$PLUGIN_ROOT/bin/tama" gc --pane
   assert_usage_error '--pane needs a pane id'
 }
+
+@test "an agent-only pane is swept at a shell prompt but not before" {
+  # Agent entries draw icons like a main state, so they take the live-agent
+  # path: only a pane back at a shell prompt is stale evidence, never residue
+  # on a pane that might still be running its agent.
+  run "$PLUGIN_ROOT/bin/tama" state running --agent ses_A --pane "$PANE"
+  assert_success
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
+
+  # Still on `sleep 300`: not a prompt, so a possibly live agent keeps its entry.
+  run "$PLUGIN_ROOT/bin/tama" gc --window "$WINDOW"
+  assert_success
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
+  assert_pane_option "$PANE" agents 'ses_A=running/'
+
+  # At a prompt the agent is gone: the entry goes with the rest of the trace.
+  pane_running_shell "$PANE"
+  run "$PLUGIN_ROOT/bin/tama" gc --window "$WINDOW"
+  assert_success
+  assert_equal "$(tama_icons "$WINDOW")" ''
+  assert_no_trace "$PANE"
+}

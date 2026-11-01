@@ -165,6 +165,16 @@ tama_agents_parse() { # <record>
   done
 }
 
+# Splits one `id state subs` line from tama_agents_parse. The result is in
+# TAMA_AGENTS_AID, TAMA_AGENTS_ASTATE, and TAMA_AGENTS_ASUBS, so every
+# consumer unpacks the parse format in exactly one place.
+# shellcheck disable=SC2034  # read by the tama_agents_* callers
+tama_agents_split_line() { # <line>
+  TAMA_AGENTS_AID="${1%% *}"
+  TAMA_AGENTS_ASTATE="${1#* }"; TAMA_AGENTS_ASTATE="${TAMA_AGENTS_ASTATE%% *}"
+  TAMA_AGENTS_ASUBS="${1##* }"
+}
+
 # Prints the record with <id> reporting <state>, preserving entry order: an
 # existing entry keeps its position, a new one appends. State and id are
 # validated; anything else fails before touching tmux.
@@ -175,9 +185,8 @@ tama_agents_set_state() { # <record> <id> <state>
   if [ -n "$record" ]; then
     parsed="$(tama_agents_parse "$record")" || return 1
     while IFS= read -r line; do
-      aid="${line%% *}"
-      astate="${line#* }"; astate="${astate%% *}"
-      asubs="${line##* }"
+      tama_agents_split_line "$line"
+      aid="$TAMA_AGENTS_AID"; astate="$TAMA_AGENTS_ASTATE"; asubs="$TAMA_AGENTS_ASUBS"
       if [ "$aid" = "$id" ]; then
         astate="$state"
         found=yes
@@ -202,9 +211,8 @@ tama_agents_remove() { # <record> <id>
   [ -n "$record" ] || { printf ''; return 0; }
   parsed="$(tama_agents_parse "$record")" || return 1
   while IFS= read -r line; do
-    aid="${line%% *}"
-    astate="${line#* }"; astate="${astate%% *}"
-    asubs="${line##* }"
+    tama_agents_split_line "$line"
+    aid="$TAMA_AGENTS_AID"; astate="$TAMA_AGENTS_ASTATE"; asubs="$TAMA_AGENTS_ASUBS"
     [ "$aid" = "$id" ] && continue
     out="${out:+$out;}$aid=$astate/$asubs"
   done <<EOF
@@ -237,9 +245,8 @@ tama_agents_set_subs() { # <record> <id> <space-separated subs>
   if [ -n "$record" ]; then
     parsed="$(tama_agents_parse "$record")" || return 1
     while IFS= read -r line; do
-      aid="${line%% *}"
-      astate="${line#* }"; astate="${astate%% *}"
-      asubs="${line##* }"
+      tama_agents_split_line "$line"
+      aid="$TAMA_AGENTS_AID"; astate="$TAMA_AGENTS_ASTATE"; asubs="$TAMA_AGENTS_ASUBS"
       if [ "$aid" = "$id" ]; then
         asubs="$stored"
         found=yes
@@ -260,18 +267,25 @@ EOF
 # subagent lists of survivors are preserved. Nothing listed empties the
 # record. This is the existence healing the per-agent world needs: integrations
 # with an authoritative snapshot drop ghosts without touching live entries.
+# Duplicate listed ids are harmless: each entry is emitted once.
 tama_agents_prune() { # <record> <id>…
-  local record="$1" id out='' line aid astate asubs want parsed
+  local record="$1" id out='' line aid astate asubs want parsed deduped=''
   shift
   [ -n "$record" ] || { printf ''; return 0; }
   for id in "$@"; do
     tama_agent_id_is_valid "$id" || return 1
+    case " $deduped " in
+      *" $id "*) ;;
+      *) deduped="${deduped:+$deduped }$id" ;;
+    esac
   done
+  # Ids cannot hold whitespace by construction, so word splitting is exact.
+  # shellcheck disable=SC2086
+  set -- $deduped
   parsed="$(tama_agents_parse "$record")" || return 1
   while IFS= read -r line; do
-    aid="${line%% *}"
-    astate="${line#* }"; astate="${astate%% *}"
-    asubs="${line##* }"
+    tama_agents_split_line "$line"
+    aid="$TAMA_AGENTS_AID"; astate="$TAMA_AGENTS_ASTATE"; asubs="$TAMA_AGENTS_ASUBS"
     want=no
     for id in "$@"; do
       if [ "$aid" = "$id" ]; then want=yes; break; fi
@@ -296,14 +310,49 @@ EOF
   printf '%s' "$ordered"
 }
 
+# Prints the record keeping the listed ids plus every stored entry outside
+# <namespace>; entries under the namespace but not listed are dropped. Unlike
+# prune, survivors keep stored order: the snapshot only covers the caller's
+# own namespace, so it cannot claim authority over anyone else's positions.
+# This is how an integration reconciles its live set on a pane it shares
+# without dropping entries it can never enumerate.
+tama_agents_prune_namespace() { # <record> <namespace> <id>…
+  local record="$1" namespace="$2" line aid astate asubs out='' want parsed id
+  shift 2
+  [ -n "$namespace" ] || return 1
+  tama_agent_id_is_valid "$namespace" || return 1
+  [ -n "$record" ] || { printf ''; return 0; }
+  for id in "$@"; do
+    tama_agent_id_is_valid "$id" || return 1
+  done
+  parsed="$(tama_agents_parse "$record")" || return 1
+  while IFS= read -r line; do
+    tama_agents_split_line "$line"
+    aid="$TAMA_AGENTS_AID"; astate="$TAMA_AGENTS_ASTATE"; asubs="$TAMA_AGENTS_ASUBS"
+    case "$aid" in
+      "$namespace"*)
+        want=no
+        for id in "$@"; do
+          if [ "$aid" = "$id" ]; then want=yes; break; fi
+        done
+        [ "$want" = yes ] || continue
+        ;;
+    esac
+    out="${out:+$out;}$aid=$astate/$asubs"
+  done <<EOF
+$parsed
+EOF
+  printf '%s' "$out"
+}
+
 # Whether <id> names an entry of the record, in any state.
 tama_agents_has() { # <record> <id>
-  local line aid parsed
+  local line parsed
   [ -n "$1" ] || return 1
   parsed="$(tama_agents_parse "$1")" || return 1
   while IFS= read -r line; do
-    aid="${line%% *}"
-    [ "$aid" = "$2" ] && return 0
+    tama_agents_split_line "$line"
+    [ "$TAMA_AGENTS_AID" = "$2" ] && return 0
   done <<EOF
 $parsed
 EOF
@@ -311,20 +360,20 @@ EOF
 }
 
 # Prints the subagent list of one entry, space separated like the flat list,
-# or nothing when the entry is unknown or stateless. The record stores them
-# comma-separated; the translation happens here so the rest of the plugin
-# keeps speaking the flat list's language.
+# or nothing when the entry is unknown. Stateless entries still report their
+# tracked ids: read-modify-write builds on this, and dropping them would
+# silently discard subagents tracked before the first state report. The
+# record stores them comma-separated; the translation happens here so the
+# rest of the plugin keeps speaking the flat list's language.
 tama_agents_subs() { # <record> <id>
-  local line aid astate asubs parsed
+  local line aid parsed
   [ -n "$1" ] || return 0
   parsed="$(tama_agents_parse "$1")" || return 1
   while IFS= read -r line; do
-    aid="${line%% *}"
+    tama_agents_split_line "$line"
+    aid="$TAMA_AGENTS_AID"
     if [ "$aid" = "$2" ]; then
-      astate="${line#* }"; astate="${astate%% *}"
-      asubs="${line##* }"
-      [ -n "$astate" ] || return 0
-      printf '%s' "${asubs//,/ }"
+      printf '%s' "${TAMA_AGENTS_ASUBS//,/ }"
       return 0
     fi
   done <<EOF
@@ -341,9 +390,8 @@ tama_agents_display() { # <record>
   [ -n "$1" ] || return 0
   parsed="$(tama_agents_parse "$1")" || return 1
   while IFS= read -r line; do
-    aid="${line%% *}"
-    astate="${line#* }"; astate="${astate%% *}"
-    asubs="${line##* }"
+    tama_agents_split_line "$line"
+    aid="$TAMA_AGENTS_AID"; astate="$TAMA_AGENTS_ASTATE"; asubs="$TAMA_AGENTS_ASUBS"
     [ -n "$astate" ] || continue
     tama_pane_derive "$astate" "$asubs"
     out="${out:+$out }$TAMA_PANE_DERIVED"
@@ -498,14 +546,18 @@ tama_pane_stage() { # <pane_id> <option> <new> <stored>
   fi
 }
 
-# Stages the removal of every trace of an agent from <pane_id>. Unconditional,
-# unlike tama_pane_stage: `set -puq` on an option nobody set is free and cannot
-# fail, and asking first would cost a read per option — which the sweep, judging a
-# whole server from one list-panes, deliberately does not have. The caller decides
-# whether there was anything to remove at all.
-tama_pane_stage_clear() { # <pane_id>
+# Stages the removal of every trace of an agent from <pane_id>, except the
+# option named by <skip> when one is given (`agents`, for a clear that takes
+# down one integration's presence while entries another integration still owns
+# stay live). Unconditional, unlike tama_pane_stage: `set -puq` on an option
+# nobody set is free and cannot fail, and asking first would cost a read per
+# option — which the sweep, judging a whole server from one list-panes,
+# deliberately does not have. The caller decides whether there was anything to
+# remove at all.
+tama_pane_stage_clear() { # <pane_id> [skip-option]
   local option
   while IFS= read -r option; do
+    [ "${2:-}" = "$option" ] && continue
     tama_batch_add set -puq -t "$1" "@tama_pane_$option"
   done <<EOF
 $TAMA_PANE_OPTIONS

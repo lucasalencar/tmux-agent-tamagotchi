@@ -75,14 +75,16 @@ Usage: tama <subcommand> [args]
 Commands:
   state <state> [name]  Set pane state: running, waiting, idle, error, or clear.
                         With --agent <id>, report one per-agent entry instead.
+                        With --keep-agents, clear keeps the agent entries.
                         Agent ids are integration-namespaced and deterministic,
                         e.g. opencode-<session-id>; see ADR-0017 and ADR-0018.
   state subagent-start <id> / subagent-stop <id>
                         Track a delegated run by opaque id, pane-wide or per agent with --agent.
   state subagent-reconcile [<id>…]
                         Replace delegated runs from an authoritative snapshot.
-  state agent-reconcile [<agent-id>…]
+  state agent-reconcile [<agent-id>…] [--namespace <prefix>]
                         Replace the pane's agent set; drops entries not listed.
+                        With --namespace, only entries under it are judged.
   agents [--session <s>] List per-agent entries as stable, headerless TSV.
   icons <window_id>     Print pane-state icons in pane order.
   toggle-priority --window <target>

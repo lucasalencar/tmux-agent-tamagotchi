@@ -10,7 +10,12 @@ set -o nounset
 # shellcheck source=../lib/common.sh
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
-tama_summary_read_pane() { # <pane id>; 0 state, 2 no state, 1 invalid read
+# Prints one derived-state line per countable entry of <pane id>: one line
+# per agent entry when the pane has any, one legacy line otherwise. Return
+# 0 with lines printed, 2 with nothing printed but nothing wrong (a pane
+# with no state draws nothing), 1 on invalid read. Callers consume stdout
+# only; TAMA_PANE_DERIVED is left alone.
+tama_summary_emit_pane_states() { # <pane id>
   local raw field lines=0
   raw="$(tama_inventory_fields "$1" '#{pane_id}
 #{@tama_pane_state_main}
@@ -36,9 +41,7 @@ EOF
   [ "$lines" -eq 5 ] && [ -n "$TAMA_SUMMARY_PANE_ID" ] || return 1
   # A pane with agent entries counts once per entry; without them, the legacy
   # single state counts exactly as before. A malformed record falls back to the
-  # legacy half rather than hiding the pane. The caller prints
-  # $TAMA_PANE_DERIVED after this returns, so the agent branch prints its own
-  # lines and leaves that empty.
+  # legacy half rather than hiding the pane.
   local agents_display
   agents_display="$(tama_agents_display "$TAMA_SUMMARY_AGENTS" 2>/dev/null)" || agents_display=''
   if [ -n "$agents_display" ]; then
@@ -49,11 +52,11 @@ EOF
       printf '%s\n' "$state"
     done
     set +f
-    TAMA_PANE_DERIVED=''
     return 0
   fi
   [ -n "$TAMA_SUMMARY_STATE" ] || return 2
   tama_pane_derive "$TAMA_SUMMARY_STATE" "$TAMA_SUMMARY_SUBAGENTS"
+  printf '%s\n' "$TAMA_PANE_DERIVED"
   return 0
 }
 
@@ -79,13 +82,12 @@ tama_summary_records() { # <session id> <scope>
         esac
         seen="$seen|$pane_id|"
 
-        tama_summary_read_pane "$pane_id"
+        tama_summary_emit_pane_states "$pane_id"
         read_status=$?
         if [ "$read_status" -ne 0 ]; then
           [ "$read_status" -eq 2 ] && continue
           return 1
         fi
-        printf '%s\n' "$TAMA_PANE_DERIVED"
       done <<EOF
 $panes
 EOF

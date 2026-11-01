@@ -132,12 +132,21 @@ areport() {
   assert_pane_option "$PANE" agents 'ses_A=idle/new_9'
 }
 
-@test "malformed agent records draw nothing and never clear a live pane" {
+@test "malformed agent records fall back to the legacy state" {
+  areport "$PANE" running
   tmux_test_server_run set -p -t "$PANE" '@tama_pane_agents' 'ses_A=running'
-  assert_equal "$(tama_icons "$WINDOW")" ''
-  # A pane whose record cannot be parsed keeps no icon but is not cleared.
+  # The agent half draws nothing, but the legacy half still owns this pane.
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
+  # Clearing the garbled entry is a failed write, not a pane clear: the
+  # legacy icon survives it.
   run "$PLUGIN_ROOT/bin/tama" state clear --agent ses_A --pane "$PANE"
   assert_success
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
+}
+
+@test "a malformed agent record alone still draws nothing" {
+  tmux_test_server_run set -p -t "$PANE" '@tama_pane_agents' 'ses_A=running'
+  assert_equal "$(tama_icons "$WINDOW")" ''
 }
 
 @test "agents lists one row per entry with derived state and subagent count" {
@@ -202,4 +211,58 @@ t	$session_id	$window_index	$window_name	$window_id	$pane_index	$PANE	ses_B	idle
   run "$PLUGIN_ROOT/bin/tama" list
   assert_success
   assert_equal "$output" ''
+}
+
+@test "subagent tracking on a stateless entry keeps earlier ids" {
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start --agent ses_A --pane "$PANE" -- sub_1
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start --agent ses_A --pane "$PANE" -- sub_2
+  assert_success
+  assert_pane_option "$PANE" agents 'ses_A=/sub_1,sub_2'
+  areport "$PANE" idle --agent ses_A
+  assert_equal "$(tama_icons "$WINDOW")" ' ⚙'
+}
+
+@test "agent-reconcile with a duplicated id keeps one entry" {
+  areport "$PANE" running --agent ses_A
+  run "$PLUGIN_ROOT/bin/tama" state agent-reconcile ses_A ses_A --pane "$PANE"
+  assert_success
+  assert_pane_option "$PANE" agents 'ses_A=running/'
+}
+
+@test "agent-reconcile --namespace keeps entries outside it" {
+  areport "$PANE" running --agent opencode-A
+  areport "$PANE" idle --agent codex-B
+  run "$PLUGIN_ROOT/bin/tama" state agent-reconcile --namespace opencode- --pane "$PANE" -- opencode-A
+  assert_success
+  assert_pane_option "$PANE" agents 'opencode-A=running/;codex-B=idle/'
+  run "$PLUGIN_ROOT/bin/tama" state agent-reconcile --namespace opencode- --pane "$PANE"
+  assert_success
+  assert_pane_option "$PANE" agents 'codex-B=idle/'
+}
+
+@test "agent-reconcile --namespace rejects ids outside it" {
+  areport "$PANE" running --agent opencode-A
+  run "$PLUGIN_ROOT/bin/tama" state agent-reconcile --namespace opencode- --pane "$PANE" -- codex-B
+  assert_status 2
+  assert_pane_option "$PANE" agents 'opencode-A=running/'
+}
+
+@test "clear --keep-agents removes legacy trace but keeps agent entries" {
+  areport "$PANE" waiting
+  areport "$PANE" running --agent ses_A
+  run "$PLUGIN_ROOT/bin/tama" state clear --keep-agents --pane "$PANE"
+  assert_success
+  assert_pane_option "$PANE" agents 'ses_A=running/'
+  run tmux_test_server_run show -p -t "$PANE" -v @tama_pane_state_main
+  assert_status 1
+  assert_equal "$(tama_icons "$WINDOW")" ' ●'
+}
+
+@test "a per-agent subagent id outside the record charset is a usage error" {
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start --agent ses_A --pane "$PANE" -- 'has space'
+  assert_status 2
+  run "$PLUGIN_ROOT/bin/tama" state subagent-start --agent ses_A --pane "$PANE" -- 'a/b'
+  assert_status 2
+  assert_equal "$(tama_icons "$WINDOW")" ''
 }

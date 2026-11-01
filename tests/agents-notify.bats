@@ -124,3 +124,19 @@ teardown() {
 
   assert_equal "$group_first" "$group_second"
 }
+
+@test "a second notify for the same agent replaces its banner" {
+  local pane group_first group_second
+  pane="$(tmux_test_server_run new-window -t t: -d -P -F '#{pane_id}' -c "$BATS_TEST_TMPDIR")"
+
+  run "$PLUGIN_ROOT/bin/tama" notify test-agent first --agent ses_A --pane "$pane"
+  assert_success
+  group_first="$(tama_backend_value notify env.TAMA_GROUP)"
+
+  run "$PLUGIN_ROOT/bin/tama" notify test-agent second --agent ses_A --pane "$pane"
+  assert_success
+  group_second="$(tama_backend_value notify env.TAMA_GROUP)"
+
+  # Same per-agent group twice: one banner replaced, none orphaned.
+  assert_equal "$group_first" "$group_second"
+}

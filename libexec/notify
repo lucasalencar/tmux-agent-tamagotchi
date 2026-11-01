@@ -85,7 +85,8 @@ deliver() { # <target> <agent_name> <message> [agent_id]
   if [ -z "$agent_id" ]; then
     pending_present="$TAMA_WINDOW_NOTIFICATION_PENDING"
   else
-    pending_present="$(tmux_run show -wqv -t "$TAMA_WINDOW_ID" "$TAMA_WINDOW_NOTIFICATION_PENDING_AGENT_PREFIX$agent_id" 2>/dev/null)" || pending_present=''
+    # Reuse the marker the group call just read instead of asking tmux twice.
+    pending_present="$TAMA_NOTIFY_PENDING_READ"
   fi
   if [ -z "$pending_present" ]; then
     tama_batch_reset

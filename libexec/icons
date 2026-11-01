@@ -64,12 +64,7 @@ EOF
   # pane id below. They cannot join the render format above: the flat subagent
   # list holds arbitrary ids, so no separator reliably tells where it ends and
   # an encoded record begins. An unset option expands empty, which reads back
-  # as a bare pane id.
-  # Agent entries ride a second pane listing in the same round trip, joined by
-  # pane id below. They cannot join the render format above: the flat subagent
-  # list holds arbitrary ids, so no separator reliably tells where it ends and
-  # an encoded record begins. An unset option expands empty, which reads back
-  # as a bare pane id.
+  # as a bare pane id. The marker plus second listing below are one unit.
   set -- "$@" ';' display-message -p -t "$target" "$TAMA_ICONS_MARKER"
   set -- "$@" ';' list-panes -t "$target" -F '#{pane_id} #{@tama_pane_agents}'
 
@@ -286,23 +281,19 @@ EOF
           pane_glyphs="${pane_glyphs:+$pane_glyphs$TAMA_ICON_SEPARATOR}$TAMA_ICON_GLYPH"
         done
         set +f
-      fi
-    fi
-    if [ -z "$pane_glyphs" ]; then
-      if [ -n "$agent_record" ]; then
-        # A malformed agent record draws nothing rather than a neighbour's
-        # bytes; the legacy half still owns this pane when it has a state.
-        tama_pane_derive_record "$pane_record"
-        if [ -n "$TAMA_PANE_STATE_MAIN" ]; then
-          tama_pane_derive "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS"
-          tama_icons_glyph "$TAMA_PANE_DERIVED"
-          [ -n "$TAMA_ICON_GLYPH" ] && pane_glyphs="$TAMA_ICON_GLYPH"
-        fi
       else
+        # A malformed or stateless agent record draws nothing from the agent
+        # half; the legacy half still owns this pane when it has a state.
+        # tama_pane_derive_record sets only TAMA_PANE_DERIVED, which is the
+        # same fallback the agentless path below uses.
         tama_pane_derive_record "$pane_record"
         tama_icons_glyph "$TAMA_PANE_DERIVED"
         [ -n "$TAMA_ICON_GLYPH" ] && pane_glyphs="$TAMA_ICON_GLYPH"
       fi
+    else
+      tama_pane_derive_record "$pane_record"
+      tama_icons_glyph "$TAMA_PANE_DERIVED"
+      [ -n "$TAMA_ICON_GLYPH" ] && pane_glyphs="$TAMA_ICON_GLYPH"
     fi
     # A pane with nothing to draw contributes no separator either.
     [ -n "$pane_glyphs" ] || continue

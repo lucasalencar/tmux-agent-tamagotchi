@@ -83,11 +83,17 @@ _tama_stale_sweep() { # <list-panes …>
 
     # Flags: main state, snapshot, snapshot match, any plugin residue, and any
     # agent entry. The agent digit is separate because the encoded record holds
-    # literal commas, which would split a #{?,,} conditional apart.
+    # literal commas, which would split a #{?,,} conditional apart. Agent
+    # entries draw icons like a main state does, so they take the live-agent
+    # path: only a pane back at a shell prompt is swept, never a pane that
+    # might still be running its agent. Plain residue without state or agents
+    # cannot heal and goes unconditionally.
     case "$flags" in
       0???00) continue ;;
-      # Residue without state cannot heal because the pane draws no icon.
-      0??1?|0???1) ;;
+      # An agent entry draws an icon, so a pane holding one is live until it
+      # is back at a shell prompt — the same rule a main state follows.
+      0???1) tama_stale_is_shell "$current" || continue ;;
+      0??1?) ;;
       111??) continue ;;
       # A mismatch is stale only when the pane has returned to a known shell.
       1????) tama_stale_is_shell "$current" || continue ;;
