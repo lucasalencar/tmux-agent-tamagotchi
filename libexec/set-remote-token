@@ -66,15 +66,16 @@ main() {
   }
 
   # Persist for new servers, so the file and the server cannot drift apart.
-  # Single quotes in sh cannot nest, so a quote in the token becomes the
-  # close-open-escaped idiom and the file stays sourceable verbatim.
-  local token_file token_escaped persisted
+  # Quoted with the plugin's own shell quoter: a quote in the token becomes the
+  # close-open-escaped idiom and the file stays sourceable verbatim, including
+  # under the bash 3.2 macOS ships (whose ${//} expansion differs from bash 4+).
+  local token_file persisted
   persisted='nowhere (HOME is not set)'
   if [ -n "${HOME:-}" ]; then
     token_file="$(tama_remote_token_file)"
     if mkdir -p "${token_file%/*}" 2>/dev/null; then
-      token_escaped="${token//\'/\'\\\'\'}"
-      if printf "export TAMA_REMOTE_TOKEN='%s'\n" "$token_escaped" \
+      tama_shell_quote "$token"
+      if printf 'export TAMA_REMOTE_TOKEN=%s\n' "$TAMA_QUOTED" \
         >"$token_file" 2>/dev/null &&
         chmod 600 "$token_file" 2>/dev/null; then
         persisted="$token_file"
