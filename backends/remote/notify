@@ -23,11 +23,23 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 main() {
-  local title="${1-}" message="${2-}" payload
+  local title="${1-}" message="${2-}" payload origin
 
   # A banner with nothing to say would only be a request started to say it. The core
   # does not send one; a user's own caller might.
   [ -n "$message" ] || exit 0
+
+  # The sending machine stays visible where the banner lands: a local banner and a
+  # forwarded one would otherwise be indistinguishable on the showing computer.
+  tama_remote_origin
+  origin="$TAMA_REMOTE_ORIGIN"
+  if [ -n "$origin" ]; then
+    if [ -n "$title" ]; then
+      title="[$origin] $title"
+    else
+      title="[$origin]"
+    fi
+  fi
 
   # One object, every value escaped: a message is arbitrary text an agent wrote and
   # may hold quotes, backslashes and newlines. `printf` keeps values as arguments so

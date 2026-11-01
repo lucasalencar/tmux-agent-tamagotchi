@@ -24,6 +24,12 @@ setup() {
   mkdir -p "$TAMA_REMOTE_DIR"
   : >"$TAMA_REMOTE_DIR/requests"
 
+  # The documented setup exports TAMA_REMOTE_TOKEN in shell init, so a
+  # developer shell leaks it here. The receivers booted below must not gate
+  # on it unless a test passes --token explicitly, or every no-token test
+  # fails locally while CI stays green.
+  unset TAMA_REMOTE_TOKEN
+
   tama_start_server
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
@@ -146,6 +152,103 @@ agent_pane_elsewhere() {
   # these keys, so a renamed or added one must update both sides at once.
   assert_equal "$(python3 -c 'import json, sys; print(" ".join(sorted(json.load(open(sys.argv[1])))))' \
     "$TAMA_REMOTE_DIR/notify.json")" 'activate click group message title'
+}
+
+@test "a forwarded banner names the sending machine in its title" {
+  start_fake_remote_server
+  local pane
+  pane="$(agent_pane_elsewhere)"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  wait_for_remote_requests 1
+
+  local expected_origin
+  expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  [ -n "$expected_origin" ] || skip 'this machine has no hostname to prefix with'
+  assert_equal "$(remote_json_value notify title | cut -d' ' -f1)" "[$expected_origin]"
+  assert_contains "$(remote_json_value notify title)" 'claude-code - ' 'the title'
+}
+
+@test "a configured origin names that instead of the hostname" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin 'my-vm'
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  assert_equal "$(remote_json_value notify title | cut -d' ' -f1)" '[my-vm]'
+  assert_contains "$(remote_json_value notify title)" 'claude-code - ' 'the title'
+}
+
+@test "an empty origin draws without a prefix" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin ''
+
+  local pane title
+  pane="$(agent_pane_elsewhere)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  wait_for_remote_requests 1
+
+  assert_remote_json_value notify message 'permission needed'
+  title="$(remote_json_value notify title)"
+  case "$title" in
+    '['*)
+      printf 'expected no [origin] prefix, got: %s\n' "$title" >&2
+      return 1
+      ;;
+  esac
+  assert_contains "$title" 'claude-code - ' 'the title'
+}
+
+@test "an icon spelled inside the origin needs no second option" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin '💻 my-vm'
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  local title
+  title="$(remote_json_value notify title)"
+  case "$title" in
+    '[💻 my-vm] '*) ;;
+    *)
+      printf 'expected "[💻 my-vm] ..." prefix, got: %s\n' "$title" >&2
+      return 1
+      ;;
+  esac
+  assert_contains "$title" 'claude-code - ' 'the title'
+}
+
+@test "an origin with quotes and backslashes arrives intact" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin 'a"b\c'
+  tmux_test_server_run set -g @tama_title_format 'fixed-title'
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  assert_remote_json_value notify title '[a"b\c] fixed-title'
+}
+
+@test "an empty title draws the badge alone" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin 'my-vm'
+  tmux_test_server_run set -g @tama_title_format ''
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  assert_remote_json_value notify title '[my-vm]'
 }
 
 @test "the terminal to activate and the click travel with the banner" {
@@ -434,6 +537,30 @@ healthy_remote_server() {
   assert_output_contains 'no problems and no warnings'
 }
 
+@test "doctor reports the sending machine named in forwarded titles" {
+  healthy_remote_server
+  start_real_receiver --token 's3cr3t-token'
+  tmux_test_server_run set -g @tama_remote_url "$TAMA_RECEIVER_URL"
+
+  local expected_origin
+  expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  [ -n "$expected_origin" ] || skip 'this machine has no hostname to report'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains "@tama_remote_origin is unset: forwarded titles start with [$expected_origin]"
+
+  tmux_test_server_run set -g @tama_remote_origin 'my-vm'
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains "@tama_remote_origin is 'my-vm': forwarded titles start with [my-vm]"
+
+  tmux_test_server_run set -g @tama_remote_origin ''
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_remote_origin is empty: forwarded titles draw without a prefix'
+}
+
 @test "doctor warns when something that is not the receiver answers 200" {
   healthy_remote_server
   # The fixture answers 200 to every POST, which a real receiver never does for
@@ -654,6 +781,8 @@ ThreadingHTTPServer(("127.0.0.1", int(sys.argv[3])), Handler).serve_forever()
 
 # The real receiver, with the notifier replaced by the fixture that records the
 # command line — the whole showing half, without a banner appearing anywhere.
+# Booted with no ambient token: an explicitly passed --token still wins, but a
+# leaked developer token must never gate the no-token tests.
 start_real_receiver() { # [extra args…]
   export TAMA_NOTIFIER_DIR="$BATS_TEST_TMPDIR/notifier"
   mkdir -p "$TAMA_NOTIFIER_DIR"
@@ -662,7 +791,8 @@ start_real_receiver() { # [extra args…]
   port="$(free_port)"
   TAMA_RECEIVER_URL="http://127.0.0.1:$port"
   export TAMA_RECEIVER_URL
-  python3 "$PLUGIN_ROOT/backends/remote/receiver.py" --host 127.0.0.1 --port "$port" \
+  env -u TAMA_REMOTE_TOKEN python3 "$PLUGIN_ROOT/backends/remote/receiver.py" \
+    --host 127.0.0.1 --port "$port" \
     --terminal-notifier "$PLUGIN_ROOT/tests/fixtures/fake-notifier" "$@" \
     >/dev/null 2>&1 &
   TAMA_REMOTE_SERVER_PID=$!
@@ -722,6 +852,20 @@ assert_notifier_flag() { # <flag> <expected>
   health="$(curl -s "$TAMA_RECEIVER_URL/health")"
   assert_equal "$(python3 -c 'import json, sys; print(json.load(sys.stdin)["ok"])' <<<"$health")" 'True'
   assert_equal "$(python3 -c 'import json, sys; print(json.load(sys.stdin)["notifier"])' <<<"$health")" 'terminal-notifier'
+}
+
+@test "a leaked developer token does not gate the test receiver" {
+  # The documented setup exports TAMA_REMOTE_TOKEN in shell init, so a
+  # developer shell leaks it into every test process. A receiver booted
+  # without --token must stay open despite that, or every no-token test
+  # fails locally while CI stays green.
+  export TAMA_REMOTE_TOKEN='developer-shell-token'
+  start_real_receiver
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    --data-binary '{"title":"t","message":"m"}'
+  assert_success
+  assert_equal "$output" '200'
 }
 
 @test "the receiver guards dismissal like the backend does" {
@@ -1043,6 +1187,18 @@ NOTIFIER
   done
   assert_notifier_flag message 'permission needed'
   assert_notifier_flag group "tmux-window-$window"
+
+  local expected_origin
+  expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  [ -n "$expected_origin" ] || skip 'this machine has no hostname to prefix with'
+  case "$(notifier_flag title)" in
+    "[$expected_origin] claude-code - "*) ;;
+    *)
+      printf 'expected "[%s] claude-code - ..." title, got: %s\n' \
+        "$expected_origin" "$(notifier_flag title)" >&2
+      return 1
+      ;;
+  esac
 
   run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
   assert_success
