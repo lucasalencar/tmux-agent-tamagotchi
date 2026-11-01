@@ -262,6 +262,124 @@ describe("v2 flat events", () => {
     }
   })
 
+  test("maps step started onto running without clearing on step end", async () => {
+    const adapter = createEventAdapterV2({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+    })
+
+    // A step starting means the turn is active even when the execution
+    // start was missed (late subscribe, service restart gap). Step endings
+    // must not idle the pane: further steps may follow in the same turn.
+    expect(await adapter.adapt({
+      type: "session.step.started",
+      data: { sessionID: "root-a" },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+    })
+    expect(await adapter.adapt({
+      type: "session.step.ended",
+      data: { sessionID: "root-a" },
+    })).toEqual({ status: "unknown" })
+    expect(await adapter.adapt({ type: "session.step.started", data: {} })).toEqual({
+      status: "malformed",
+    })
+  })
+
+  test("maps tool and text activity onto running while endings stay unknown", async () => {
+    const adapter = createEventAdapterV2({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+    })
+
+    // Mid-step subscribes may first see a tool call or text delta instead of
+    // the step start: any activity means busy. Endings never idle the pane.
+    for (const type of [
+      "session.tool.called",
+      "session.tool.input.started",
+      "session.tool.input.delta",
+      "session.tool.progress",
+      "session.text.started",
+      "session.text.delta",
+      "session.reasoning.started",
+      "session.step.streamed",
+    ]) {
+      expect(await adapter.adapt({ type, data: { sessionID: "root-a" } })).toEqual({
+        status: "adapted",
+        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+      })
+    }
+    for (const type of [
+      "session.tool.success",
+      "session.tool.failed",
+      "session.text.ended",
+      "session.reasoning.ended",
+      "session.step.ended",
+      "session.step.failed",
+    ]) {
+      expect(await adapter.adapt({ type, data: { sessionID: "root-a" } })).toEqual({
+        status: "unknown",
+      })
+    }
+  })
+
+  test("tracks delegated step activity as subagent work with 2.2.5 locations", async () => {
+    const adapter = createEventAdapterV2({
+      directory: "/workspace",
+      lookupSession: async (sessionId) => ({
+        id: sessionId,
+        parentID: "root-a",
+        location: { directory: "/workspace" },
+      }),
+    })
+
+    // 2.2.5 nests the directory under location and always includes parentID
+    // for delegated sessions. Activity must start subagent tracking so the
+    // core can derive background instead of leaving the pane idle.
+    expect(await adapter.adapt({
+      type: "session.step.started",
+      data: { sessionID: "child-a" },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-status", sessionId: "child-a", kind: "delegated", status: "busy" },
+    })
+    expect(await adapter.adapt({
+      type: "session.tool.called",
+      data: { sessionID: "child-a" },
+    })).toEqual({
+      status: "adapted",
+      event: { type: "session-status", sessionId: "child-a", kind: "delegated", status: "busy" },
+    })
+  })
+
+  test("accepts full 2.2.5 step payloads with extra fields", async () => {
+    const adapter = createEventAdapterV2({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+    })
+
+    // Captured from the live 2.2.5 server: extra step fields and the
+    // top-level location must be ignored beyond attribution.
+    expect(await adapter.adapt({
+      type: "session.step.started",
+      location: { directory: "/workspace" },
+      data: {
+        sessionID: "root-a",
+        assistantMessageID: "msg_123",
+        agent: "build",
+        model: { providerID: "opencode-go", modelID: "muse-spark" },
+        started: 1793494602,
+      },
+    })).toEqual({
+      status: "adapted",
+      event: {
+        type: "session-status",
+        sessionId: "root-a",
+        kind: "root",
+        status: "busy",
+        directory: "/workspace",
+      },
+    })
+  })
+
   test("reports plain idle when the message lookup fails or the session is delegated", async () => {
     const throwing = createEventAdapterV2({
       lookupSession: async (sessionId) => ({ id: sessionId }),

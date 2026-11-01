@@ -61,6 +61,10 @@ export type OpenCodeLifecycleEvent = SdkLifecycleEvent | PermissionAskedEvent | 
 // OpenCode v2 delivers flat discriminated events over ctx.event.subscribe()
 // instead of the v1 { type, properties } envelope. Only the lifecycle subset
 // below is consumed; every other v2 event is ignored defensively.
+//
+// Step and tool activity rescues turns whose execution start was missed
+// (late subscribe after a service restart): any activity means busy, while
+// only the execution close may idle the pane again.
 export type OpenCodeV2Event = Readonly<
   | {
     type: "session.created"
@@ -93,6 +97,50 @@ export type OpenCodeV2Event = Readonly<
   | {
     type: "session.execution.failed"
     data: { sessionID: string; error?: { message?: string } }
+  }
+  | {
+    type: "session.step.started"
+    data: { sessionID: string }
+  }
+  | {
+    type: "session.tool.called"
+    data: { sessionID: string }
+  }
+  | {
+    type: "session.tool.input.started"
+    data: { sessionID: string }
+  }
+  | {
+    type: "session.tool.input.delta"
+    data: { sessionID: string }
+  }
+  | {
+    type: "session.tool.progress"
+    data: { sessionID: string }
+  }
+  | {
+    type: "session.text.started"
+    data: { sessionID: string }
+  }
+  | {
+    type: "session.text.delta"
+    data: { sessionID: string }
+  }
+  | {
+    type: "session.step.streamed"
+    data: { sessionID: string }
+  }
+  | {
+    type: "session.reasoning.started"
+    data: { sessionID: string }
+  }
+  | {
+    type: "session.reasoning.delta"
+    data: { sessionID: string }
+  }
+  | {
+    type: "session.retry.scheduled"
+    data: { sessionID: string }
   }
   | {
     type: "permission.asked"

@@ -116,12 +116,14 @@ pane state with the precedence `waiting > error > running > idle`:
 | --- | --- |
 | Root session created | Sets the pane to `idle`, showing that OpenCode is present. |
 | Root `busy` or `retry` | Sets that root to `running`; retry is not reported as failure. |
+| Root step, tool, text, or reasoning activity | Sets that root to `running`. This rescues turns whose execution start was missed (late subscribe after a service restart): any activity means the session is active now, while only the execution close may idle it again. Endings and terminal tool outcomes never idle the pane. |
 | Root `idle` or terminal assistant message | Sets that root to `idle`, unless its last attributed error is still active. The terminal message is a fallback for OpenCode versions or modes that do not emit an idle event. |
 | Permission asked | Sets the pane to `waiting`, including requests from delegated sessions. Concurrent requests remain independent. |
 | Permission replied | Removes only that request and recomputes the aggregate state. |
 | Attributed root error | Sets that root to persistent `error` and raises an error notification. A later `busy` or `retry`, or deleting the root, clears the error. |
 | Attributed delegated error | Stops only that subagent; it does not fail the root pane. |
 | Delegated `busy`/`retry` | Starts subagent tracking with the opaque OpenCode session id, allowing the core to derive `background`. |
+| Delegated step, tool, text, or reasoning activity | Starts subagent tracking like `busy`: any delegated activity means the subagent is active now. |
 | Delegated `idle`, error, or deletion | Stops that subagent id. Duplicate transitions are harmless. |
 | Session deletion | Removes only that session and its permission requests, then recomputes the remaining aggregate. |
 | OpenCode disposal | Drains admitted work, cancels pending completion work, stops tracked subagents, and clears the pane. |

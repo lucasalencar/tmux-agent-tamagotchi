@@ -48,6 +48,31 @@ describe("v2 setup", () => {
     await cleanup()
   })
 
+  test("reports running from step activity when the execution start was missed", async () => {
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
+    // No execution.started: the subscription began mid-turn (service restart
+    // gap). The first observed event is a step with the 2.2.5 location shape.
+    const events: unknown[] = [
+      { type: "session.created", data: { sessionID: "root-a" } },
+      {
+        type: "session.step.started",
+        location: { directory: DIRECTORY },
+        data: { sessionID: "root-a" },
+      },
+      { type: "session.execution.succeeded", data: { sessionID: "root-a" } },
+    ]
+    const cleanup = await setup(fakeContextV2(events, { "root-a": {} }, {}))
+    await settle()
+
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+    ])
+    await cleanup()
+  })
+
   test("ignores location-less events for sessions outside the instance directory", async () => {
     const commandCalls: string[][] = []
     const setup = createTmuxAgentTamagotchiPluginV2({ execute: fakeExecute(commandCalls) })
