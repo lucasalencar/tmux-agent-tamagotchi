@@ -148,6 +148,56 @@ agent_pane_elsewhere() {
     "$TAMA_REMOTE_DIR/notify.json")" 'activate click group message title'
 }
 
+@test "a forwarded banner names the sending machine in its title" {
+  start_fake_remote_server
+  local pane
+  pane="$(agent_pane_elsewhere)"
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  wait_for_remote_requests 1
+
+  local expected_origin
+  expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  [ -n "$expected_origin" ] || skip 'this machine has no hostname to prefix with'
+  assert_equal "$(remote_json_value notify title | cut -d' ' -f1)" "[$expected_origin]"
+  assert_contains "$(remote_json_value notify title)" 'claude-code - ' 'the title'
+}
+
+@test "a configured origin names that instead of the hostname" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin 'my-vm'
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  assert_equal "$(remote_json_value notify title | cut -d' ' -f1)" '[my-vm]'
+  assert_contains "$(remote_json_value notify title)" 'claude-code - ' 'the title'
+}
+
+@test "an empty origin draws without a prefix" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin ''
+
+  local pane title
+  pane="$(agent_pane_elsewhere)"
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' --pane "$pane"
+  assert_success
+  wait_for_remote_requests 1
+
+  assert_remote_json_value notify message 'permission needed'
+  title="$(remote_json_value notify title)"
+  case "$title" in
+    '['*)
+      printf 'expected no [origin] prefix, got: %s\n' "$title" >&2
+      return 1
+      ;;
+  esac
+  assert_contains "$title" 'claude-code - ' 'the title'
+}
+
 @test "the terminal to activate and the click travel with the banner" {
   start_fake_remote_server
   tmux_test_server_run set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
@@ -432,6 +482,30 @@ healthy_remote_server() {
   assert_output_contains 'receiver answers at'
   assert_output_contains '(HTTP 400)'
   assert_output_contains 'no problems and no warnings'
+}
+
+@test "doctor reports the sending machine named in forwarded titles" {
+  healthy_remote_server
+  start_real_receiver --token 's3cr3t-token'
+  tmux_test_server_run set -g @tama_remote_url "$TAMA_RECEIVER_URL"
+
+  local expected_origin
+  expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  [ -n "$expected_origin" ] || skip 'this machine has no hostname to report'
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains "@tama_remote_origin is unset: forwarded titles start with [$expected_origin]"
+
+  tmux_test_server_run set -g @tama_remote_origin 'my-vm'
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains "@tama_remote_origin is 'my-vm'"
+
+  tmux_test_server_run set -g @tama_remote_origin ''
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_remote_origin is empty: forwarded titles draw without a prefix'
 }
 
 @test "doctor warns when something that is not the receiver answers 200" {

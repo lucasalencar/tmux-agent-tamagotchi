@@ -248,6 +248,23 @@ tama_remote_timeout() {
   return 0
 }
 
+# The sending machine's name for remote banner titles, in TAMA_REMOTE_ORIGIN.
+# Explicit configuration wins; an explicitly empty one disables the prefix;
+# when never configured it falls back to the short hostname so two machines
+# sharing one showing computer stay distinguishable without configuration.
+# Always succeeds: an unresolvable hostname is an empty origin, which draws
+# without a prefix rather than failing a turn.
+# shellcheck disable=SC2034  # TAMA_REMOTE_ORIGIN is read by the caller
+tama_remote_origin() {
+  local configured
+  if configured="$(tmux_run show -gv @tama_remote_origin 2>/dev/null)"; then
+    TAMA_REMOTE_ORIGIN="$configured"
+  else
+    TAMA_REMOTE_ORIGIN="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  fi
+  return 0
+}
+
 # Escapes an arbitrary value for use inside JSON double quotes, on stdout. A message
 # is text an agent wrote and may hold quotes, backslashes and newlines; without this
 # the payload would be malformed JSON or, worse, a second object the receiver decodes

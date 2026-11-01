@@ -304,7 +304,7 @@ option map.
 | Priority | `@tama_priority_icon`, `@tama_priority_max_percent` (1–100) |
 | Window mark | `@tama_flag_text`, `@tama_flag_policy` (`ambient` or `selective`) |
 | Notifications | `@tama_notifications`, `@tama_backend`, `@tama_title_format`, `@tama_group_format`, `@tama_label_command` |
-| Remote | `@tama_remote_url`, `@tama_remote_token`, `@tama_remote_timeout`, `@tama_remote_curl` |
+| Remote | `@tama_remote_url`, `@tama_remote_token`, `@tama_remote_timeout`, `@tama_remote_curl`, `@tama_remote_origin` |
 | Focus suppression | `@tama_suppress_when_focused` |
 | Terminal | `@tama_terminal_app`, `@tama_terminal_bundle_id`, `@tama_terminal_notifier`, `@tama_notify_send` |
 | Capability overrides | `@tama_notify_command`, `@tama_dismiss_command`, `@tama_focused_command`, `@tama_focus_command` |
@@ -355,7 +355,10 @@ bin/tama install-receiver
 
 The receiver draws each forwarded banner natively — with `terminal-notifier`
 when installed, with `display notification` otherwise — and dismisses it when
-the tmux window is selected. A click only brings the terminal forward unless
+the tmux window is selected. Each forwarded title carries its sending machine
+as `[name]`, so banners from two tmux hosts stay apart on one desktop: set
+`@tama_remote_origin` to name that machine, or to the empty string for no
+prefix — when unset the short hostname is used. A click only brings the terminal forward unless
 the receiver was started with `--ssh-target user@vm`, in which case the click
 runs back over SSH and lands on the pane that spoke. There is no focus check
 across the network, so banners are never suppressed there: noise, never
