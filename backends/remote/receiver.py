@@ -18,7 +18,7 @@ nothing to install.
 
 Endpoints:
 
-    POST /notify   {"title", "message", "group", "activate", "click"}
+    POST /notify   {"title", "subtitle", "message", "group", "activate", "click"}
     POST /dismiss  {"group"}
     GET  /health   {"ok", "notifier"}
 
@@ -109,10 +109,16 @@ def applescript_escape(value):
                  .replace("\r", " ").replace("\n", " "))
 
 
-def draw_banner(notifier, osascript, title, message, group, activate, click_command):
+def draw_banner(notifier, osascript, title, subtitle, message, group, activate,
+               click_command):
     """Draw one banner. Returns True when a draw command reported success."""
     if notifier is not None:
         argv = [notifier, "-title", title, "-message", message]
+        # The origin rides one line below the title: a bracketed prefix in the
+        # title itself is dropped by the notifier, which draws the sender name
+        # in the title slot instead.
+        if subtitle:
+            argv += ["-subtitle", subtitle]
         if removable_group(group):
             argv += ["-group", group]
         if activate:
@@ -125,6 +131,8 @@ def draw_banner(notifier, osascript, title, message, group, activate, click_comm
     if osascript is not None:
         script = 'display notification "%s" with title "%s"' % (
             applescript_escape(message), applescript_escape(title))
+        if subtitle:
+            script += ' subtitle "%s"' % applescript_escape(subtitle)
         result = run_quiet([osascript, "-e", script])
         if result is not None and result.returncode == 0:
             return True
@@ -248,7 +256,8 @@ class ReceiverHandler(BaseHTTPRequestHandler):
                 self.server.ssh_binary, self.server.ssh_target, click)
         if draw_banner(
                 self.server.notifier, self.server.osascript,
-                title=text_field(payload, "title"), message=message,
+                title=text_field(payload, "title"),
+                subtitle=text_field(payload, "subtitle"), message=message,
                 group=text_field(payload, "group"),
                 activate=text_field(payload, "activate"),
                 click_command=click_command):

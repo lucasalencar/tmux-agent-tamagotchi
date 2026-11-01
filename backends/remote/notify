@@ -23,21 +23,24 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 main() {
-  local title="${1-}" message="${2-}" payload origin
+  local title="${1-}" message="${2-}" payload origin subtitle
 
   # A banner with nothing to say would only be a request started to say it. The core
   # does not send one; a user's own caller might.
   [ -n "$message" ] || exit 0
 
-  # The sending machine stays visible where the banner lands: a local banner and a
-  # forwarded one would otherwise be indistinguishable on the showing computer.
+  # The sending machine stays visible where the banner lands, one line below the
+  # title: a bracketed prefix there is dropped by the Mac notifier, which draws
+  # the sender name in the title slot instead. An empty title would draw no
+  # title at all, so the origin names the banner instead.
   tama_remote_origin
   origin="$TAMA_REMOTE_ORIGIN"
+  subtitle=''
   if [ -n "$origin" ]; then
     if [ -n "$title" ]; then
-      title="[$origin] $title"
+      subtitle="$origin"
     else
-      title="[$origin]"
+      title="$origin"
     fi
   fi
 
@@ -45,8 +48,9 @@ main() {
   # may hold quotes, backslashes and newlines. `printf` keeps values as arguments so
   # nothing in them is ever read as format.
   # shellcheck disable=SC2059  # the format is fixed; the data is in the arguments
-  payload="$(printf '{"title":"%s","message":"%s","group":"%s","activate":"%s","click":"%s"}' \
+  payload="$(printf '{"title":"%s","subtitle":"%s","message":"%s","group":"%s","activate":"%s","click":"%s"}' \
     "$(tama_remote_json_escape "$title")" \
+    "$(tama_remote_json_escape "$subtitle")" \
     "$(tama_remote_json_escape "$message")" \
     "$(tama_remote_json_escape "${TAMA_GROUP:-}")" \
     "$(tama_remote_json_escape "${TAMA_TERMINAL_BUNDLE_ID:-}")" \

@@ -810,25 +810,27 @@ doctor_backend_named() { # <how it was named>
   esac
 }
 
-# Which sending machine a forwarded banner names in its title. Explicit
-# configuration wins; an explicitly empty one draws without a prefix; when
-# never configured the short hostname is used so two tmux hosts sharing one
-# desktop stay distinguishable without configuration.
+# Which sending machine a forwarded banner draws as its subtitle. Explicit
+# configuration wins; an explicitly empty one draws without an origin
+# subtitle; when never configured the short hostname is used so two tmux
+# hosts sharing one desktop stay distinguishable without configuration. A
+# bracketed title prefix is not used: the Mac notifier drops it and shows the
+# sender name in the title slot instead.
 doctor_remote_origin() {
   local configured origin
   if configured="$(tmux_run show -gv @tama_remote_origin 2>/dev/null)"; then
     if [ -n "$configured" ]; then
-      doctor_ok "@tama_remote_origin is '$configured': forwarded titles start with [$configured]"
+      doctor_ok "@tama_remote_origin is '$configured': forwarded titles draw '$configured' as their subtitle"
     else
-      doctor_ok '@tama_remote_origin is empty: forwarded titles draw without a prefix'
+      doctor_ok '@tama_remote_origin is empty: forwarded titles draw without an origin subtitle'
     fi
   else
     tama_remote_origin
     origin="$TAMA_REMOTE_ORIGIN"
     if [ -n "$origin" ]; then
-      doctor_ok "@tama_remote_origin is unset: forwarded titles start with [$origin] (short hostname)"
+      doctor_ok "@tama_remote_origin is unset: forwarded titles draw '$origin' as their subtitle (short hostname)"
     else
-      doctor_ok '@tama_remote_origin is unset and no hostname resolves: forwarded titles draw without a prefix'
+      doctor_ok '@tama_remote_origin is unset and no hostname resolves: forwarded titles draw without an origin subtitle'
     fi
   fi
 }
