@@ -248,12 +248,12 @@ tama_remote_timeout() {
   return 0
 }
 
-# The sending machine's name for remote banner titles, in TAMA_REMOTE_ORIGIN.
-# Explicit configuration wins; an explicitly empty one disables the prefix;
-# when never configured it falls back to the short hostname so two machines
-# sharing one showing computer stay distinguishable without configuration.
-# Always succeeds: an unresolvable hostname is an empty origin, which draws
-# without a prefix rather than failing a turn.
+# The sending machine's name for remote banner subtitles, in TAMA_REMOTE_ORIGIN.
+# Explicit configuration wins; an explicitly empty one draws without an origin
+# subtitle; when never configured it falls back to the short hostname so two
+# machines sharing one showing computer stay distinguishable without
+# configuration. Always succeeds: an unresolvable hostname is an empty origin,
+# which draws without a subtitle rather than failing a turn.
 # shellcheck disable=SC2034  # TAMA_REMOTE_ORIGIN is read by the caller
 tama_remote_origin() {
   local configured

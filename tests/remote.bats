@@ -126,6 +126,17 @@ assert_remote_json_value() { # <path> <field> <expected>
   assert_equal "$actual" "$3"
 }
 
+# The title never carries the origin in brackets: the Mac notifier drops such
+# a title and shows the sender name instead, so the origin travels as subtitle.
+assert_title_without_origin_prefix() { # <title>
+  case "$1" in
+    '['*)
+      printf 'expected no [origin] prefix in the title, got: %s\n' "$1" >&2
+      return 1
+      ;;
+  esac
+}
+
 # An agent pane in a second window, so the user is somewhere else — the ordinary
 # case for a notification. Prints the pane id.
 agent_pane_elsewhere() {
@@ -151,10 +162,10 @@ agent_pane_elsewhere() {
   # The payload shape is a cross-machine contract: the receiver reads exactly
   # these keys, so a renamed or added one must update both sides at once.
   assert_equal "$(python3 -c 'import json, sys; print(" ".join(sorted(json.load(open(sys.argv[1])))))' \
-    "$TAMA_REMOTE_DIR/notify.json")" 'activate click group message title'
+    "$TAMA_REMOTE_DIR/notify.json")" 'activate click group message subtitle title'
 }
 
-@test "a forwarded banner names the sending machine in its title" {
+@test "a forwarded banner carries the sending machine as its subtitle" {
   start_fake_remote_server
   local pane
   pane="$(agent_pane_elsewhere)"
@@ -163,11 +174,15 @@ agent_pane_elsewhere() {
   assert_success
   wait_for_remote_requests 1
 
-  local expected_origin
+  local expected_origin title
   expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
-  [ -n "$expected_origin" ] || skip 'this machine has no hostname to prefix with'
-  assert_equal "$(remote_json_value notify title | cut -d' ' -f1)" "[$expected_origin]"
-  assert_contains "$(remote_json_value notify title)" 'claude-code - ' 'the title'
+  [ -n "$expected_origin" ] || skip 'this machine has no hostname to subtitle with'
+  # The title stays clean: brackets there break the Mac notifier, so the
+  # origin travels one line below instead.
+  title="$(remote_json_value notify title)"
+  assert_title_without_origin_prefix "$title"
+  assert_contains "$title" 'claude-code - ' 'the title'
+  assert_remote_json_value notify subtitle "$expected_origin"
 }
 
 @test "a configured origin names that instead of the hostname" {
@@ -179,11 +194,14 @@ agent_pane_elsewhere() {
   assert_success
   wait_for_remote_requests 1
 
-  assert_equal "$(remote_json_value notify title | cut -d' ' -f1)" '[my-vm]'
-  assert_contains "$(remote_json_value notify title)" 'claude-code - ' 'the title'
+  local title
+  title="$(remote_json_value notify title)"
+  assert_title_without_origin_prefix "$title"
+  assert_contains "$title" 'claude-code - ' 'the title'
+  assert_remote_json_value notify subtitle 'my-vm'
 }
 
-@test "an empty origin draws without a prefix" {
+@test "an empty origin draws without a subtitle" {
   start_fake_remote_server
   tmux_test_server_run set -g @tama_remote_origin ''
 
@@ -194,13 +212,9 @@ agent_pane_elsewhere() {
   wait_for_remote_requests 1
 
   assert_remote_json_value notify message 'permission needed'
+  assert_remote_json_value notify subtitle ''
   title="$(remote_json_value notify title)"
-  case "$title" in
-    '['*)
-      printf 'expected no [origin] prefix, got: %s\n' "$title" >&2
-      return 1
-      ;;
-  esac
+  assert_title_without_origin_prefix "$title"
   assert_contains "$title" 'claude-code - ' 'the title'
 }
 
@@ -215,14 +229,9 @@ agent_pane_elsewhere() {
 
   local title
   title="$(remote_json_value notify title)"
-  case "$title" in
-    '[💻 my-vm] '*) ;;
-    *)
-      printf 'expected "[💻 my-vm] ..." prefix, got: %s\n' "$title" >&2
-      return 1
-      ;;
-  esac
+  assert_title_without_origin_prefix "$title"
   assert_contains "$title" 'claude-code - ' 'the title'
+  assert_remote_json_value notify subtitle '💻 my-vm'
 }
 
 @test "an origin with quotes and backslashes arrives intact" {
@@ -235,10 +244,11 @@ agent_pane_elsewhere() {
   assert_success
   wait_for_remote_requests 1
 
-  assert_remote_json_value notify title '[a"b\c] fixed-title'
+  assert_remote_json_value notify title 'fixed-title'
+  assert_remote_json_value notify subtitle 'a"b\c'
 }
 
-@test "an empty title draws the badge alone" {
+@test "an empty title draws the origin alone" {
   start_fake_remote_server
   tmux_test_server_run set -g @tama_remote_origin 'my-vm'
   tmux_test_server_run set -g @tama_title_format ''
@@ -248,7 +258,10 @@ agent_pane_elsewhere() {
   assert_success
   wait_for_remote_requests 1
 
-  assert_remote_json_value notify title '[my-vm]'
+  # An empty title would draw no title at all; the origin names the banner
+  # instead so every slot still carries content.
+  assert_remote_json_value notify title 'my-vm'
+  assert_remote_json_value notify subtitle ''
 }
 
 @test "the terminal to activate and the click travel with the banner" {
@@ -537,7 +550,7 @@ healthy_remote_server() {
   assert_output_contains 'no problems and no warnings'
 }
 
-@test "doctor reports the sending machine named in forwarded titles" {
+@test "doctor reports the sending machine drawn as the subtitle" {
   healthy_remote_server
   start_real_receiver --token 's3cr3t-token'
   tmux_test_server_run set -g @tama_remote_url "$TAMA_RECEIVER_URL"
@@ -548,17 +561,17 @@ healthy_remote_server() {
 
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains "@tama_remote_origin is unset: forwarded titles start with [$expected_origin]"
+  assert_output_contains "@tama_remote_origin is unset: forwarded titles draw '$expected_origin' as their subtitle"
 
   tmux_test_server_run set -g @tama_remote_origin 'my-vm'
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains "@tama_remote_origin is 'my-vm': forwarded titles start with [my-vm]"
+  assert_output_contains "@tama_remote_origin is 'my-vm': forwarded titles draw 'my-vm' as their subtitle"
 
   tmux_test_server_run set -g @tama_remote_origin ''
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains '@tama_remote_origin is empty: forwarded titles draw without a prefix'
+  assert_output_contains '@tama_remote_origin is empty: forwarded titles draw without an origin subtitle'
 }
 
 @test "doctor warns when something that is not the receiver answers 200" {
@@ -823,6 +836,15 @@ assert_notifier_flag() { # <flag> <expected>
   assert_equal "$actual" "$2"
 }
 
+# The absence half of assert_notifier_flag: the flag must not have been passed.
+refute_notifier_flag() { # <flag>
+  local file="$TAMA_NOTIFIER_DIR/$1"
+  if [ -e "$file" ]; then
+    printf 'expected no -%s flag, got: %s\n' "$1" "$(cat "$file")" >&2
+    return 1
+  fi
+}
+
 @test "the receiver draws what it is sent, natively" {
   start_real_receiver
   local payload
@@ -847,11 +869,38 @@ assert_notifier_flag() { # <flag> <expected>
   assert_notifier_flag group 'tmux-window-@7'
   assert_notifier_flag activate 'com.mitchellh.ghostty'
 
+  # A missing subtitle draws nothing extra: no -subtitle flag at all.
+  refute_notifier_flag subtitle
+
   # The health contract the doctor probe and monitoring rely on.
   local health
   health="$(curl -s "$TAMA_RECEIVER_URL/health")"
   assert_equal "$(python3 -c 'import json, sys; print(json.load(sys.stdin)["ok"])' <<<"$health")" 'True'
   assert_equal "$(python3 -c 'import json, sys; print(json.load(sys.stdin)["notifier"])' <<<"$health")" 'terminal-notifier'
+}
+
+@test "the receiver draws the origin as the subtitle" {
+  start_real_receiver
+  local payload
+  payload='{"title":"claude-code - api","subtitle":"my-vm","message":"permission needed"}'
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    --data-binary "$payload"
+  assert_success
+  assert_equal "$output" '200'
+
+  local waited=0
+  while [ "$(wc -l <"$TAMA_NOTIFIER_DIR/calls")" -eq 0 ]; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || {
+      printf 'the notifier was never started\n' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  assert_notifier_flag title 'claude-code - api'
+  assert_notifier_flag subtitle 'my-vm'
+  assert_notifier_flag message 'permission needed'
 }
 
 @test "a leaked developer token does not gate the test receiver" {
@@ -866,6 +915,27 @@ assert_notifier_flag() { # <flag> <expected>
     --data-binary '{"title":"t","message":"m"}'
   assert_success
   assert_equal "$output" '200'
+}
+
+@test "the receiver draws nothing extra for an empty subtitle" {
+  start_real_receiver
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    --data-binary '{"title":"t","subtitle":"","message":"m"}'
+  assert_success
+  assert_equal "$output" '200'
+
+  local waited=0
+  while [ "$(wc -l <"$TAMA_NOTIFIER_DIR/calls")" -eq 0 ]; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || {
+      printf 'the notifier was never started\n' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  assert_notifier_flag title 't'
+  refute_notifier_flag subtitle
 }
 
 @test "the receiver guards dismissal like the backend does" {
@@ -1072,7 +1142,7 @@ assert_notifier_flag() { # <flag> <expected>
   done
 
   run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
-    --data-binary '{"title":"t","message":"say \"hi\"\nsecond line"}'
+    --data-binary '{"title":"t","subtitle":"a\"b\\c","message":"say \"hi\"\nsecond line"}'
   assert_success
   assert_equal "$output" '200'
 
@@ -1087,6 +1157,26 @@ assert_notifier_flag() { # <flag> <expected>
   done
   assert_contains "$(cat "$TAMA_OSASCRIPT_DIR/script")" 'display notification' 'the script'
   assert_contains "$(cat "$TAMA_OSASCRIPT_DIR/script")" 'say \"hi\"' 'the escaped message'
+  assert_contains "$(cat "$TAMA_OSASCRIPT_DIR/script")" 'subtitle "a\"b\\c"' 'the escaped subtitle'
+
+  run curl -s -o /dev/null -w '%{http_code}' -X POST "$TAMA_RECEIVER_URL/notify" \
+    --data-binary '{"title":"t2","subtitle":"","message":"m2"}'
+  assert_success
+  assert_equal "$output" '200'
+
+  waited=0
+  while [ "$(wc -l <"$TAMA_OSASCRIPT_DIR/calls")" -lt 2 ]; do
+    waited=$((waited + 1))
+    [ "$waited" -le 200 ] || {
+      printf 'osascript was never started again\n' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  if grep -qF 'subtitle "' "$TAMA_OSASCRIPT_DIR/script"; then
+    printf 'expected no subtitle clause, got: %s\n' "$(cat "$TAMA_OSASCRIPT_DIR/script")" >&2
+    return 1
+  fi
   # One line: a literal newline would end the AppleScript string early and the
   # banner would never draw. Compared numerically: BSD wc pads its output.
   [ "$(wc -l <"$TAMA_OSASCRIPT_DIR/script")" -eq 0 ]
@@ -1188,17 +1278,13 @@ NOTIFIER
   assert_notifier_flag message 'permission needed'
   assert_notifier_flag group "tmux-window-$window"
 
-  local expected_origin
+  local expected_origin title
   expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
-  [ -n "$expected_origin" ] || skip 'this machine has no hostname to prefix with'
-  case "$(notifier_flag title)" in
-    "[$expected_origin] claude-code - "*) ;;
-    *)
-      printf 'expected "[%s] claude-code - ..." title, got: %s\n' \
-        "$expected_origin" "$(notifier_flag title)" >&2
-      return 1
-      ;;
-  esac
+  [ -n "$expected_origin" ] || skip 'this machine has no hostname to subtitle with'
+  title="$(notifier_flag title)"
+  assert_title_without_origin_prefix "$title"
+  assert_contains "$title" 'claude-code - ' 'the title'
+  assert_notifier_flag subtitle "$expected_origin"
 
   run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
   assert_success

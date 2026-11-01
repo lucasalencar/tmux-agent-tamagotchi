@@ -120,12 +120,14 @@ per-window group, terminal bundle id and click action as JSON to
 `@tama_remote_url/dismiss`. Both travel by `curl` (`@tama_remote_curl` overrides
 which one), backgrounded so the hook never waits on the network, bounded by
 `@tama_remote_timeout` seconds (default 5, at most 300), and authenticated with
-`@tama_remote_token` as a bearer token when configured. The forwarded title is
-prefixed with the sending machine — `[my-vm] agent - dir` — so a local banner
-and a forwarded one stay distinguishable where they land: `@tama_remote_origin`
-names that machine explicitly — free text, so an icon can ride along
-(`[💻 my-vm]`) — an explicitly empty one draws without a prefix,
-and when never configured the short hostname is used. Prefer generated hex
+`@tama_remote_token` as a bearer token when configured. Each forwarded banner
+also carries the sending machine as its subtitle — `agent - dir` titled, `my-vm`
+subtitled — so a local banner and a forwarded one stay distinguishable where
+they land: `@tama_remote_origin` names that machine explicitly — free text, so
+an icon can ride along (`💻 my-vm`) — an explicitly empty one draws without an
+origin subtitle, and when never configured the short hostname is used. A
+bracketed prefix is deliberately not used: the Mac notifier drops a bracketed
+title and shows the sender name instead. Prefer generated hex
 tokens (what `install-receiver` creates): option values containing `$` or
 backslashes round-trip differently across tmux versions. Store it with
 `tama set-remote-token [<token>]` — server environment, option, and the
@@ -137,7 +139,10 @@ missing URL, or a URL that is not `http(s)://` is silence rather than a failed
 turn; `tama doctor` fails on the configuration instead.
 
 The other side runs `backends/remote/receiver.py` (standard library only, so any
-Python 3.7 or newer will do):
+Python 3.7 or newer will do). It is copied to the showing computer, not shared:
+after updating this plugin, update the clone there too and restart the receiver
+(`launchctl kickstart -k` for a plist install), or new sender fields are
+silently ignored by the old receiver until then:
 
 ```sh
 python3 backends/remote/receiver.py --port 8765 --token 'a-shared-secret'
