@@ -120,6 +120,12 @@ assert_remote_json_value() { # <path> <field> <expected>
   assert_equal "$actual" "$3"
 }
 
+# The short hostname the backend falls back to when @tama_remote_origin is
+# unset — the same resolution prod uses, so the expectation cannot drift from it.
+expected_hostname_origin() {
+  hostname -s 2>/dev/null || hostname 2>/dev/null || true
+}
+
 # An agent pane in a second window, so the user is somewhere else — the ordinary
 # case for a notification. Prints the pane id.
 agent_pane_elsewhere() {
@@ -158,7 +164,7 @@ agent_pane_elsewhere() {
   wait_for_remote_requests 1
 
   local expected_origin title
-  expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  expected_origin="$(expected_hostname_origin)"
   [ -n "$expected_origin" ] || skip 'this machine has no hostname to prefix with'
   title="$(remote_json_value notify title)"
   case "$title" in
@@ -224,7 +230,7 @@ agent_pane_elsewhere() {
   wait_for_remote_requests 1
 
   local expected_origin title
-  expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  expected_origin="$(expected_hostname_origin)"
   [ -n "$expected_origin" ] || skip 'this machine has no hostname to prefix with'
   title="$(remote_json_value notify title)"
   case "$title" in
@@ -248,6 +254,19 @@ agent_pane_elsewhere() {
   wait_for_remote_requests 1
 
   assert_remote_json_value notify title '[💻 my-vm]'
+}
+
+@test "an origin with quotes and backslashes arrives intact" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin 'a"b\c'
+  tmux_test_server_run set -g @tama_title_format 'fixed-title'
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  assert_remote_json_value notify title '[💻 a"b\c] fixed-title'
 }
 
 @test "an empty icon draws the origin without one" {
@@ -586,7 +605,7 @@ healthy_remote_server() {
   tmux_test_server_run set -g @tama_remote_url "$TAMA_RECEIVER_URL"
 
   local expected_origin
-  expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  expected_origin="$(expected_hostname_origin)"
   [ -n "$expected_origin" ] || skip 'this machine has no hostname to report'
 
   run "$PLUGIN_ROOT/bin/tama" doctor
@@ -596,7 +615,7 @@ healthy_remote_server() {
   tmux_test_server_run set -g @tama_remote_origin 'my-vm'
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains "@tama_remote_origin is 'my-vm'"
+  assert_output_contains "@tama_remote_origin is 'my-vm': forwarded titles start with [💻 my-vm]"
 
   tmux_test_server_run set -g @tama_remote_origin ''
   run "$PLUGIN_ROOT/bin/tama" doctor
@@ -1240,7 +1259,7 @@ NOTIFIER
   assert_notifier_flag group "tmux-window-$window"
 
   local expected_origin
-  expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  expected_origin="$(expected_hostname_origin)"
   [ -n "$expected_origin" ] || skip 'this machine has no hostname to prefix with'
   case "$(notifier_flag title)" in
     "[💻 $expected_origin] claude-code - "*) ;;

@@ -276,12 +276,8 @@ tama_remote_origin() {
 # Always succeeds.
 # shellcheck disable=SC2034  # TAMA_REMOTE_ORIGIN_ICON is read by the caller
 tama_remote_origin_icon() {
-  local configured
-  if configured="$(tmux_run show -gv @tama_remote_origin_icon 2>/dev/null)"; then
-    TAMA_REMOTE_ORIGIN_ICON="$configured"
-  else
-    TAMA_REMOTE_ORIGIN_ICON="$TAMA_REMOTE_ORIGIN_ICON_DEFAULT"
-  fi
+  TAMA_REMOTE_ORIGIN_ICON="$(tama_opt tama_remote_origin_icon \
+    "$TAMA_REMOTE_ORIGIN_ICON_DEFAULT")"
   return 0
 }
 
