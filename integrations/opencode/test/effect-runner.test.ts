@@ -85,7 +85,7 @@ describe("tama effect runner", () => {
       ["tmux", "show", "-gqv", "@tama_bin"],
       ["/repo with spaces/bin/tama", "state", "waiting", "OpenCode"],
       ["tmux", "show", "-gqv", "@tama_bin"],
-      ["/repo with spaces/bin/tama", "notify", "--agent", "root-a", "--", "OpenCode", "provider failed"],
+      ["/repo with spaces/bin/tama", "notify", "--agent", "opencode-root-a", "--", "OpenCode", "provider failed"],
       ["tmux", "show", "-gqv", "@tama_bin"],
       ["/repo with spaces/bin/tama", "state", "subagent-start", "--", "child; touch /tmp/not-executed"],
       ["tmux", "show", "-gqv", "@tama_bin"],
@@ -167,7 +167,7 @@ describe("tama effect runner", () => {
 
     expect(calls.filter((argv) => argv[0] !== "tmux")).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", "%pane-a"],
-      ["/plugin/bin/tama", "notify", "--agent", "root-a", "--pane", "%pane-a", "--", "OpenCode", "Done."],
+      ["/plugin/bin/tama", "notify", "--agent", "opencode-root-a", "--pane", "%pane-a", "--", "OpenCode", "Done."],
       ["/plugin/bin/tama", "state", "clear", "--pane", "%pane-a"],
     ])
 
@@ -194,8 +194,8 @@ describe("tama effect runner", () => {
     await fallback.clearPane()
 
     expect(fallbackCalls.filter((argv) => argv[0] !== "tmux")).toEqual([
-      ["/plugin/bin/tama", "notify", "--agent", "root-a", "--", "OpenCode", "boom"],
-      ["/plugin/bin/tama", "notify", "--agent", "root-a", "--", "OpenCode", "Done."],
+      ["/plugin/bin/tama", "notify", "--agent", "opencode-root-a", "--", "OpenCode", "boom"],
+      ["/plugin/bin/tama", "notify", "--agent", "opencode-root-a", "--", "OpenCode", "Done."],
     ])
   })
 
@@ -240,13 +240,41 @@ describe("tama effect runner", () => {
     await runner.run({ type: "agent-error", agentId: "root-a", message: "boom" })
 
     expect(calls.filter((argv) => argv[0] !== "tmux")).toEqual([
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", "%pane-a"],
-      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "root-a", "--pane", "%pane-a", "--", "child-a"],
-      ["/plugin/bin/tama", "state", "subagent-stop", "--agent", "root-a", "--pane", "%pane-a", "--", "child-a"],
-      ["/plugin/bin/tama", "state", "clear", "--agent", "root-a", "--pane", "%pane-a"],
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", "%pane-a", "--", "root-a", "root-b"],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", "%pane-a"],
+      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "opencode-root-a", "--pane", "%pane-a", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "subagent-stop", "--agent", "opencode-root-a", "--pane", "%pane-a", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "clear", "--agent", "opencode-root-a", "--pane", "%pane-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", "%pane-a", "--", "opencode-root-a", "opencode-root-b"],
       ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", "%pane-a", "--"],
-      ["/plugin/bin/tama", "notify", "--agent", "root-a", "--pane", "%pane-a", "--", "OpenCode", "boom"],
+      ["/plugin/bin/tama", "notify", "--agent", "opencode-root-a", "--pane", "%pane-a", "--", "OpenCode", "boom"],
+    ])
+  })
+
+  test("namespaces every CLI-visible agent id so integrations cannot collide", async () => {
+    const calls: string[][] = []
+    const runner = createEffectRunner({
+      execute: async (argv) => {
+        calls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+      resolvePane: async () => "%pane-a",
+    })
+
+    // A bare session id must never reach the CLI: another integration
+    // reporting the same raw id would address this integration's entry.
+    await runner.run({ type: "agent-state", agentId: "ses_shared", state: "running" })
+    await runner.notify("Done.", { agentId: "ses_shared" })
+
+    for (const argv of calls.filter((call) => call[0] !== "tmux")) {
+      const agentIndex = argv.indexOf("--agent")
+      expect(agentIndex).toBeGreaterThan(-1)
+      expect(argv[agentIndex + 1].startsWith("opencode-")).toBe(true)
+    }
+    expect(calls.filter((argv) => argv[0] !== "tmux")).toEqual([
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-ses_shared", "--pane", "%pane-a"],
+      ["/plugin/bin/tama", "notify", "--agent", "opencode-ses_shared", "--pane", "%pane-a", "--", "OpenCode", "Done."],
     ])
   })
 })

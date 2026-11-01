@@ -35,6 +35,10 @@ paths.
 
 An integration-supplied opaque value naming one **agent entry**, in
 `[A-Za-z0-9._-]+`. Unknown ids are never stored; malformed records never render.
+Ids must be namespaced per integration and deterministic — `<integration>-<id>`,
+e.g. `opencode-ses_abc123` — so two integrations reporting the same raw id never
+address each other's entry, and the owning integration can always recover the id
+it reported (which is what lets it reconcile its set).
 
 ## State
 

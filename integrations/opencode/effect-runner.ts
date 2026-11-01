@@ -36,6 +36,18 @@ const AGENT_NAME = "OpenCode"
 const GENERIC_ERROR = "OpenCode session failed"
 const GENERIC_COMPLETION = "OpenCode finished its turn"
 
+// Agent ids are integration-owned and must stay unique when several
+// integrations share a pane (Codex, Claude Code, OpenCode side by side).
+// Every id this integration reports is namespaced here, at the single
+// integration→core boundary, so the core never sees a bare session id:
+// `opencode-<sessionId>` is deterministic (stable server-side) and
+// recoverable (strip the prefix), which is what reconcile needs.
+const AGENT_ID_PREFIX = "opencode-"
+
+function namespacedAgentId(sessionId: string): string {
+  return `${AGENT_ID_PREFIX}${sessionId}`
+}
+
 export function createEffectRunner(dependencies: EffectRunnerDependencies): EffectRunner {
   // Under v2 the plugin runs in the shared background service, so the process
   // environment carries no agent pane of its own: callers pass resolvePane
@@ -95,7 +107,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
           const pane = await resolvePane()
           if (!pane && strictPane) return
           await invokeTama(
-            ["state", effect.state, AGENT_NAME, "--agent", effect.agentId],
+            ["state", effect.state, AGENT_NAME, "--agent", namespacedAgentId(effect.agentId)],
             effect.type,
             context,
             true,
@@ -106,14 +118,14 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
         case "agent-clear": {
           const pane = await resolvePane()
           if (!pane && strictPane) return
-          await invokeTama(["state", "clear", "--agent", effect.agentId], effect.type, context, true, pane)
+          await invokeTama(["state", "clear", "--agent", namespacedAgentId(effect.agentId)], effect.type, context, true, pane)
           break
         }
         case "agents-reconcile": {
           const pane = await resolvePane()
           if (!pane && strictPane) return
           await invokeTama(
-            ["state", "agent-reconcile", "--", ...effect.agentIds],
+            ["state", "agent-reconcile", "--", ...effect.agentIds.map(namespacedAgentId)],
             effect.type,
             context,
             true,
@@ -126,7 +138,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
           await invokeTama([
             "notify",
             "--agent",
-            effect.agentId,
+            namespacedAgentId(effect.agentId),
             "--",
             AGENT_NAME,
             sanitizeNotificationText(effect.message ?? "") ?? GENERIC_ERROR,
@@ -146,7 +158,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
           if (!pane && strictPane) return
           const verb = effect.type === "agent-subagent-start" ? "subagent-start" : "subagent-stop"
           await invokeTama(
-            ["state", verb, "--agent", effect.agentId, "--", effect.subagentId],
+            ["state", verb, "--agent", namespacedAgentId(effect.agentId), "--", effect.subagentId],
             effect.type,
             context,
             true,
@@ -182,7 +194,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
       await invokeTama([
         "notify",
         "--agent",
-        context.agentId,
+        namespacedAgentId(context.agentId),
         "--",
         AGENT_NAME,
         sanitizeNotificationText(message) ?? GENERIC_COMPLETION,

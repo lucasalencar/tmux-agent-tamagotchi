@@ -427,8 +427,9 @@ ID to limit the same output to that session; a missing or empty session produces
 `tama agents` prints one row per tracked agent entry instead of one row per pane, in
 this fixed column order: `session_name`, `session_id`, `window_index`, `window_name`,
 `window_id`, `pane_index`, `pane_id`, `agent`, `state`, and `subagents`. `agent` is the
-integration-supplied id, `state` its derived state, and `subagents` its live subagent
-count. Panes with no agent entries never appear here; see `tama list` for those.
+integration-supplied id — namespaced per integration and deterministic
+(`<integration>-<id>`, see ADR-0018) — `state` its derived state, and `subagents` its
+live subagent count. Panes with no agent entries never appear here; see `tama list` for those.
 
 Hook-facing commands follow these rules:
 

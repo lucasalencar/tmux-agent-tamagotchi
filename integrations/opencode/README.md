@@ -110,13 +110,15 @@ lenient and are processed as before.
 ## What it reports
 
 The plugin tracks every root session observed by one OpenCode instance. Each root owns
-one agent entry, addressed by its session id (`tama state … --agent <session-id>`); a
-pane draws one icon per entry and counts one line per entry in the summary. The legacy
-pane-state aggregate is still reported alongside with the precedence
-`waiting > error > running > idle`, so `tama list` rows, which are per pane, keep working
-untouched. Deleting a root unregisters only its entry (`agent-clear`); resync reconciles
-the pane's agent set against the snapshot before seeding, so sessions deleted while the
-plugin was down do not pin their last state.
+one agent entry, addressed by its namespaced session id (`tama state … --agent
+opencode-<session-id>`); a pane draws one icon per entry and counts one line per entry
+in the summary. The legacy pane-state aggregate is still reported alongside with the
+precedence `waiting > error > running > idle`, so `tama list` rows, which are per pane,
+keep working untouched. The `opencode-` prefix keeps entries unique when several
+integrations share a pane (see ADR-0018); it is deterministic and recoverable, which is
+what lets resync reconcile the pane's agent set. Deleting a root unregisters only its
+entry (`agent-clear`); resync reconciles the pane's agent set against the snapshot
+before seeding, so sessions deleted while the plugin was down do not pin their last state.
 
 | OpenCode lifecycle | tmux-agent-tamagotchi behavior |
 | --- | --- |

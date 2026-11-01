@@ -20,11 +20,11 @@ describe("v2 setup", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
     ])
     await cleanup()
     expect(tamaCalls(commandCalls).at(-1)).toEqual([
@@ -45,11 +45,11 @@ describe("v2 setup", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
     ])
     await cleanup()
   })
@@ -73,11 +73,11 @@ describe("v2 setup", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
     ])
     await cleanup()
   })
@@ -102,9 +102,9 @@ describe("v2 setup", () => {
     // never touch this instance's pane.
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
     ])
     await cleanup()
   })
@@ -133,18 +133,18 @@ describe("v2 setup", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
     ])
     await clock.advance(4_999)
     expect(tamaCalls(commandCalls)).toHaveLength(6)
     await clock.advance(1)
 
     expect(tamaCalls(commandCalls)).toContainEqual([
-      "/plugin/bin/tama", "notify", "--agent", "root-a", "--pane", PANE, "--", "OpenCode", "Delivered over v2.",
+      "/plugin/bin/tama", "notify", "--agent", "opencode-root-a", "--pane", PANE, "--", "OpenCode", "Delivered over v2.",
     ])
     await cleanup()
   })
@@ -173,16 +173,16 @@ describe("v2 setup", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
     ])
     await clock.advance(5_000)
 
     expect(tamaCalls(commandCalls)).toContainEqual([
-      "/plugin/bin/tama", "notify", "--agent", "root-a", "--pane", PANE, "--", "OpenCode", "Executed over v2.",
+      "/plugin/bin/tama", "notify", "--agent", "opencode-root-a", "--pane", PANE, "--", "OpenCode", "Executed over v2.",
     ])
     await cleanup()
   })
@@ -213,9 +213,9 @@ describe("v2 setup", () => {
     // The first resolution fails, so the legacy idle write is skipped; the
     // agent write re-resolves and lands, then both running writes carry the pane.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
     ])
     await cleanup()
   })
@@ -283,13 +283,13 @@ describe("v2 setup", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "root-a", "--pane", PANE, "--", "child-a"],
-      ["/plugin/bin/tama", "state", "subagent-stop", "--agent", "root-a", "--pane", PANE, "--", "child-a"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "opencode-root-a", "--pane", PANE, "--", "child-a"],
+      ["/plugin/bin/tama", "state", "subagent-stop", "--agent", "opencode-root-a", "--pane", PANE, "--", "child-a"],
     ])
     await cleanup()
   })
@@ -317,14 +317,14 @@ describe("v2 setup", () => {
 
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "waiting", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "waiting", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "waiting", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "error", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "error", "OpenCode", "--agent", "root-a", "--pane", PANE],
-      ["/plugin/bin/tama", "notify", "--agent", "root-a", "--pane", PANE, "--", "OpenCode", "Blew up."],
+      ["/plugin/bin/tama", "state", "error", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "notify", "--agent", "opencode-root-a", "--pane", PANE, "--", "OpenCode", "Blew up."],
     ])
     await cleanup()
   })
@@ -382,13 +382,13 @@ describe("v2 setup", () => {
 
     // Reconcile, then presence, then activity from the wait race, then the live idle lands last.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "root-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
     ])
     await cleanup()
   })
@@ -415,12 +415,12 @@ describe("v2 setup", () => {
     // through the second page itself: the wait race, not a lookup fallback,
     // decides its activity. The pre-seed reconcile names both roots.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "root-a", "root-b"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "opencode-root-a", "opencode-root-b"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-b", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-b", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-b", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-b", "--pane", PANE],
     ])
     await cleanup()
   })
@@ -444,10 +444,10 @@ describe("v2 setup", () => {
 
     // Delegated work found in the list is tracked from the wait race.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "root-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "root-a", "--pane", PANE, "--", "child-b"],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "opencode-root-a", "--pane", PANE, "--", "child-b"],
     ])
     await cleanup()
   })
@@ -482,13 +482,13 @@ describe("v2 setup", () => {
     // waiting above the resynced running state. The foreign delegated work
     // must not start subagent tracking.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "root-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "waiting", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "waiting", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "waiting", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
     ])
     await cleanup()
   })
@@ -517,12 +517,12 @@ describe("v2 setup", () => {
 
     // root-a pends past the deadline (busy) while root-b resolves at once.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "root-a", "root-b"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "opencode-root-a", "opencode-root-b"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-b", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-b", "--pane", PANE],
     ])
     await cleanup()
   })
@@ -573,11 +573,11 @@ describe("v2 setup", () => {
     // orders the idle seed before it.
     expect(order.indexOf("subscribed")).toBeLessThan(order.indexOf("list-end"))
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "root-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
-      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "root-a", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
     ])
     await cleanup()
   })
