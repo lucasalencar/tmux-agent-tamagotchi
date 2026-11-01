@@ -26,7 +26,9 @@ teardown() {
 }
 
 token_file() {
-  printf '%s' "$TEST_HOME/.config/tama/remote.env"
+  # Mirrors tama_remote_token_file in libexec/set-remote-token (HOME here is
+  # already TEST_HOME): XDG first, then the home tree.
+  printf '%s' "${XDG_CONFIG_HOME:-$TEST_HOME/.config}/tama/remote.env"
 }
 
 server_env_token() {
