@@ -524,6 +524,19 @@ teardown() {
   assert_pane_option_unset "$PANE" subagents
 }
 
+@test "an opaque subagent id with a semicolon survives the tmux batch intact" {
+  # Opaque provider ids may hold `;`, which tmux reads as a command
+  # separator. The batch escapes it instead of splitting the write, so the
+  # stored id is byte-identical and the follow-up stop finds it.
+  run "$PLUGIN_ROOT/bin/tama" state --pane "$PANE" -- subagent-start 'child;touch'
+  assert_success
+  assert_pane_option "$PANE" subagents 'child;touch'
+
+  run "$PLUGIN_ROOT/bin/tama" state --pane "$PANE" -- subagent-stop 'child;touch'
+  assert_success
+  assert_pane_option_unset "$PANE" subagents
+}
+
 @test "a value that tmux would read as a command separator survives intact" {
   # tmux takes an argument ending in `;` as the end of a command, and would both
   # store the name without it and abandon the rest of the batch.
