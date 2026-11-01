@@ -246,6 +246,43 @@ tama_notify_tmux_command() {
   return 0
 }
 
+# Fire-and-forget backend dismissal shared by the three dismiss paths: the
+# legacy banner, one agent's banner, and every pending agent banner. The
+# result lands in TAMA_NOTIFY_DISMISS_RESULT (`applied`, `failed`, or
+# `unsupported`) and never overrides a failed marker write: callers fold it
+# into their own status the same way. Dismissing a group with no banner is a
+# harmless no-op on every backend, and so is an unsupported backend.
+# shellcheck disable=SC2034  # TAMA_NOTIFY_DISMISS_RESULT is read by the caller
+tama_notify_backend_dismiss() { # <group>
+  local backend_status=0
+  TAMA_NOTIFY_DISMISS_RESULT=applied
+  tama_backend_invoke dismiss "$1" || backend_status=$?
+  if [ "$backend_status" -ne 0 ]; then
+    if [ "$backend_status" = "$TAMA_BACKEND_UNSUPPORTED" ]; then
+      TAMA_NOTIFY_DISMISS_RESULT=unsupported
+    else
+      TAMA_NOTIFY_DISMISS_RESULT=failed
+    fi
+  fi
+}
+
+# Whether any per-agent banner is pending on the window tama_window_read last
+# read. Presence is the signal: pending markers are only ever set to `on` and
+# unset on dismissal, so a listed marker names a live banner. Best effort like
+# the rest of dismissal: enumeration failing means nothing to dismiss.
+tama_notify_any_agent_pending() {
+  local raw line
+  raw="$(tmux_run show -w -t "$TAMA_WINDOW_ID" 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      "$TAMA_WINDOW_NOTIFICATION_PENDING_AGENT_PREFIX"*) return 0 ;;
+    esac
+  done <<EOF
+$raw
+EOF
+  return 1
+}
+
 # Takes down the banner named by the group the window last stored. An explicit dismiss
 # also expands the current format when no banner was recorded, which keeps it useful for
 # a user cleaning up a banner from before this version.
@@ -258,7 +295,6 @@ tama_notify_tmux_command() {
 # banner and every agent banner go down, so acknowledgement by navigation
 # clears the whole window at once.
 tama_notify_dismiss() { # [agent]
-  local backend_status=0
   TAMA_NOTIFY_DISMISS_STATUS=skipped
   if [ -n "${1:-}" ]; then
     tama_notify_dismiss_agent "$1"
@@ -284,20 +320,17 @@ tama_notify_dismiss() { # [agent]
   TAMA_GROUP="$TAMA_NOTIFY_GROUP"
   export TAMA_GROUP
 
-  # Fire and forget: a banner that would not go away is not worth a word out of an
-  # agent's hook, still less a failed turn.
-  tama_backend_invoke dismiss "$TAMA_NOTIFY_GROUP" || backend_status=$?
-  if [ "$backend_status" -eq 0 ]; then
-    [ "$TAMA_NOTIFY_DISMISS_STATUS" = failed ] || TAMA_NOTIFY_DISMISS_STATUS=applied
-  elif [ "$backend_status" -ne "$TAMA_BACKEND_UNSUPPORTED" ]; then
-    TAMA_NOTIFY_DISMISS_STATUS=failed
-  fi
+  tama_notify_backend_dismiss "$TAMA_GROUP"
+  case "$TAMA_NOTIFY_DISMISS_RESULT" in
+    failed) TAMA_NOTIFY_DISMISS_STATUS=failed ;;
+    applied) [ "$TAMA_NOTIFY_DISMISS_STATUS" = failed ] || TAMA_NOTIFY_DISMISS_STATUS=applied ;;
+  esac
 }
 
 # Takes down one agent's banner and forgets its group. The agent id is validated
 # by the caller; option names only ever hold the constrained charset.
 tama_notify_dismiss_agent() { # <agent>
-  local backend_status=0 pending
+  local pending
   TAMA_NOTIFY_DISMISS_STATUS=skipped
   tama_notify_group "$1"
   # Reuse the marker just read above instead of asking tmux twice.
@@ -316,12 +349,11 @@ tama_notify_dismiss_agent() { # <agent>
   TAMA_GROUP="$TAMA_NOTIFY_GROUP"
   export TAMA_GROUP
 
-  tama_backend_invoke dismiss "$TAMA_GROUP" || backend_status=$?
-  if [ "$backend_status" -eq 0 ]; then
-    [ "$TAMA_NOTIFY_DISMISS_STATUS" = failed ] || TAMA_NOTIFY_DISMISS_STATUS=applied
-  elif [ "$backend_status" -ne "$TAMA_BACKEND_UNSUPPORTED" ]; then
-    TAMA_NOTIFY_DISMISS_STATUS=failed
-  fi
+  tama_notify_backend_dismiss "$TAMA_GROUP"
+  case "$TAMA_NOTIFY_DISMISS_RESULT" in
+    failed) TAMA_NOTIFY_DISMISS_STATUS=failed ;;
+    applied) [ "$TAMA_NOTIFY_DISMISS_STATUS" = failed ] || TAMA_NOTIFY_DISMISS_STATUS=applied ;;
+  esac
 }
 
 # Takes down every agent banner pending on the window. Enumerates per-agent
@@ -331,7 +363,7 @@ tama_notify_dismiss_agent() { # <agent>
 # tmux round trip. Best effort like the rest of dismissal: callers aggregate
 # the status.
 tama_notify_dismiss_agents() {
-  local raw line name agent group backend_status=0 agents='' groups='' group_line
+  local raw line name agent group agents='' groups='' group_line
   TAMA_NOTIFY_DISMISS_AGENTS_STATUS=applied
   raw="$(tmux_run show -w -t "$TAMA_WINDOW_ID" 2>/dev/null)" || return 0
   while IFS= read -r line; do
@@ -376,10 +408,8 @@ EOF
     tama_notify_export_context
     TAMA_GROUP="$group_line"
     export TAMA_GROUP
-    tama_backend_invoke dismiss "$TAMA_GROUP" || backend_status=$?
-    if [ "$backend_status" -ne 0 ] && [ "$backend_status" -ne "$TAMA_BACKEND_UNSUPPORTED" ]; then
-      TAMA_NOTIFY_DISMISS_AGENTS_STATUS=failed
-    fi
+    tama_notify_backend_dismiss "$TAMA_GROUP"
+    [ "$TAMA_NOTIFY_DISMISS_RESULT" = failed ] && TAMA_NOTIFY_DISMISS_AGENTS_STATUS=failed
   done
   set +f
   if [ "$TAMA_NOTIFY_DISMISS_AGENTS_STATUS" = failed ]; then

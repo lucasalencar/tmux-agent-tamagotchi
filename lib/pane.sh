@@ -321,6 +321,12 @@ tama_agents_prune_namespace() { # <record> <namespace> <id>…
   shift 2
   [ -n "$namespace" ] || return 1
   tama_agent_id_is_valid "$namespace" || return 1
+  # The namespace must end in a separator: without the boundary, `--namespace
+  # foo` would judge `foobar-x` entries it can never enumerate.
+  case "$namespace" in
+    *-) ;;
+    *) return 1 ;;
+  esac
   [ -n "$record" ] || { printf ''; return 0; }
   for id in "$@"; do
     tama_agent_id_is_valid "$id" || return 1
@@ -343,6 +349,27 @@ tama_agents_prune_namespace() { # <record> <namespace> <id>…
 $parsed
 EOF
   printf '%s' "$out"
+}
+
+# Whether <id>'s entry in the record reports <state> with <space-separated
+# subs>. The read-back half of the optimistic write: only the writer's own
+# slice is compared, so a neighbour's concurrent write never reads as our
+# conflict — and the merge on mismatch rebuilds from the fresh record.
+tama_agents_entry_matches() { # <record> <id> <state> <subs>
+  local line parsed want_subs="$4"
+  [ -n "$1" ] || return 1
+  parsed="$(tama_agents_parse "$1")" || return 1
+  while IFS= read -r line; do
+    tama_agents_split_line "$line"
+    if [ "$TAMA_AGENTS_AID" = "$2" ]; then
+      [ "$TAMA_AGENTS_ASTATE" = "$3" ] || return 1
+      [ "${TAMA_AGENTS_ASUBS//,/ }" = "$want_subs" ] || return 1
+      return 0
+    fi
+  done <<EOF
+$parsed
+EOF
+  return 1
 }
 
 # Whether <id> names an entry of the record, in any state.

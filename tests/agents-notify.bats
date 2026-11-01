@@ -140,3 +140,27 @@ teardown() {
   # Same per-agent group twice: one banner replaced, none orphaned.
   assert_equal "$group_first" "$group_second"
 }
+
+@test "arriving at the window dismisses every pending agent banner" {
+  local pane window
+  pane="$(tmux_test_server_run new-window -t t: -d -P -F '#{pane_id}' -c "$BATS_TEST_TMPDIR")"
+  window="$(tmux_test_server_run display-message -p -t "$pane" '#{window_id}')"
+
+  run "$PLUGIN_ROOT/bin/tama" notify test-agent 'first needs you' --agent ses_A --pane "$pane"
+  assert_success
+  run "$PLUGIN_ROOT/bin/tama" notify test-agent 'second needs you' --agent ses_B --pane "$pane"
+  assert_success
+  [ "$(tama_backend_calls notify)" -eq 2 ]
+
+  # Navigation acknowledges the whole window: flag-equivalent pending markers
+  # all go down, even though no legacy banner was ever raised. The legacy
+  # group dismisses too (fire-and-forget), for a total of three backend calls.
+  run "$PLUGIN_ROOT/bin/tama" on-select --window "$window"
+  assert_success
+  [ "$(tama_backend_calls dismiss)" -eq 3 ]
+
+  # Nothing left pending: a second arrival dismisses nothing more.
+  run "$PLUGIN_ROOT/bin/tama" on-select --window "$window"
+  assert_success
+  [ "$(tama_backend_calls dismiss)" -eq 3 ]
+}

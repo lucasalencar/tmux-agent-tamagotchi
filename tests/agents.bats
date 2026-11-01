@@ -266,3 +266,10 @@ t	$session_id	$window_index	$window_name	$window_id	$pane_index	$PANE	ses_B	idle
   assert_status 2
   assert_equal "$(tama_icons "$WINDOW")" ''
 }
+
+@test "agent-reconcile --namespace requires a trailing dash boundary" {
+  areport "$PANE" running --agent opencode-A
+  run "$PLUGIN_ROOT/bin/tama" state agent-reconcile --namespace opencode --pane "$PANE" -- opencode-A
+  assert_status 2
+  assert_pane_option "$PANE" agents 'opencode-A=running/'
+}

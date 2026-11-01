@@ -87,9 +87,8 @@ tama_agents_records() { # [session_name_or_id]
         [ -n "$TAMA_AGENTS_RECORD" ] || continue
         parsed="$(tama_agents_parse "$TAMA_AGENTS_RECORD")" || continue
         while IFS= read -r line; do
-          aid="${line%% *}"
-          astate="${line#* }"; astate="${astate%% *}"
-          asubs="${line##* }"
+          tama_agents_split_line "$line"
+          aid="$TAMA_AGENTS_AID"; astate="$TAMA_AGENTS_ASTATE"; asubs="$TAMA_AGENTS_ASUBS"
           if [ -z "$aid" ] || [ -z "$astate" ]; then continue; fi
           tama_pane_derive "$astate" "$asubs"
           derived="$TAMA_PANE_DERIVED"

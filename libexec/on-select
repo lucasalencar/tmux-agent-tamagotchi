@@ -51,7 +51,9 @@ main() {
   if [ -n "$target" ]; then
     tama_flag_clear "$target" || true
     outcome="$TAMA_FLAG_CLEAR_STATUS"
-    if tama_notify_enabled && [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ]; then
+    # Either pending kind qualifies: a legacy banner, or any per-agent banner
+    # whose flag-equivalent lives only in its own marker.
+    if tama_notify_enabled && { [ -n "$TAMA_WINDOW_NOTIFICATION_PENDING" ] || tama_notify_any_agent_pending; }; then
       tama_notify_dismiss
       case "$TAMA_NOTIFY_DISMISS_STATUS" in
         failed) outcome=failed ;;
