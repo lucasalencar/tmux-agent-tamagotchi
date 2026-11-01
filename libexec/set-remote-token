@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+#
+#   tama set-remote-token <token>
+#
+# Stores the remote backend's shared secret for THIS tmux server, in two places
+# at once: the server environment (so later config reloads resolving
+# $TAMA_REMOTE_TOKEN keep working) and the @tama_remote_token option (so it
+# applies immediately, with no re-source). For new servers, export
+# TAMA_REMOTE_TOKEN from an unversioned file sourced by shell init instead —
+# this command only reaches the running server.
+#
+# Never prints the token back: argv already exposes it to ps while this runs,
+# and stdout must not add another copy (doctor redacts it for the same reason).
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local token='' positional=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --)
+        # Everything after this is the value, so a token beginning with a dash
+        # is a token rather than an option.
+        shift
+        while [ "$#" -gt 0 ]; do
+          positional=$((positional + 1))
+          case "$positional" in
+            1) token="$1" ;;
+            *) die_usage 'set-remote-token takes one token' ;;
+          esac
+          shift
+        done
+        ;;
+      -*) die_usage "unknown option: $1" ;;
+      *)
+        positional=$((positional + 1))
+        case "$positional" in
+          1) token="$1" ;;
+          *) die_usage 'set-remote-token takes one token' ;;
+        esac
+        shift
+        ;;
+    esac
+  done
+
+  [ -n "$token" ] || die_usage 'set-remote-token needs a token'
+
+  tmux_run set-environment -g TAMA_REMOTE_TOKEN "$token" >/dev/null 2>&1 || {
+    printf 'tama set-remote-token: could not update the tmux server environment\n' >&2
+    exit 1
+  }
+  tmux_run set -g @tama_remote_token "$token" >/dev/null 2>&1 || {
+    printf 'tama set-remote-token: could not set @tama_remote_token\n' >&2
+    exit 1
+  }
+
+  printf 'token stored for this tmux server (environment and @tama_remote_token)\n'
+  printf 'for new servers, export TAMA_REMOTE_TOKEN from an unversioned file in shell init\n'
+}
+
+main "$@"

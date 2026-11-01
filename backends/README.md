@@ -120,7 +120,10 @@ per-window group, terminal bundle id and click action as JSON to
 `@tama_remote_url/dismiss`. Both travel by `curl` (`@tama_remote_curl` overrides
 which one), backgrounded so the hook never waits on the network, bounded by
 `@tama_remote_timeout` seconds (default 5, at most 300), and authenticated with
-`@tama_remote_token` as a bearer token when configured. A missing `curl`, a
+`@tama_remote_token` as a bearer token when configured. Store it for the running
+server with `tama set-remote-token <token>` (environment and option at once,
+never printed back); for new servers, export `TAMA_REMOTE_TOKEN` from an
+unversioned file sourced by shell init. A missing `curl`, a
 missing URL, or a URL that is not `http(s)://` is silence rather than a failed
 turn; `tama doctor` fails on the configuration instead.
 

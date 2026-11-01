@@ -408,6 +408,7 @@ The plugin does not install mouse bindings.
 | `on-select` | Perform Attention acknowledgement and sweep stale state. |
 | `hook` | Dispatch an event to a bundled adapter. |
 | `setup` | Configure an integration that provides a setup helper. |
+| `set-remote-token` | Store the remote backend token for this tmux server. |
 | `install-receiver` | Install the remote receiver to start at login on this computer. |
 | `doctor` | Diagnose an installation. |
 | `version` | Print the plugin version. |
@@ -425,7 +426,7 @@ Hook-facing commands follow these rules:
 - Operational errors exit zero without interrupting an agent turn.
 - Invalid or rejected Priority mutations exit `1` with a diagnostic.
 
-`doctor` and `setup` report failures with a non-zero status. Both `setup` and `focus-window`
+`doctor`, `setup` and `set-remote-token` report failures with a non-zero status. Both `setup` and `focus-window`
 run outside tmux: setup may configure an agent before tmux starts, while desktop notification
 clicks do not inherit the hook environment. `install-receiver` also runs outside tmux and
 reports installation failures the same way.
