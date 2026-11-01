@@ -4,7 +4,7 @@
 #     [--ssh-target <target>] [--python <path>]
 #
 # Install the remote backend's receiver to start at login on THIS computer —
-# the one that shows the banners (a Mac). Renders examples/remote-receiver.plist
+# the one that shows the banners (a Mac). Renders examples/tamagotchi-remote-receiver.plist
 # with this clone's path and installs it into ~/Library/LaunchAgents.
 #
 # Runs outside tmux and speaks on stdout: interactive setup, never a hook. The
@@ -18,7 +18,7 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 TAMA_RECEIVER_LABEL='com.tamagotchi.remote-receiver'
-TAMA_RECEIVER_TEMPLATE="$TAMA_PLUGIN_DIR/examples/remote-receiver.plist"
+TAMA_RECEIVER_TEMPLATE="$TAMA_PLUGIN_DIR/examples/tamagotchi-remote-receiver.plist"
 TAMA_RECEIVER_PORT_DEFAULT='8765'
 
 fail() {

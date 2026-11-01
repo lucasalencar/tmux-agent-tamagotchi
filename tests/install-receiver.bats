@@ -51,7 +51,7 @@ assert_launchctl_called() { # <subcommand>
   # Guards the example itself: placeholders live only at functional sites, and
   # no comment carries a double hyphen, both of which break XML parsing.
   run python3 -c 'import plistlib, sys; plistlib.load(open(sys.argv[1], "rb"))' \
-    "$PLUGIN_ROOT/examples/remote-receiver.plist"
+    "$PLUGIN_ROOT/examples/tamagotchi-remote-receiver.plist"
   assert_success
 }
 

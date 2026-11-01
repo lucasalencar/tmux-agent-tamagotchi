@@ -137,7 +137,7 @@ or, on the showing computer itself, installed to start at login with one command
 bin/tama install-receiver
 ```
 
-which renders `examples/remote-receiver.plist`, loads it with `launchctl`, and
+which renders `examples/tamagotchi-remote-receiver.plist`, loads it with `launchctl`, and
 prints the token it generated (if any) for `@tama_remote_token`. To start it at
 login by hand instead, copy that example to `~/Library/LaunchAgents/` with the
 `%%PLUGIN_DIR%%` and `%%TOKEN%%` placeholders replaced (its header says how) and
