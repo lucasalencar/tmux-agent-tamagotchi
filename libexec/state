@@ -578,7 +578,8 @@ agent_report() { # <pane> <agent> <state> <name>
       fi
       break
     fi
-    if tama_agents_entry_matches "$TAMA_PANE_AGENTS" "$agent" "$state_main" "$base_subs"; then
+    if tama_agents_entry_matches "$TAMA_PANE_AGENTS" "$agent" "$state_main" "$base_subs" &&
+      [ "$TAMA_PANE_AGENTS" = "$record" ]; then
       if [ -n "${TAMA_LOG_FILE:-}" ]; then
         outcome="$TAMA_BATCH_WRITE_STATUS"
         reason=''
@@ -885,16 +886,28 @@ agent_subagent() { # <pane> <agent> <verb> <id>
     else
       if tama_subagents_contains "$entry_subs" "$id"; then settled=no; else settled=yes; fi
     fi
+    # A concurrent writer to another entry would have been clobbered by our
+    # flush: only an identical record proves ours landed without dropping
+    # theirs, so a mismatch reopens the attempt and merges again.
+    if [ "$settled" = yes ] && [ "$TAMA_PANE_AGENTS" != "$wanted" ]; then
+      settled=no
+    fi
     if [ "$settled" = yes ]; then
       [ "$refresh" = 'yes' ] ||
         ! tama_pane_display_changed "$was" "$(tama_pane_agent_display "$TAMA_PANE_AGENTS" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")" ||
         tama_summary_refresh_window "$TAMA_PANE_WINDOW_ID"
       if [ "$logging" = yes ]; then
-        tama_subagents_count "$TAMA_PANE_SUBAGENTS"
-        after_count="$TAMA_SUBAGENTS_COUNT"
+        # Fresh values: the decision above re-read the record, and per-agent
+        # subagents live in the entry, not in the pane's flat list.
+        entry_subs="$(tama_agents_subs "$TAMA_PANE_AGENTS" "$agent")" || entry_subs=''
+        set -f
+        # shellcheck disable=SC2086 # deliberate: split on spaces for counting
+        set -- $entry_subs
+        set +f
+        after_count=$#
         tama_log_subagent_attempt applied '' "$attempt" "$target" \
           "$TAMA_PANE_WINDOW_ID" '' "$before_derived" \
-          "$before_count" '' "$before_derived" "$after_count"
+          "$before_count" '' "$(tama_pane_agent_display "$TAMA_PANE_AGENTS" "$TAMA_PANE_STATE_MAIN" "$TAMA_PANE_SUBAGENTS")" "$after_count"
       fi
       return 0
     fi
@@ -1018,7 +1031,8 @@ agent_reconcile_subs() { # <pane> <agent> <space-separated-live-ids>
         "$TAMA_PANE_STATE_MAIN" "$before_derived" "$before_count"
       return 0
     fi
-    if [ "$(tama_agents_subs "$TAMA_PANE_AGENTS" "$agent" 2>/dev/null)" = "$subs" ]; then
+    if [ "$(tama_agents_subs "$TAMA_PANE_AGENTS" "$agent" 2>/dev/null)" = "$subs" ] &&
+      [ "$TAMA_PANE_AGENTS" = "$wanted" ]; then
       if [ "$logging" = yes ]; then
         tama_log_state_decision reconcile_subagents applied '' "$pane" \
           "$TAMA_PANE_WINDOW_ID" "$TAMA_PANE_STATE_MAIN" "$before_derived" \
@@ -1332,8 +1346,9 @@ main() {
     running | waiting | idle | error | clear | subagent-start | subagent-stop | subagent-reconcile)
       [ -z "$namespace" ] || die_usage '--namespace only applies to agent-reconcile'
       if [ "$keep_agents" = yes ]; then
-        [ "$state" = clear ] && [ -z "$agent" ] ||
+        if [ "$state" != clear ] || [ -n "$agent" ]; then
           die_usage '--keep-agents only applies to a pane-wide clear'
+        fi
       fi
       ;;
   esac

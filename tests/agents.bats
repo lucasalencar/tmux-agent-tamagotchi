@@ -160,6 +160,9 @@ areport() {
   local session_id
   session_id="$(tmux_test_server_run display-message -p -t "$PANE" '#{session_id}')"
   local window_index window_id window_name
+  # Pin the name: an unrenamed window follows the pane's current command,
+  # which can change between reading the expectation and running the command.
+  tmux_test_server_run rename-window -t "$WINDOW" 'agents window'
   window_index="$(tmux_test_server_run display-message -p -t "$PANE" '#{window_index}')"
   window_name="$(tmux_test_server_run display-message -p -t "$PANE" '#{window_name}')"
   window_id="$(tmux_test_server_run display-message -p -t "$PANE" '#{window_id}')"
