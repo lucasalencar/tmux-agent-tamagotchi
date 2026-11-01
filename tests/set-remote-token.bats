@@ -38,7 +38,10 @@ server_option_token() {
 }
 
 @test "a token with spaces and shell metacharacters is stored verbatim" {
-  local token='a b$c"d%e&f;g'
+  # No $ or backslash here: old tmux escapes those on display (the stored bytes
+  # stay literal, but read-back differs by version), so they cannot be asserted
+  # byte-exact portably. Generated hex tokens sidestep this entirely.
+  local token='a b"d%e&f;g#h'
 
   run "$PLUGIN_ROOT/bin/tama" set-remote-token "$token"
   assert_success
@@ -50,7 +53,7 @@ server_option_token() {
 }
 
 @test "the stored environment feeds config reloads with bytes intact" {
-  local token='a b$c"d%e&f;g'
+  local token='a b"d%e&f;g#h'
 
   run "$PLUGIN_ROOT/bin/tama" set-remote-token "$token"
   assert_success
