@@ -219,6 +219,32 @@ agent_pane_elsewhere() {
   assert_contains "$title" 'claude-code - ' 'the title'
 }
 
+@test "an origin with quotes and backslashes arrives intact" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin 'a"b\c'
+  tmux_test_server_run set -g @tama_title_format 'fixed-title'
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  assert_remote_json_value notify title '[a"b\c] fixed-title'
+}
+
+@test "an empty title draws the badge alone" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin 'my-vm'
+  tmux_test_server_run set -g @tama_title_format ''
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  assert_remote_json_value notify title '[my-vm]'
+}
+
 @test "the terminal to activate and the click travel with the banner" {
   start_fake_remote_server
   tmux_test_server_run set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
@@ -521,7 +547,7 @@ healthy_remote_server() {
   tmux_test_server_run set -g @tama_remote_origin 'my-vm'
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
-  assert_output_contains "@tama_remote_origin is 'my-vm'"
+  assert_output_contains "@tama_remote_origin is 'my-vm': forwarded titles start with [my-vm]"
 
   tmux_test_server_run set -g @tama_remote_origin ''
   run "$PLUGIN_ROOT/bin/tama" doctor
@@ -1138,6 +1164,18 @@ NOTIFIER
   done
   assert_notifier_flag message 'permission needed'
   assert_notifier_flag group "tmux-window-$window"
+
+  local expected_origin
+  expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  [ -n "$expected_origin" ] || skip 'this machine has no hostname to prefix with'
+  case "$(notifier_flag title)" in
+    "[$expected_origin] claude-code - "*) ;;
+    *)
+      printf 'expected "[%s] claude-code - ..." title, got: %s\n' \
+        "$expected_origin" "$(notifier_flag title)" >&2
+      return 1
+      ;;
+  esac
 
   run "$PLUGIN_ROOT/bin/tama" dismiss "$window"
   assert_success
