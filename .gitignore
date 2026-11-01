@@ -1,2 +1,3 @@
 .reviews
 .playwright-mcp
+__pycache__/

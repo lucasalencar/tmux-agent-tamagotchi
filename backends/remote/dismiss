@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#
+# The remote backend's dismiss: take the window's banner down on the other computer.
+#
+#   dismiss <group>
+#
+# The receiver removes the banner it raised under that group. Backgrounded for the
+# same reason `notify` is — this runs from the user selecting a window, through a
+# tmux hook, and a hook that waits on the network is a tmux that feels slow.
+
+set -o nounset
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../../lib/common.sh
+. "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+main() {
+  local payload
+
+  # argv first, the environment as the fallback: the contract puts the group in both,
+  # so that a backend which handles notify and dismiss together can read it one way.
+  local group="${1-}"
+  [ -n "$group" ] || group="${TAMA_GROUP:-}"
+
+  # An empty group names an ungrouped banner, which nothing can take back; `ALL` is
+  # what terminal-notifier calls removing everything, and dismissing a banner must
+  # never take down somebody else's — on either computer. The receiver enforces the
+  # same rule (see removable_group in backends/remote/receiver.py) against senders
+  # that are not this backend; when one side learns a new reserved name, teach it
+  # to the other.
+  if [ -z "$group" ] || [ "$group" = 'ALL' ]; then
+    exit 0
+  fi
+
+  # shellcheck disable=SC2059  # the format is fixed; the data is in the arguments
+  payload="$(printf '{"group":"%s"}' "$(tama_remote_json_escape "$group")")"
+
+  tama_remote_post_backgrounded /dismiss "$payload" || exit 0
+}
+
+main "$@"

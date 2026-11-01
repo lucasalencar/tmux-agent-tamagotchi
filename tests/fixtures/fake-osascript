@@ -1,0 +1,20 @@
+#!/bin/sh
+#
+# Stands in for `osascript`, so the receiver's fallback can be tested without a
+# Mac drawing anything. Records into $TAMA_OSASCRIPT_DIR:
+#
+#   calls   one line per invocation, holding its argument count
+#   script  the AppleScript given with -e, from the last invocation
+#
+# Pointed at by PATH, which is how the receiver finds the real one.
+
+tama_previous=''
+for tama_argument in "$@"; do
+  case "$tama_previous" in
+    -e) printf '%s' "$tama_argument" >"$TAMA_OSASCRIPT_DIR/script" ;;
+  esac
+  tama_previous="$tama_argument"
+done
+
+printf '%s\n' "$#" >>"$TAMA_OSASCRIPT_DIR/calls"
+exit 0
