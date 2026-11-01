@@ -116,12 +116,14 @@ pane state with the precedence `waiting > error > running > idle`:
 | --- | --- |
 | Root session created | Sets the pane to `idle`, showing that OpenCode is present. |
 | Root `busy` or `retry` | Sets that root to `running`; retry is not reported as failure. |
+| Root step, tool, text, or reasoning activity | Sets that root to `running`. This rescues turns whose execution start was missed (late subscribe after a service restart): any activity means the session is active now, while only the execution close may idle it again. Endings and terminal tool outcomes never idle the pane. |
 | Root `idle` or terminal assistant message | Sets that root to `idle`, unless its last attributed error is still active. The terminal message is a fallback for OpenCode versions or modes that do not emit an idle event. |
 | Permission asked | Sets the pane to `waiting`, including requests from delegated sessions. Concurrent requests remain independent. |
 | Permission replied | Removes only that request and recomputes the aggregate state. |
 | Attributed root error | Sets that root to persistent `error` and raises an error notification. A later `busy` or `retry`, or deleting the root, clears the error. |
 | Attributed delegated error | Stops only that subagent; it does not fail the root pane. |
 | Delegated `busy`/`retry` | Starts subagent tracking with the opaque OpenCode session id, allowing the core to derive `background`. |
+| Delegated step, tool, text, or reasoning activity | Starts subagent tracking like `busy`: any delegated activity means the subagent is active now. |
 | Delegated `idle`, error, or deletion | Stops that subagent id. Duplicate transitions are harmless. |
 | Session deletion | Removes only that session and its permission requests, then recomputes the remaining aggregate. |
 | OpenCode disposal | Drains admitted work, cancels pending completion work, stops tracked subagents, and clears the pane. |
@@ -195,6 +197,36 @@ toggle.
 - The integration deliberately contains lookup, tmux, CLI, and notification failures so they do
   not interrupt OpenCode. If OpenCode works but no state appears, use `doctor` and the path checks
   above; silence is the operational failure policy, not evidence that a command succeeded.
+- To capture the live v2 event stream when the mapping looks stale (e.g. a pane stuck in `idle`
+  while a turn runs), load a temporary logging plugin alongside this one and `opencode reload`:
+  every per-directory instance then appends `{ type, sessionID, locationDir }` to
+  `/tmp/opencode-events.jsonl`. Execution transitions arrive location-less (attributed through a
+  `session.get` lookup); step, tool, text, and reasoning events carry the directory. Remove the
+  entry and reload when done.
+
+```ts
+export default {
+  id: "tama-debug",
+  setup: async (ctx: any) => {
+    const fs = await import("node:fs");
+    const controller = new AbortController();
+    (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+          const e: any = event;
+          fs.appendFileSync("/tmp/opencode-events.jsonl", JSON.stringify({
+            instanceDirectory: ctx?.location?.directory,
+            type: e?.type,
+            sessionID: e?.data?.sessionID,
+            locationDir: e?.location?.directory ?? e?.data?.location?.directory,
+          }) + "\n");
+        }
+      } catch {}
+    })();
+    return () => controller.abort();
+  },
+};
+```
 
 ## Tested toolchain and development
 

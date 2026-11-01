@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Live battery for the OpenCode integration using the real opencode server.
+# Validates every mapped state end-to-end: drives real turns via `opencode run`
+# in an isolated directory with a dedicated tmux pane, asserting `tama list`.
+#
+# Usage: ./test-live [--keep]  (from integrations/opencode/)
+#   --keep  Leave the test tmux window and directory behind for inspection.
+#
+# Prerequisites: tmux server with @tama_bin set, opencode 2.x service running,
+# sqlite3. Uses the plugin currently loaded by opencode (global config).
+set -u
+TEST_DIR="/tmp/tama-opencode-live-test"
+WINDOW="tama-live-battery"
+TAMA="$(tmux show -gqv @tama_bin)"
+[ -x "$TAMA" ] || { echo "FAIL: @tama_bin is not executable: $TAMA"; exit 1; }
+PASS=0
+FAIL=0
+PANE=""
+KEEP="${1:-}"
+cleanup() {
+  if [ -n "$PANE" ]; then
+    local win
+    win="$(tmux list-panes -a -F '#{pane_id} #{window_id}' | awk -v p="$PANE" '$1==p {print $2; exit}')"
+    if [ -n "$win" ]; then
+      tmux kill-window -t "$win" 2>/dev/null || true
+    fi
+  else
+    tmux kill-window -t "$WINDOW" 2>/dev/null || true
+  fi
+  [ "$KEEP" = "--keep" ] || rm -rf "$TEST_DIR"
+}
+trap cleanup EXIT
+check() {
+  if [ "$2" = "$3" ]; then PASS=$((PASS+1)); echo "PASS: $1 (=$2)";
+  else FAIL=$((FAIL+1)); echo "FAIL: $1 expected=$2 actual=$3"; fi
+}
+pane_state() {
+  "$TAMA" list 2>/dev/null | awk -v p="$1" '$0 ~ p {print $NF}'
+}
+wait_state() {
+  local pane="$1" want="$2" timeout="${3:-30}" i got=""
+  for ((i=0;i<timeout;i+=1)); do
+    got="$(pane_state "$pane")"
+    [ "$got" = "$want" ] && { echo "$got"; return 0; }
+    sleep 1
+  done
+  echo "$got"; return 1
+}
+rm -rf "$TEST_DIR"; mkdir -p "$TEST_DIR"
+# A git repo gives the directory a stable project identity for session.list.
+git -C "$TEST_DIR" init -q 2>/dev/null || true
+tmux kill-window -t "$WINDOW" 2>/dev/null || true
+tmux new-window -d -n "$WINDOW" -c "$TEST_DIR" 2>/dev/null
+PANE="$(tmux list-panes -a -F '#{window_name} #{pane_id}' | awk -v w="$WINDOW" '$1==w {print $2; exit}')"
+[ -n "$PANE" ] || { echo "FAIL: no pane for window $WINDOW"; exit 1; }
+tmux send-keys -t "$PANE" 'opencode' Enter
+echo "Waiting for TUI + plugin setup (20s)..."
+sleep 20
+echo "Seeding presence with a quick turn..."
+(cd "$TEST_DIR" && timeout 120 opencode run --format json "Reply with exactly: LIVE-TEST-OK" >/tmp/tama-battery-seed.json 2>&1)
+GOT="$(wait_state "$PANE" "idle" 60)" || true
+check "created->idle (after first turn)" "idle" "$GOT"
+echo "Driving a real turn (shell sleep 12)..."
+(cd "$TEST_DIR" && timeout 120 opencode run --auto --format json "Run shell command: sleep 12 && echo battery-done" >/tmp/tama-battery-run.json 2>&1 &)
+GOT="$(wait_state "$PANE" "running" 30)" || true
+check "execution/step activity->running" "running" "$GOT"
+GOT="$(wait_state "$PANE" "idle" 120)" || true
+check "execution.succeeded->idle" "idle" "$GOT"
+echo "Driving a subagent turn (Task)..."
+(cd "$TEST_DIR" && timeout 150 opencode run --format json "Use the Task tool to list files here. Report back briefly." >/tmp/tama-battery-task.json 2>&1 &)
+GOT="$(wait_state "$PANE" "running" 30)" || true
+check "delegated activity keeps pane running (not error)" "running" "$GOT"
+GOT="$(wait_state "$PANE" "idle" 150)" || true
+check "delegated completion->idle" "idle" "$GOT"
+echo "Driving a failing turn (invalid model)..."
+(cd "$TEST_DIR" && timeout 60 opencode run --model invalid/invalid --format json "hello" >/tmp/tama-battery-err.json 2>&1 &)
+GOT="$(wait_state "$PANE" "error" 60)" || true
+check "execution.failed->error" "error" "$GOT"
+ERRORED="$(sqlite3 ~/.local/share/opencode/opencode.db "SELECT id FROM session_v2 WHERE directory='$TEST_DIR' ORDER BY time_updated DESC LIMIT 1;")"
+opencode session delete "$ERRORED" >/dev/null 2>&1 || true
+GOT="$(wait_state "$PANE" "idle" 60)" || true
+check "session.delete clears error back to idle" "idle" "$GOT"
+echo "Validating per-tab aggregate (two sessions, one running)..."
+(cd "$TEST_DIR" && timeout 120 opencode run --auto --format json "Run shell command: sleep 12 && echo tab-done" >/tmp/tama-battery-tab.json 2>&1 &)
+GOT="$(wait_state "$PANE" "running" 30)" || true
+check "per-tab aggregate: any running tab -> pane running" "running" "$GOT"
+GOT="$(wait_state "$PANE" "idle" 120)" || true
+check "per-tab aggregate: all idle -> pane idle" "idle" "$GOT"
+echo "---"
+echo "PASS=$PASS FAIL=$FAIL"
+[ "$FAIL" = "0" ]

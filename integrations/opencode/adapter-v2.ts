@@ -181,6 +181,31 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
       const status = event.type === "session.execution.started" ? "busy" : "idle"
       return adaptSessionStatus(data.sessionID, status, provenance)
     }
+    if (event.type === "session.step.started" || event.type === "session.retry.scheduled") {
+      // Step activity rescues a turn whose execution start was missed (late
+      // subscribe, service restart gap): any step means the session is
+      // active now. Only the execution close (succeeded/interrupted/failed)
+      // may idle it again, so endings stay unknown by design.
+      if (!isIdentifier(data.sessionID)) return { status: "malformed" }
+      return adaptSessionStatus(data.sessionID, "busy", provenance)
+    }
+    if (
+      event.type === "session.tool.called"
+      || event.type === "session.tool.input.started"
+      || event.type === "session.tool.input.delta"
+      || event.type === "session.tool.progress"
+      || event.type === "session.text.started"
+      || event.type === "session.text.delta"
+      || event.type === "session.reasoning.started"
+      || event.type === "session.reasoning.delta"
+      || event.type === "session.step.streamed"
+    ) {
+      // Mid-step subscribes may first see a tool call or a text/reasoning
+      // delta instead of the step start. Like step starts, any activity is
+      // busy; endings and terminal tool outcomes never idle the pane.
+      if (!isIdentifier(data.sessionID)) return { status: "malformed" }
+      return adaptSessionStatus(data.sessionID, "busy", provenance)
+    }
     if (event.type === "permission.asked") {
       if (!isIdentifier(data.id) || !isIdentifier(data.sessionID)) return { status: "malformed" }
       if (directory === undefined && !(await ownsSession(data.sessionID))) {
