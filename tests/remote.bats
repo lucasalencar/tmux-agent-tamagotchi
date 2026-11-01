@@ -126,6 +126,17 @@ assert_remote_json_value() { # <path> <field> <expected>
   assert_equal "$actual" "$3"
 }
 
+# The title never carries the origin in brackets: the Mac notifier drops such
+# a title and shows the sender name instead, so the origin travels as subtitle.
+assert_title_without_origin_prefix() { # <title>
+  case "$1" in
+    '['*)
+      printf 'expected no [origin] prefix in the title, got: %s\n' "$1" >&2
+      return 1
+      ;;
+  esac
+}
+
 # An agent pane in a second window, so the user is somewhere else — the ordinary
 # case for a notification. Prints the pane id.
 agent_pane_elsewhere() {
@@ -169,12 +180,7 @@ agent_pane_elsewhere() {
   # The title stays clean: brackets there break the Mac notifier, so the
   # origin travels one line below instead.
   title="$(remote_json_value notify title)"
-  case "$title" in
-    '['*)
-      printf 'expected no [origin] prefix in the title, got: %s\n' "$title" >&2
-      return 1
-      ;;
-  esac
+  assert_title_without_origin_prefix "$title"
   assert_contains "$title" 'claude-code - ' 'the title'
   assert_remote_json_value notify subtitle "$expected_origin"
 }
@@ -190,9 +196,7 @@ agent_pane_elsewhere() {
 
   local title
   title="$(remote_json_value notify title)"
-  case "$title" in
-    '['*) printf 'expected no [origin] prefix in the title, got: %s\n' "$title" >&2; return 1 ;;
-  esac
+  assert_title_without_origin_prefix "$title"
   assert_contains "$title" 'claude-code - ' 'the title'
   assert_remote_json_value notify subtitle 'my-vm'
 }
@@ -210,12 +214,7 @@ agent_pane_elsewhere() {
   assert_remote_json_value notify message 'permission needed'
   assert_remote_json_value notify subtitle ''
   title="$(remote_json_value notify title)"
-  case "$title" in
-    '['*)
-      printf 'expected no [origin] prefix, got: %s\n' "$title" >&2
-      return 1
-      ;;
-  esac
+  assert_title_without_origin_prefix "$title"
   assert_contains "$title" 'claude-code - ' 'the title'
 }
 
@@ -230,9 +229,7 @@ agent_pane_elsewhere() {
 
   local title
   title="$(remote_json_value notify title)"
-  case "$title" in
-    '['*) printf 'expected no [origin] prefix in the title, got: %s\n' "$title" >&2; return 1 ;;
-  esac
+  assert_title_without_origin_prefix "$title"
   assert_contains "$title" 'claude-code - ' 'the title'
   assert_remote_json_value notify subtitle '💻 my-vm'
 }
@@ -839,6 +836,15 @@ assert_notifier_flag() { # <flag> <expected>
   assert_equal "$actual" "$2"
 }
 
+# The absence half of assert_notifier_flag: the flag must not have been passed.
+refute_notifier_flag() { # <flag>
+  local file="$TAMA_NOTIFIER_DIR/$1"
+  if [ -e "$file" ]; then
+    printf 'expected no -%s flag, got: %s\n' "$1" "$(cat "$file")" >&2
+    return 1
+  fi
+}
+
 @test "the receiver draws what it is sent, natively" {
   start_real_receiver
   local payload
@@ -864,10 +870,7 @@ assert_notifier_flag() { # <flag> <expected>
   assert_notifier_flag activate 'com.mitchellh.ghostty'
 
   # A missing subtitle draws nothing extra: no -subtitle flag at all.
-  if [ -e "$TAMA_NOTIFIER_DIR/subtitle" ]; then
-    printf 'expected no subtitle flag, got: %s\n' "$(cat "$TAMA_NOTIFIER_DIR/subtitle")" >&2
-    return 1
-  fi
+  refute_notifier_flag subtitle
 
   # The health contract the doctor probe and monitoring rely on.
   local health
@@ -932,10 +935,7 @@ assert_notifier_flag() { # <flag> <expected>
     sleep 0.05
   done
   assert_notifier_flag title 't'
-  if [ -e "$TAMA_NOTIFIER_DIR/subtitle" ]; then
-    printf 'expected no subtitle flag, got: %s\n' "$(cat "$TAMA_NOTIFIER_DIR/subtitle")" >&2
-    return 1
-  fi
+  refute_notifier_flag subtitle
 }
 
 @test "the receiver guards dismissal like the backend does" {
@@ -1282,12 +1282,7 @@ NOTIFIER
   expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
   [ -n "$expected_origin" ] || skip 'this machine has no hostname to subtitle with'
   title="$(notifier_flag title)"
-  case "$title" in
-    '['*)
-      printf 'expected a clean title, got: %s\n' "$title" >&2
-      return 1
-      ;;
-  esac
+  assert_title_without_origin_prefix "$title"
   assert_contains "$title" 'claude-code - ' 'the title'
   assert_notifier_flag subtitle "$expected_origin"
 
