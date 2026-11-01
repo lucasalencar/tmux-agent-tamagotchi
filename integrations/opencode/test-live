@@ -21,7 +21,9 @@ cleanup() {
   if [ -n "$PANE" ]; then
     local win
     win="$(tmux list-panes -a -F '#{pane_id} #{window_id}' | awk -v p="$PANE" '$1==p {print $2; exit}')"
-    [ -n "$win" ] && tmux kill-window -t "$win" 2>/dev/null || true
+    if [ -n "$win" ]; then
+      tmux kill-window -t "$win" 2>/dev/null || true
+    fi
   else
     tmux kill-window -t "$WINDOW" 2>/dev/null || true
   fi
