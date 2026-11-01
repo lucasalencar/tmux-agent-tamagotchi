@@ -357,8 +357,9 @@ The receiver draws each forwarded banner natively — with `terminal-notifier`
 when installed, with `display notification` otherwise — and dismisses it when
 the tmux window is selected. Each forwarded title carries its sending machine
 as `[name]`, so banners from two tmux hosts stay apart on one desktop: set
-`@tama_remote_origin` to name that machine, or to the empty string for no
-prefix — when unset the short hostname is used. A click only brings the terminal forward unless
+`@tama_remote_origin` to name that machine — free text, so an icon can ride
+along (`[💻 my-vm]`) — or to the empty string for no prefix. When unset the
+short hostname is used. A click only brings the terminal forward unless
 the receiver was started with `--ssh-target user@vm`, in which case the click
 runs back over SSH and lands on the pane that spoke. There is no focus check
 across the network, so banners are never suppressed there: noise, never

@@ -198,6 +198,27 @@ agent_pane_elsewhere() {
   assert_contains "$title" 'claude-code - ' 'the title'
 }
 
+@test "an icon spelled inside the origin needs no second option" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin '💻 my-vm'
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  local title
+  title="$(remote_json_value notify title)"
+  case "$title" in
+    '[💻 my-vm] '*) ;;
+    *)
+      printf 'expected "[💻 my-vm] ..." prefix, got: %s\n' "$title" >&2
+      return 1
+      ;;
+  esac
+  assert_contains "$title" 'claude-code - ' 'the title'
+}
+
 @test "the terminal to activate and the click travel with the banner" {
   start_fake_remote_server
   tmux_test_server_run set -g @tama_terminal_bundle_id net.kovidgoyal.kitty
