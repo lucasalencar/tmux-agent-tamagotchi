@@ -734,6 +734,89 @@ describe("completion eligibility", () => {
     ])
   })
 
+  test("a sibling root's busy subagent does not block completion", () => {
+    run(createLifecycleState(), [
+      {
+        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+        paneState: "running",
+        effects: [
+          { type: "pane-state", state: "running" },
+          { type: "agent-state", agentId: "root-a", state: "running" },
+        ],
+      },
+      {
+        event: { type: "session-status", sessionId: "child-b", kind: "delegated", status: "busy", parentId: "root-b" },
+        paneState: "running",
+        effects: [
+          { type: "agent-state", agentId: "root-b", state: "idle" },
+          { type: "agent-subagent-start", agentId: "root-b", subagentId: "child-b" },
+        ],
+      },
+      {
+        event: {
+          type: "terminal-assistant-message",
+          sessionId: "root-a",
+          kind: "root",
+          messageId: "message-a",
+          finish: "stop",
+        },
+        // child-b is rooted under root-b, so root-a is quiescent and still
+        // completes. (The aggregate only knows root-a, which just went idle.)
+        paneState: "idle",
+        effects: [
+          { type: "pane-state", state: "idle" },
+          { type: "agent-state", agentId: "root-a", state: "idle" },
+          { type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" },
+        ],
+      },
+    ])
+  })
+
+  test("an unowned busy subagent blocks every root's completion", () => {
+    run(createLifecycleState(), [
+      {
+        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+        paneState: "running",
+        effects: [
+          { type: "pane-state", state: "running" },
+          { type: "agent-state", agentId: "root-a", state: "running" },
+        ],
+      },
+      {
+        event: { type: "session-status", sessionId: "child-x", kind: "delegated", status: "busy" },
+        paneState: "running",
+        effects: [{ type: "subagent-start", sessionId: "child-x" }],
+      },
+      {
+        event: {
+          type: "terminal-assistant-message",
+          sessionId: "root-a",
+          kind: "root",
+          messageId: "message-a",
+          finish: "stop",
+        },
+        // child-x has no recoverable parent: it might belong to root-a,
+        // so the message is stored without completing and nothing publishes.
+        paneState: "running",
+        effects: [],
+      },
+      {
+        event: { type: "session-status", sessionId: "child-x", kind: "delegated", status: "idle" },
+        paneState: "running",
+        effects: [{ type: "subagent-stop", sessionId: "child-x" }],
+      },
+      {
+        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "idle" },
+        paneState: "idle",
+        effects: [
+          { type: "pane-state", state: "idle" },
+          { type: "agent-state", agentId: "root-a", state: "idle" },
+          { type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" },
+        ],
+      },
+    ])
+  })
+
   test("each root completes independently; delegated terminal messages never complete", () => {
     run(createLifecycleState(), [
       {

@@ -144,6 +144,51 @@ function delegatedForRoot(
   return rootDelegated.get(rootId) ?? new Set<string>()
 }
 
+// Whether a root may complete: no pending permission, no live subagents of
+// its own, and no live subagents without a recoverable owner — an unknown
+// owner might be this root, so uncertainty blocks like the old pane-global
+// gate did. Rooted subagents of *other* roots never block: each root's
+// completion is independent.
+function isRootQuiescent(
+  permissions: ReadonlyMap<string, PermissionRecord>,
+  rootDelegated: ReadonlyMap<string, ReadonlySet<string>>,
+  activeDelegatedSessions: ReadonlySet<string>,
+  rootId: string,
+): boolean {
+  if (permissionsForRoot(permissions, rootId)) return false
+  if (delegatedForRoot(rootDelegated, rootId).size !== 0) return false
+  const rooted = new Set<string>()
+  Array.from(rootDelegated.values()).forEach((subs) => {
+    Array.from(subs).forEach((sessionId) => rooted.add(sessionId))
+  })
+  return Array.from(activeDelegatedSessions).every((sessionId) => rooted.has(sessionId))
+}
+
+// What one root shows: its waiting overlay first, then its stored state.
+// Presence without a completed state reads as idle.
+function deriveAgentState(
+  roots: ReadonlyMap<string, RootState>,
+  permissions: ReadonlyMap<string, PermissionRecord>,
+  rootId: string,
+): PaneState {
+  if (permissionsForRoot(permissions, rootId)) return "waiting"
+  const base = roots.get(rootId) ?? "idle"
+  return base === "error" ? "error" : base === "running" ? "running" : "idle"
+}
+
+// What the pane shows: the legacy aggregate over every root, unchanged —
+// `tama list` rows are per pane, and it is what keeps them working.
+function derivePaneState(
+  roots: ReadonlyMap<string, RootState>,
+  permissions: ReadonlyMap<string, PermissionRecord>,
+): PaneState {
+  if (permissions.size > 0) return "waiting"
+  const rootStates = Array.from(roots.values())
+  if (rootStates.includes("error")) return "error"
+  if (rootStates.includes("running")) return "running"
+  return "idle"
+}
+
 export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): Reduction {
   const roots = new Map(state.roots)
   const rootDelegated = new Map<string, Set<string>>()
@@ -279,8 +324,7 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
       event.kind === "root"
       && current === "running"
       && event.finish === "stop"
-      && !permissionsForRoot(permissions, event.sessionId)
-      && delegatedForRoot(rootDelegated, event.sessionId).size === 0
+      && isRootQuiescent(permissions, rootDelegated, activeDelegatedSessions, event.sessionId)
     ) {
       roots.set(event.sessionId, "idle")
       terminalAssistantMessages.delete(event.sessionId)
@@ -315,8 +359,7 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
         if (
           current === "running"
           && messageId
-          && !permissionsForRoot(permissions, event.sessionId)
-          && delegatedForRoot(rootDelegated, event.sessionId).size === 0
+          && isRootQuiescent(permissions, rootDelegated, activeDelegatedSessions, event.sessionId)
         ) {
           completionEffect = {
             type: "completion-eligible",
@@ -334,25 +377,16 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
   // The per-agent report for the owning root, when this event names one.
   // Stateless entries (tracked subagents, pending permissions) still establish
   // the agent: presence without a completed state reads as idle. Events that
-  // neither establish nor require presence (a deletion, a stored terminal
-  // message, a replied permission) never resurrect a gone agent.
-  // Events that neither establish presence nor require it (a deletion, a
-  // stored terminal message, a replied permission) never resurrect a gone
-  // agent: without a roots entry they report nothing.
-  const establishes = event.type !== "session-deleted"
+  // neither establish presence nor require it (a deletion, a stored terminal
+  // message, a replied permission) never resurrect a gone agent: without a
+  // roots entry they report nothing.
+  const establishesAgentPresence = event.type !== "session-deleted"
     && event.type !== "terminal-assistant-message"
     && event.type !== "permission-replied"
   if (agentClear) {
     emittedAgents.delete(agentClear.agentId)
-  } else if (eventRoot !== undefined && (roots.has(eventRoot) || establishes)) {
-    const base = roots.get(eventRoot) ?? "idle"
-    const agentState: PaneState = permissionsForRoot(permissions, eventRoot)
-      ? "waiting"
-      : base === "error"
-        ? "error"
-        : base === "running"
-          ? "running"
-          : "idle"
+  } else if (eventRoot !== undefined && (roots.has(eventRoot) || establishesAgentPresence)) {
+    const agentState = deriveAgentState(roots, permissions, eventRoot)
     if (emittedAgents.get(eventRoot) !== agentState) {
       emittedAgents.set(eventRoot, agentState)
       agentEffect = { type: "agent-state", agentId: eventRoot, state: agentState }
@@ -361,14 +395,7 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
 
   // The legacy aggregate is still reported alongside, unchanged: `tama list`
   // rows are per pane, and it is what keeps them working.
-  const rootStates = Array.from(roots.values())
-  const paneState = permissions.size > 0
-    ? "waiting"
-    : rootStates.includes("error")
-    ? "error"
-    : rootStates.includes("running")
-      ? "running"
-      : "idle"
+  const paneState = derivePaneState(roots, permissions)
   const shouldPublish =
     paneState !== state.paneState || (!state.paneStatePublished && establishesPaneState(event))
   const effects: StateMachineEffect[] = shouldPublish ? [{ type: "pane-state", state: paneState }] : []
@@ -381,9 +408,9 @@ export function reduceLifecycle(state: LifecycleState, event: LifecycleEvent): R
   if (agentDelegatedEffect) effects.push(agentDelegatedEffect)
   if (completionEffect) {
     const rootId = completionEffect.sessionId
-    const quiescent =
-      !permissionsForRoot(permissions, rootId) && delegatedForRoot(rootDelegated, rootId).size === 0
-    if (quiescent) effects.push(completionEffect)
+    if (isRootQuiescent(permissions, rootDelegated, activeDelegatedSessions, rootId)) {
+      effects.push(completionEffect)
+    }
   }
   return {
     state: {

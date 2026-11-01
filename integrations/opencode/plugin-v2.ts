@@ -11,7 +11,7 @@ import {
   type ProcessExecutor,
 } from "./effect-runner"
 import { createOpenCodeRuntime, type OpenCodeRuntime } from "./runtime"
-import { buildResyncEvents, canonicalize, isInstanceScope, kindFromParentId, raceSessionWait, sameDirectory, type WaitTimer } from "./resync"
+import { buildResyncEvents, canonicalize, delegatedParentProvenance, isInstanceScope, kindFromParentId, raceSessionWait, sameDirectory, type WaitTimer } from "./resync"
 
 // Structural subset of the OpenCode v2 plugin context used here. Kept local so
 // the plugin has no v2 package dependency at load time; v2 validates the
@@ -194,9 +194,13 @@ async function resyncV2(
     type KnownSession = { parentID?: unknown; directory?: string }
     const byId = new Map<string, KnownSession>()
     // Only a fully consumed snapshot may drop agent entries: resyncing from
-    // a truncated page would mistake live agents for ghosts.
+    // a truncated page would mistake live agents for ghosts. And only a
+    // snapshot that was actually read: old hosts expose no list at all, and
+    // reconciling on ignorance would wipe live entries with zero evidence.
     let complete = true
+    let listed = false
     if (typeof session.list === "function") {
+      listed = true
       let cursor: string | undefined
       for (let page = 0; page < RESYNC_LIST_MAX_PAGES; page += 1) {
         let raw: unknown
@@ -222,7 +226,13 @@ async function resyncV2(
         if (page === RESYNC_LIST_MAX_PAGES - 1) complete = false
       }
     }
-    if (byId.size === 0) return
+    // A complete empty snapshot still reconciles to the empty agent set so
+    // sessions deleted while the plugin was down do not pin ghosts; a
+    // partial read, or no read at all, seeds but never drops entries.
+    if (byId.size === 0) {
+      if (listed && complete) await runtime.reconcileAgents([])
+      return
+    }
     // Running state per session: each session races its own idleness against
     // the deadline in parallel. A fulfilled wait is idle now, a pending one
     // is running.
@@ -261,9 +271,7 @@ async function resyncV2(
         // pin the pane to waiting with no presence to clear it.
         const kind = kindFromParentId(sessionInfo.parentID)
         if (!kind) continue
-        const parent = kind === "delegated" && typeof sessionInfo.parentID === "string" && sessionInfo.parentID
-          ? { parentId: sessionInfo.parentID }
-          : {}
+        const parent = delegatedParentProvenance(kind, sessionInfo.parentID)
         try {
           const raw = await listPermission({ sessionID: sessionId }).catch(() => undefined)
           for (const requestId of unwrapPermissionIds(raw)) {
@@ -283,21 +291,18 @@ async function resyncV2(
     const seeds = Array.from(byId).flatMap(([sessionId, sessionInfo]) => {
       const kind = kindFromParentId(sessionInfo.parentID)
       if (!kind) return []
-      const parent = kind === "delegated" && typeof sessionInfo.parentID === "string" && sessionInfo.parentID
-        ? { parentId: sessionInfo.parentID }
-        : {}
       return [
         {
           sessionId,
           kind,
           status: statuses.get(sessionId) ?? ("idle" as const),
-          ...parent,
+          ...delegatedParentProvenance(kind, sessionInfo.parentID),
           ...(directory !== undefined ? { directory } : {}),
         },
       ]
     })
     const events = buildResyncEvents(seeds, permissions)
-    if (complete) {
+    if (listed && complete) {
       await runtime.reconcileAgents(seeds.flatMap((session) => session.kind === "root" ? [session.sessionId] : []))
     }
     if (events.length > 0) await runtime.resync(events)

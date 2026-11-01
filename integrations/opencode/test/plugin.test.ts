@@ -72,7 +72,8 @@ describe("wired plugin", () => {
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "subagent-start", "--agent", "opencode-root-a", "--", "child;not shell"],
       ["/plugin/bin/tama", "state", "subagent-stop", "--agent", "opencode-root-a", "--", "child;not shell"],
-      ["/plugin/bin/tama", "state", "clear"],
+      ["/plugin/bin/tama", "state", "clear", "--agent", "opencode-root-a"],
+      ["/plugin/bin/tama", "state", "clear", "--keep-agents"],
     ])
   })
 
@@ -347,7 +348,8 @@ describe("wired plugin", () => {
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a"],
-      ["/plugin/bin/tama", "state", "clear"],
+      ["/plugin/bin/tama", "state", "clear", "--agent", "opencode-root-a"],
+      ["/plugin/bin/tama", "state", "clear", "--keep-agents"],
     ])
   })
 
@@ -525,7 +527,7 @@ describe("wired plugin", () => {
     releaseNotification.resolve()
     await disposal
     expect(tamaCalls(commandCalls).at(-1)).toEqual([
-      "/plugin/bin/tama", "state", "clear",
+      "/plugin/bin/tama", "state", "clear", "--keep-agents",
     ])
   })
 
@@ -560,7 +562,7 @@ describe("wired plugin", () => {
     // Reconcile drops ghosts, then presence, then activity, then delegated
     // tracking on its owning agent — before any live event.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--", "opencode-root-a", "opencode-root-idle"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--", "opencode-root-a", "opencode-root-idle"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
@@ -574,7 +576,7 @@ describe("wired plugin", () => {
     await hooks.event?.({ event: statusEvent("child-a", "idle") as never })
     await hooks.event?.({ event: statusEvent("root-a", "idle") as never })
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--", "opencode-root-a", "opencode-root-idle"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--", "opencode-root-a", "opencode-root-idle"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
@@ -628,7 +630,7 @@ describe("wired plugin", () => {
     // on its owning agent; the foreign sessions never reach tama despite
     // being busy.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--", "opencode-root-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "subagent-start", "--agent", "opencode-root-a", "--", "child-b"],
@@ -659,11 +661,35 @@ describe("wired plugin", () => {
     // An empty list must not skip the status snapshot: the busy session still
     // re-establishes presence and activity, for its own agent as well.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--", "opencode-root-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a"],
+    ])
+    await hooks.dispose?.()
+  })
+
+  test("an empty snapshot reconciles to the empty agent set", async () => {
+    const commandCalls: string[][] = []
+    const plugin = createTmuxAgentTamagotchiPlugin({
+      execute: async (argv) => {
+        commandCalls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 0, stdout: "" }
+      },
+    })
+    const hooks = await plugin(fakePluginInput(
+      async ({ path }) => ({ id: path.id, directory: "/workspace" }),
+      async () => undefined,
+      async () => [],
+      { list: [] },
+    ))
+
+    // Nothing to seed, but the complete empty snapshot still drops ghosts.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--"],
     ])
     await hooks.dispose?.()
   })

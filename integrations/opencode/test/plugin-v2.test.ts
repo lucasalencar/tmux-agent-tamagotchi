@@ -28,7 +28,7 @@ describe("v2 setup", () => {
     ])
     await cleanup()
     expect(tamaCalls(commandCalls).at(-1)).toEqual([
-      "/plugin/bin/tama", "state", "clear", "--pane", PANE,
+      "/plugin/bin/tama", "state", "clear", "--keep-agents", "--pane", PANE,
     ])
   })
 
@@ -247,7 +247,7 @@ describe("v2 setup", () => {
     expect(tamaCalls(commandCalls)).toEqual([])
     await cleanup()
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "clear", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "clear", "--keep-agents", "--pane", PANE],
     ])
   })
 
@@ -382,7 +382,7 @@ describe("v2 setup", () => {
 
     // Reconcile, then presence, then activity from the wait race, then the live idle lands last.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "opencode-root-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--pane", PANE, "--", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
@@ -415,12 +415,59 @@ describe("v2 setup", () => {
     // through the second page itself: the wait race, not a lookup fallback,
     // decides its activity. The pre-seed reconcile names both roots.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "opencode-root-a", "opencode-root-b"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--pane", PANE, "--", "opencode-root-a", "opencode-root-b"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-b", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-b", "--pane", PANE],
+    ])
+    await cleanup()
+  })
+
+  test("a truncated snapshot seeds without reconciling", async () => {
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({
+      execute: fakeExecute(commandCalls),
+      resyncWaitMs: 20,
+    })
+    const base = fakeContextV2([], { "root-a": {} }, {})
+    let listCalls = 0
+    const partial = {
+      ...base,
+      session: {
+        ...base.session,
+        list: async () => {
+          listCalls += 1
+          if (listCalls === 1) return { data: [{ id: "root-a" }], cursor: { next: "cursor-1" } }
+          throw new Error("second page lost")
+        },
+      },
+    }
+    const cleanup = await setup(partial)
+    await settle()
+
+    // The first page still seeds presence, but a snapshot that lost a page
+    // must never drop agent entries it could not see: no agent-reconcile.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
+      ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
+    ])
+    await cleanup()
+  })
+
+  test("an empty snapshot reconciles to the empty agent set", async () => {
+    const commandCalls: string[][] = []
+    const setup = createTmuxAgentTamagotchiPluginV2({
+      execute: fakeExecute(commandCalls),
+      resyncWaitMs: 20,
+    })
+    const cleanup = await setup(fakeContextV2([], {}, {}, { list: [] }))
+    await settle()
+
+    // Nothing to seed, but the complete empty snapshot still drops ghosts.
+    expect(tamaCalls(commandCalls)).toEqual([
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--pane", PANE, "--"],
     ])
     await cleanup()
   })
@@ -444,7 +491,7 @@ describe("v2 setup", () => {
 
     // Delegated work found in the list is tracked from the wait race.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "opencode-root-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--pane", PANE, "--", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "subagent-start", "--agent", "opencode-root-a", "--pane", PANE, "--", "child-b"],
@@ -482,7 +529,7 @@ describe("v2 setup", () => {
     // waiting above the resynced running state. The foreign delegated work
     // must not start subagent tracking.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "opencode-root-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--pane", PANE, "--", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
@@ -517,7 +564,7 @@ describe("v2 setup", () => {
 
     // root-a pends past the deadline (busy) while root-b resolves at once.
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "opencode-root-a", "opencode-root-b"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--pane", PANE, "--", "opencode-root-a", "opencode-root-b"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],
@@ -573,7 +620,7 @@ describe("v2 setup", () => {
     // orders the idle seed before it.
     expect(order.indexOf("subscribed")).toBeLessThan(order.indexOf("list-end"))
     expect(tamaCalls(commandCalls)).toEqual([
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", PANE, "--", "opencode-root-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--pane", PANE, "--", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--pane", PANE],
       ["/plugin/bin/tama", "state", "idle", "OpenCode", "--agent", "opencode-root-a", "--pane", PANE],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", PANE],

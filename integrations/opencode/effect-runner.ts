@@ -48,6 +48,11 @@ function namespacedAgentId(sessionId: string): string {
   return `${AGENT_ID_PREFIX}${sessionId}`
 }
 
+// Reconcile is scoped to this integration's namespace: without it, dropping
+// every unlisted entry would wipe agents another integration still owns on
+// a shared pane. The core keeps stored entries outside the prefix untouched.
+const AGENT_NAMESPACE_ARGV = ["--namespace", AGENT_ID_PREFIX] as const
+
 export function createEffectRunner(dependencies: EffectRunnerDependencies): EffectRunner {
   // Under v2 the plugin runs in the shared background service, so the process
   // environment carries no agent pane of its own: callers pass resolvePane
@@ -95,41 +100,39 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
   }
 
   async function run(effect: StateMachineEffect, context?: LogContext): Promise<void> {
+    // State-carrying effects resolve the pane and skip silently when the
+    // directory is known but no OpenCode pane matches it (strictPane);
+    // notifications deliberately bypass this and go out unattributed.
+    async function runPaneEffect(
+      args: readonly string[],
+      integrationEvent: string,
+    ): Promise<void> {
+      const pane = await resolvePane()
+      if (!pane && strictPane) return
+      await invokeTama(args, integrationEvent, context, true, pane)
+    }
+
     try {
       switch (effect.type) {
         case "pane-state": {
-          const pane = await resolvePane()
-          if (!pane && strictPane) return
-          await invokeTama(["state", effect.state, AGENT_NAME], effect.type, context, true, pane)
+          await runPaneEffect(["state", effect.state, AGENT_NAME], effect.type)
           break
         }
         case "agent-state": {
-          const pane = await resolvePane()
-          if (!pane && strictPane) return
-          await invokeTama(
+          await runPaneEffect(
             ["state", effect.state, AGENT_NAME, "--agent", namespacedAgentId(effect.agentId)],
             effect.type,
-            context,
-            true,
-            pane,
           )
           break
         }
         case "agent-clear": {
-          const pane = await resolvePane()
-          if (!pane && strictPane) return
-          await invokeTama(["state", "clear", "--agent", namespacedAgentId(effect.agentId)], effect.type, context, true, pane)
+          await runPaneEffect(["state", "clear", "--agent", namespacedAgentId(effect.agentId)], effect.type)
           break
         }
         case "agents-reconcile": {
-          const pane = await resolvePane()
-          if (!pane && strictPane) return
-          await invokeTama(
-            ["state", "agent-reconcile", "--", ...effect.agentIds.map(namespacedAgentId)],
+          await runPaneEffect(
+            ["state", "agent-reconcile", ...AGENT_NAMESPACE_ARGV, "--", ...effect.agentIds.map(namespacedAgentId)],
             effect.type,
-            context,
-            true,
-            pane,
           )
           break
         }
@@ -147,22 +150,15 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
         }
         case "subagent-start":
         case "subagent-stop": {
-          const pane = await resolvePane()
-          if (!pane && strictPane) return
-          await invokeTama(["state", effect.type, "--", effect.sessionId], effect.type, context, true, pane)
+          await runPaneEffect(["state", effect.type, "--", effect.sessionId], effect.type)
           break
         }
         case "agent-subagent-start":
         case "agent-subagent-stop": {
-          const pane = await resolvePane()
-          if (!pane && strictPane) return
           const verb = effect.type === "agent-subagent-start" ? "subagent-start" : "subagent-stop"
-          await invokeTama(
+          await runPaneEffect(
             ["state", verb, "--agent", namespacedAgentId(effect.agentId), "--", effect.subagentId],
             effect.type,
-            context,
-            true,
-            pane,
           )
           break
         }
@@ -203,7 +199,7 @@ export function createEffectRunner(dependencies: EffectRunnerDependencies): Effe
     clearPane: async () => {
       const pane = await resolvePane()
       if (!pane && strictPane) return
-      await invokeTama(["state", "clear"], "dispose", undefined, true, pane)
+      await invokeTama(["state", "clear", "--keep-agents"], "dispose", undefined, true, pane)
     },
   }
 }

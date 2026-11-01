@@ -12,7 +12,7 @@ import {
   type ProcessExecutor,
 } from "./effect-runner"
 import { createOpenCodeRuntime, type OpenCodeRuntime } from "./runtime"
-import { buildResyncEvents, isInstanceScope, kindFromParentId, statusFromServerType, statusTypeOf, unwrapKeyedMap } from "./resync"
+import { buildResyncEvents, delegatedParentProvenance, isInstanceScope, kindFromParentId, statusFromServerType, statusTypeOf, unwrapKeyedMap } from "./resync"
 
 export type PluginDependencies = Readonly<{
   execute?: ProcessExecutor
@@ -127,7 +127,14 @@ async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<v
         }).catch(() => undefined),
       )
     }
-    if (listed.length === 0 && Object.keys(statuses).length === 0) return
+    // A complete empty snapshot still reconciles: with no live roots the
+    // pane's agent set must empty, or sessions deleted while the plugin was
+    // down pin their last state as ghosts. An incomplete read returns
+    // without touching the record.
+    if (listed.length === 0 && Object.keys(statuses).length === 0) {
+      if (listOk) await runtime.reconcileAgents([])
+      return
+    }
     const byId = new Map<string, { parentID?: unknown; directory?: unknown }>()
     for (const session of listed) {
       if (typeof session.id !== "string" || !session.id) continue
@@ -170,15 +177,11 @@ async function resyncV1(input: PluginInput, runtime: OpenCodeRuntime): Promise<v
       Array.from(byId).flatMap(([sessionId, session]) => {
         const kind = kindFromParentId(session.parentID)
         if (!kind) return []
-        const parent = kind === "delegated"
-          && typeof session.parentID === "string" && session.parentID
-          ? { parentId: session.parentID }
-          : {}
         return [{
           sessionId,
           kind,
           status: statusFromServerType(statusTypeOf(statuses[sessionId])),
-          ...parent,
+          ...delegatedParentProvenance(kind, session.parentID),
           ...(directory !== undefined ? { directory } : {}),
         }]
       }),

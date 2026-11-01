@@ -35,3 +35,16 @@ id it reported (so reconcile lists exactly its own set).
 - Future integrations adopting `--agent` follow the same rule; the contract
   lives in `CONTEXT.md` (agent id) rather than in code, because the core
   cannot know the integration names.
+
+## Enforcement beyond naming
+
+Namespacing prevents address collision, but `agent-reconcile` without scope
+would still drop foreign entries (it keeps only listed ids), and a full
+`state clear` on disposal would wipe them too. Two scoped operations close
+that: `agent-reconcile --namespace <prefix>` judges only entries under the
+prefix and keeps everything else in stored order, and `state clear
+--keep-agents` clears the legacy residue while keeping the agent record.
+Disposal unregisters exactly the entries the integration reported
+(`agent-clear` per owned agent) and then clears with `--keep-agents`, so
+restart and exit heal one integration's ghosts without touching another's
+live agents.

@@ -118,7 +118,7 @@ keep working untouched. The `opencode-` prefix keeps entries unique when several
 integrations share a pane (see ADR-0018); it is deterministic and recoverable, which is
 what lets resync reconcile the pane's agent set. Deleting a root unregisters only its
 entry (`agent-clear`); resync reconciles the pane's agent set against the snapshot
-before seeding, so sessions deleted while the plugin was down do not pin their last state.
+scoped to the `opencode-` namespace, so entries another integration owns survive it.
 
 | OpenCode lifecycle | tmux-agent-tamagotchi behavior |
 | --- | --- |
@@ -134,7 +134,7 @@ before seeding, so sessions deleted while the plugin was down do not pin their l
 | Delegated step, tool, text, or reasoning activity | Starts subagent tracking like `busy`: any delegated activity means the subagent is active now. |
 | Delegated `idle`, error, or deletion | Stops that subagent id on its owning entry. Duplicate transitions are harmless. |
 | Session deletion | Removes only that session and its permission requests, then recomputes the remaining aggregate. |
-| OpenCode disposal | Drains admitted work, cancels pending completion work, stops tracked subagents per entry, and clears the pane. |
+| OpenCode disposal | Drains admitted work, cancels pending completion work, stops tracked subagents per entry, unregisters its own agent entries, and clears the legacy pane residue while keeping foreign agent entries. |
 
 Sessions are classified conservatively from `parentID`, using an exact SDK lookup when the event
 does not include session information. Unattributed errors and events whose session metadata cannot

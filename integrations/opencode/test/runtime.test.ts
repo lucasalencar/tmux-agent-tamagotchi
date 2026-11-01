@@ -209,6 +209,7 @@ describe("OpenCode runtime", () => {
       "state:error",
       "cancel-late-work",
       "cancel-late-work",
+      "agent-clear",
       "clear",
     ])
   })
@@ -236,6 +237,7 @@ describe("OpenCode runtime", () => {
       "agent-state",
       "agent-subagent-start",
       "agent-subagent-stop",
+      "agent-clear",
       "clear",
     ])
   })
@@ -409,6 +411,40 @@ describe("OpenCode runtime", () => {
       { type: "session-created", sessionId: "root-a", kind: "root" },
       { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
     ])
+
+    expect(effects).toEqual([])
+  })
+
+  test("reconcile contains effect failures without breaking setup", async () => {
+    const attempted: StateMachineEffect[] = []
+    const runtime = createOpenCodeRuntime({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      runEffect: async (effect) => {
+        attempted.push(effect)
+        if (effect.type === "agents-reconcile") {
+          throw new Error("tmux unavailable")
+        }
+      },
+      clearPane: async () => undefined,
+    })
+
+    await expect(runtime.reconcileAgents(["root-a"])).resolves.toBeUndefined()
+    expect(attempted).toEqual([{ type: "agents-reconcile", agentIds: ["root-a"] }])
+  })
+
+  test("reconcile after disposal publishes nothing", async () => {
+    const effects: StateMachineEffect[] = []
+    const runtime = createOpenCodeRuntime({
+      lookupSession: async (sessionId) => ({ id: sessionId }),
+      runEffect: async (effect) => {
+        effects.push(effect)
+      },
+      clearPane: async () => undefined,
+    })
+
+    await runtime.dispose()
+    effects.length = 0
+    await runtime.reconcileAgents(["root-a"])
 
     expect(effects).toEqual([])
   })

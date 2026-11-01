@@ -116,8 +116,6 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
     })
   }
 
-  return { event, resync, reconcileAgents, enqueueLateWork, dispose }
-
   // Applies one reduction's effects in order. Shared by live events (with
   // their log correlation) and resync seeds (replayed state, no correlation):
   // one effect failure must not suppress the remaining effects.
@@ -153,6 +151,12 @@ export function createOpenCodeRuntime(dependencies: OpenCodeRuntimeDependencies)
         if (!rooted.has(sessionId)) {
           await settle(() => dependencies.runEffect({ type: "subagent-stop", sessionId }))
         }
+      }
+      // Unregister exactly the entries this instance reported, then wipe the
+      // pane's legacy residue while keeping entries another integration still
+      // owns: a full clear here would drop a foreign agent on a shared pane.
+      for (const agentId of Array.from(state.emittedAgents.keys())) {
+        await settle(() => dependencies.runEffect({ type: "agent-clear", agentId }))
       }
       await settle(dependencies.clearPane)
       adapter.clear()

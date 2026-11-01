@@ -91,7 +91,7 @@ describe("tama effect runner", () => {
       ["tmux", "show", "-gqv", "@tama_bin"],
       ["/repo with spaces/bin/tama", "state", "subagent-stop", "--", "-child"],
       ["tmux", "show", "-gqv", "@tama_bin"],
-      ["/repo with spaces/bin/tama", "state", "clear"],
+      ["/repo with spaces/bin/tama", "state", "clear", "--keep-agents"],
     ])
     expect(completions).toEqual([{ agentId: "root-a", sessionId: "root-a", messageId: "message-a" }])
   })
@@ -168,7 +168,7 @@ describe("tama effect runner", () => {
     expect(calls.filter((argv) => argv[0] !== "tmux")).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--pane", "%pane-a"],
       ["/plugin/bin/tama", "notify", "--agent", "opencode-root-a", "--pane", "%pane-a", "--", "OpenCode", "Done."],
-      ["/plugin/bin/tama", "state", "clear", "--pane", "%pane-a"],
+      ["/plugin/bin/tama", "state", "clear", "--keep-agents", "--pane", "%pane-a"],
     ])
 
     const fallbackCalls: string[][] = []
@@ -215,7 +215,7 @@ describe("tama effect runner", () => {
 
     expect(calls.filter((argv) => argv[0] !== "tmux")).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
-      ["/plugin/bin/tama", "state", "clear"],
+      ["/plugin/bin/tama", "state", "clear", "--keep-agents"],
     ])
   })
 
@@ -244,8 +244,8 @@ describe("tama effect runner", () => {
       ["/plugin/bin/tama", "state", "subagent-start", "--agent", "opencode-root-a", "--pane", "%pane-a", "--", "child-a"],
       ["/plugin/bin/tama", "state", "subagent-stop", "--agent", "opencode-root-a", "--pane", "%pane-a", "--", "child-a"],
       ["/plugin/bin/tama", "state", "clear", "--agent", "opencode-root-a", "--pane", "%pane-a"],
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", "%pane-a", "--", "opencode-root-a", "opencode-root-b"],
-      ["/plugin/bin/tama", "state", "agent-reconcile", "--pane", "%pane-a", "--"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--pane", "%pane-a", "--", "opencode-root-a", "opencode-root-b"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--pane", "%pane-a", "--"],
       ["/plugin/bin/tama", "notify", "--agent", "opencode-root-a", "--pane", "%pane-a", "--", "OpenCode", "boom"],
     ])
   })

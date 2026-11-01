@@ -39,9 +39,7 @@ export function buildResyncEvents(
   for (const session of sessions) {
     if (!session.sessionId) continue
     const provenance = session.directory !== undefined ? { directory: session.directory } : {}
-    const parent = session.kind === "delegated" && typeof session.parentId === "string" && session.parentId
-      ? { parentId: session.parentId }
-      : {}
+    const parent = delegatedParentProvenance(session.kind, session.parentId)
     events.push({ type: "session-created", sessionId: session.sessionId, kind: session.kind, ...provenance })
     events.push({
       type: "session-status",
@@ -55,9 +53,7 @@ export function buildResyncEvents(
   for (const permission of permissions) {
     if (!permission.requestId || !permission.sessionId) continue
     const provenance = permission.directory !== undefined ? { directory: permission.directory } : {}
-    const parent = permission.kind === "delegated" && typeof permission.parentId === "string" && permission.parentId
-      ? { parentId: permission.parentId }
-      : {}
+    const parent = delegatedParentProvenance(permission.kind, permission.parentId)
     events.push({
       type: "permission-asked",
       requestId: permission.requestId,
@@ -77,6 +73,21 @@ export function kindFromParentId(parentID: unknown): SessionKind | undefined {
   if (parentID === undefined) return "root"
   if (typeof parentID === "string") return parentID.length > 0 ? "delegated" : undefined
   return undefined
+}
+
+// Names the owning root of a delegated entry, or nothing: the delegated-only
+// parentId provenance shared by seeds (here), permission seeds, and both
+// plugins' snapshot readers (which use their own parentID shapes). One rule
+// so a change to the delegated-only, non-empty requirement cannot make one
+// path attribute what another drops.
+export function delegatedParentProvenance(
+  kind: SessionKind,
+  parentId: unknown,
+): { parentId: string } | Record<string, never> {
+  if (kind === "delegated" && typeof parentId === "string" && parentId) {
+    return { parentId }
+  }
+  return {}
 }
 
 // Normalizes a busy-like server status into the lifecycle vocabulary. Retry

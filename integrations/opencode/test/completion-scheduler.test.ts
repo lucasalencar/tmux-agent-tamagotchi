@@ -324,7 +324,7 @@ describe("completion scheduler", () => {
     expect(notifications).toEqual([])
   })
 
-  test("legacy aggregate effects do not cancel a pending agent completion", async () => {
+  test("legacy aggregate transitions do not cancel a pending agent completion", async () => {
     const clock = new FakeClock()
     const notifications: string[] = []
     const scheduler = createScheduler({
@@ -341,10 +341,53 @@ describe("completion scheduler", () => {
     // agent-scoped one may cancel its own agent's completion.
     scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     scheduler.handle({ type: "pane-state", state: "running" })
-    scheduler.handle({ type: "subagent-start", sessionId: "child-a" })
     await clock.advance(5_000)
 
     expect(notifications).toEqual(["done"])
+  })
+
+  test("a legacy subagent start cancels every pending completion", async () => {
+    const clock = new FakeClock()
+    const notifications: string[] = []
+    const scheduler = createScheduler({
+      clock,
+      lookupMessage: async () => message("root-a", "message-a", [
+        { type: "text", text: "done" },
+      ]),
+      notify: async (text) => {
+        notifications.push(text)
+      },
+    })
+
+    // No per-agent twin exists when the parent could not be recovered, so
+    // untracked activity conservatively cancels rather than risk announcing
+    // a pane whose delegated work is still busy.
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "subagent-start", sessionId: "child-a" })
+    await clock.advance(5_000)
+
+    expect(notifications).toEqual([])
+  })
+
+  test("a sibling agent's subagent start and clear leave a pending completion alone", async () => {
+    const clock = new FakeClock()
+    const notifications: string[] = []
+    const scheduler = createScheduler({
+      clock,
+      lookupMessage: async ({ messageId }) => messageId === "message-a"
+        ? message("root-a", "message-a", [{ type: "text", text: "first result" }])
+        : message("root-b", "message-b", [{ type: "text", text: "second result" }]),
+      notify: async (text) => {
+        notifications.push(text)
+      },
+    })
+
+    scheduler.handle({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
+    scheduler.handle({ type: "agent-subagent-start", agentId: "root-b", subagentId: "child-b" })
+    scheduler.handle({ type: "agent-clear", agentId: "root-b" })
+    await clock.advance(5_000)
+
+    expect(notifications).toEqual(["first result"])
   })
 
   test("disposal cancels timers and suppresses late lookup work", async () => {

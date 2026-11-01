@@ -67,6 +67,10 @@ export function createCompletionScheduler(
     generations.set(agentId, (generations.get(agentId) ?? 0) + 1)
     cancel(pending.get(agentId))
     pending.delete(agentId)
+    // Session ids are never reused: without this the counter grows for every
+    // root the long-lived plugin process ever sees. Deleting is safe — a late
+    // timer still fails the identity half of isCurrent first.
+    if (!pending.has(agentId)) generations.delete(agentId)
   }
 
   function isCurrent(own: PendingCompletion): boolean {
@@ -79,10 +83,17 @@ export function createCompletionScheduler(
   // together each keep their own. Legacy aggregate effects carry no agent and
   // are ignored here — every legacy transition an agented integration reports
   // arrives alongside its per-agent twin, which is the one this scheduler
-  // answers to.
+  // answers to. The one exception is a legacy subagent start: it has no twin
+  // by design (the parent could not be recovered), so untracked activity
+  // cancels every pending completion rather than risk announcing a pane
+  // whose delegated work is still busy.
   function handle(effect: StateMachineEffect, context?: Readonly<{ correlationId?: string }>): void {
     if (effect.type === "agent-subagent-start") {
       cancelPending(effect.agentId)
+      return
+    }
+    if (effect.type === "subagent-start") {
+      cancelPending()
       return
     }
     if (effect.type === "agent-state") {
@@ -142,11 +153,17 @@ export function createCompletionScheduler(
             } catch {
               // A notification backend cannot reject into OpenCode.
             } finally {
-              if (isCurrent(own)) pending.delete(own.agentId)
+              if (isCurrent(own)) {
+                pending.delete(own.agentId)
+                if (!pending.has(own.agentId)) generations.delete(own.agentId)
+              }
             }
           })
         } catch {
-          if (isCurrent(own)) pending.delete(own.agentId)
+          if (isCurrent(own)) {
+            pending.delete(own.agentId)
+            if (!pending.has(own.agentId)) generations.delete(own.agentId)
+          }
         }
       })
     }, COMPLETION_DELAY_MS)
