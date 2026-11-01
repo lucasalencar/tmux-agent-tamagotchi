@@ -11,11 +11,22 @@ setup() {
   tama_start_server
   run "$PLUGIN_ROOT/tamagotchi.tmux"
   assert_success
+
+  # The command persists outside tmux too: pin HOME so no test touches the
+  # developer's own env file.
+  export TEST_HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$TEST_HOME"
+  export HOME="$TEST_HOME"
+  unset TAMA_REMOTE_TOKEN
 }
 
 teardown() {
   tama_detach_client
   tmux_test_server_stop
+}
+
+token_file() {
+  printf '%s' "$TEST_HOME/.config/tama/remote.env"
 }
 
 server_env_token() {
@@ -35,6 +46,29 @@ server_option_token() {
   [ -z "$stderr" ]
   assert_equal "$(server_env_token)" 'TAMA_REMOTE_TOKEN=s3cr3t-token'
   assert_equal "$(server_option_token)" 's3cr3t-token'
+  # And persisted for new servers, outside any versioned tree.
+  assert_equal "$(cat "$(token_file)")" "export TAMA_REMOTE_TOKEN='s3cr3t-token'"
+}
+
+@test "without an argument the token comes from the environment" {
+  # argv never carries the secret: nothing for ps or shell history to see.
+  run --separate-stderr env TAMA_REMOTE_TOKEN='env-only-token' \
+    "$PLUGIN_ROOT/bin/tama" set-remote-token
+  assert_success
+  [ -z "$stderr" ]
+  assert_equal "$(server_env_token)" 'TAMA_REMOTE_TOKEN=env-only-token'
+  assert_equal "$(server_option_token)" 'env-only-token'
+  assert_equal "$(cat "$(token_file)")" "export TAMA_REMOTE_TOKEN='env-only-token'"
+}
+
+@test "a persisted token with quotes sources back verbatim" {
+  local token="a'b\"c"
+
+  run "$PLUGIN_ROOT/bin/tama" set-remote-token "$token"
+  assert_success
+  # shellcheck disable=SC1090  # the file under test, by path
+  . "$(token_file)"
+  assert_equal "$TAMA_REMOTE_TOKEN" "$token"
 }
 
 @test "a token with spaces and shell metacharacters is stored verbatim" {

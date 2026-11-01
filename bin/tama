@@ -97,7 +97,7 @@ Commands:
   doctor                Print installation diagnostics. Exit 1 on failure.
   hook <agent> <event>  Dispatch to integrations/<agent>/hook.
   setup <integration>   Configure an integration that provides a setup helper.
-  set-remote-token <token>
+  set-remote-token [<token>]
                         Store the remote backend token for this tmux server.
   install-receiver [--port <port>] [--token <token>] [--ssh-target <target>] [--python <path>]
                         Install the remote receiver to start at login on this computer.

@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 #
-#   tama set-remote-token <token>
+#   tama set-remote-token [<token>]
 #
-# Stores the remote backend's shared secret for THIS tmux server, in two places
-# at once: the server environment (so later config reloads resolving
-# $TAMA_REMOTE_TOKEN keep working) and the @tama_remote_token option (so it
-# applies immediately, with no re-source). For new servers, export
-# TAMA_REMOTE_TOKEN from an unversioned file sourced by shell init instead —
-# this command only reaches the running server.
+# Stores the remote backend's shared secret in every place one server needs:
+# the server environment (so later config reloads resolving $TAMA_REMOTE_TOKEN
+# keep working), the @tama_remote_token option (so it applies immediately), and
+# the unversioned env file new servers source from shell init. With no argument
+# the token comes from $TAMA_REMOTE_TOKEN in this process instead of argv.
 #
 # Never prints the token back: argv already exposes it to ps while this runs,
 # and stdout must not add another copy (doctor redacts it for the same reason).
@@ -17,6 +16,12 @@ set -o nounset
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=../lib/common.sh
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
+
+# Where new servers find the secret. XDG location, unversioned by convention —
+# shell init sources it before any tmux server starts.
+tama_remote_token_file() {
+  printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/tama/remote.env"
+}
 
 main() {
   local token='' positional=0
@@ -48,6 +53,7 @@ main() {
     esac
   done
 
+  [ -n "$token" ] || token="${TAMA_REMOTE_TOKEN:-}"
   [ -n "$token" ] || die_usage 'set-remote-token needs a token'
 
   tmux_run set-environment -g TAMA_REMOTE_TOKEN "$token" >/dev/null 2>&1 || {
@@ -59,7 +65,25 @@ main() {
     exit 1
   }
 
+  # Persist for new servers, so the file and the server cannot drift apart.
+  # Single quotes in sh cannot nest, so a quote in the token becomes the
+  # close-open-escaped idiom and the file stays sourceable verbatim.
+  local token_file token_escaped persisted
+  persisted='nowhere (HOME is not set)'
+  if [ -n "${HOME:-}" ]; then
+    token_file="$(tama_remote_token_file)"
+    if mkdir -p "${token_file%/*}" 2>/dev/null; then
+      token_escaped="${token//\'/\'\\\'\'}"
+      if printf "export TAMA_REMOTE_TOKEN='%s'\n" "$token_escaped" \
+        >"$token_file" 2>/dev/null &&
+        chmod 600 "$token_file" 2>/dev/null; then
+        persisted="$token_file"
+      fi
+    fi
+  fi
+
   printf 'token stored for this tmux server (environment and @tama_remote_token)\n'
+  printf 'persisted for new servers in %s\n' "$persisted"
   printf 'for new servers, export TAMA_REMOTE_TOKEN from an unversioned file in shell init\n'
 }
 

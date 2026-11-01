@@ -122,10 +122,12 @@ which one), backgrounded so the hook never waits on the network, bounded by
 `@tama_remote_timeout` seconds (default 5, at most 300), and authenticated with
 `@tama_remote_token` as a bearer token when configured. Prefer generated hex
 tokens (what `install-receiver` creates): option values containing `$` or
-backslashes round-trip differently across tmux versions. Store it for the running
-server with `tama set-remote-token <token>` (environment and option at once,
-never printed back); for new servers, export `TAMA_REMOTE_TOKEN` from an
-unversioned file sourced by shell init. A missing `curl`, a
+backslashes round-trip differently across tmux versions. Store it with
+`tama set-remote-token [<token>]` — server environment, option, and the
+unversioned env file new servers source, at once and never printed back
+(with no argument the token comes from `$TAMA_REMOTE_TOKEN` instead of argv);
+for new servers, export `TAMA_REMOTE_TOKEN` from an unversioned file sourced
+by shell init. A missing `curl`, a
 missing URL, or a URL that is not `http(s)://` is silence rather than a failed
 turn; `tama doctor` fails on the configuration instead.
 
