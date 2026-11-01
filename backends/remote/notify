@@ -23,7 +23,7 @@ set -o nounset
 . "$TAMA_PLUGIN_DIR/lib/common.sh"
 
 main() {
-  local title="${1-}" message="${2-}" payload origin
+  local title="${1-}" message="${2-}" payload origin icon badge
 
   # A banner with nothing to say would only be a request started to say it. The core
   # does not send one; a user's own caller might.
@@ -34,10 +34,17 @@ main() {
   tama_remote_origin
   origin="$TAMA_REMOTE_ORIGIN"
   if [ -n "$origin" ]; then
-    if [ -n "$title" ]; then
-      title="[$origin] $title"
+    tama_remote_origin_icon
+    icon="$TAMA_REMOTE_ORIGIN_ICON"
+    if [ -n "$icon" ]; then
+      badge="[$icon $origin]"
     else
-      title="[$origin]"
+      badge="[$origin]"
+    fi
+    if [ -n "$title" ]; then
+      title="$badge $title"
+    else
+      title="$badge"
     fi
   fi
 

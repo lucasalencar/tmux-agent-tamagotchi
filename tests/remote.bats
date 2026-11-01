@@ -157,14 +157,21 @@ agent_pane_elsewhere() {
   assert_success
   wait_for_remote_requests 1
 
-  local expected_origin
+  local expected_origin title
   expected_origin="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
   [ -n "$expected_origin" ] || skip 'this machine has no hostname to prefix with'
-  assert_equal "$(remote_json_value notify title | cut -d' ' -f1)" "[$expected_origin]"
-  assert_contains "$(remote_json_value notify title)" 'claude-code - ' 'the title'
+  title="$(remote_json_value notify title)"
+  case "$title" in
+    "[💻 $expected_origin] "*) ;;
+    *)
+      printf 'expected "[💻 %s] ..." prefix, got: %s\n' "$expected_origin" "$title" >&2
+      return 1
+      ;;
+  esac
+  assert_contains "$title" 'claude-code - ' 'the title'
 }
 
-@test "a configured origin names that instead of the hostname" {
+@test "a forwarded banner pairs the default computer icon with the origin" {
   start_fake_remote_server
   tmux_test_server_run set -g @tama_remote_origin 'my-vm'
 
@@ -173,13 +180,66 @@ agent_pane_elsewhere() {
   assert_success
   wait_for_remote_requests 1
 
-  assert_equal "$(remote_json_value notify title | cut -d' ' -f1)" '[my-vm]'
-  assert_contains "$(remote_json_value notify title)" 'claude-code - ' 'the title'
+  local title
+  title="$(remote_json_value notify title)"
+  case "$title" in
+    '[💻 my-vm] '*) ;;
+    *)
+      printf 'expected "[💻 my-vm] ..." prefix, got: %s\n' "$title" >&2
+      return 1
+      ;;
+  esac
+  assert_contains "$title" 'claude-code - ' 'the title'
+}
+
+@test "a configured icon pairs with the origin instead of the default" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin 'my-vm'
+  tmux_test_server_run set -g @tama_remote_origin_icon '🚀'
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  local title
+  title="$(remote_json_value notify title)"
+  case "$title" in
+    '[🚀 my-vm] '*) ;;
+    *)
+      printf 'expected "[🚀 my-vm] ..." prefix, got: %s\n' "$title" >&2
+      return 1
+      ;;
+  esac
+  assert_contains "$title" 'claude-code - ' 'the title'
+}
+
+@test "an empty icon draws the origin without one" {
+  start_fake_remote_server
+  tmux_test_server_run set -g @tama_remote_origin 'my-vm'
+  tmux_test_server_run set -g @tama_remote_origin_icon ''
+
+  run "$PLUGIN_ROOT/bin/tama" notify claude-code 'permission needed' \
+    --pane "$(agent_pane_elsewhere)"
+  assert_success
+  wait_for_remote_requests 1
+
+  local title
+  title="$(remote_json_value notify title)"
+  case "$title" in
+    '[my-vm] '*) ;;
+    *)
+      printf 'expected "[my-vm] ..." prefix, got: %s\n' "$title" >&2
+      return 1
+      ;;
+  esac
+  assert_contains "$title" 'claude-code - ' 'the title'
 }
 
 @test "an empty origin draws without a prefix" {
   start_fake_remote_server
   tmux_test_server_run set -g @tama_remote_origin ''
+  tmux_test_server_run set -g @tama_remote_origin_icon '🚀'
 
   local pane title
   pane="$(agent_pane_elsewhere)"
@@ -506,6 +566,26 @@ healthy_remote_server() {
   run "$PLUGIN_ROOT/bin/tama" doctor
   assert_success
   assert_output_contains '@tama_remote_origin is empty: forwarded titles draw without a prefix'
+}
+
+@test "doctor reports the icon drawn next to the origin" {
+  healthy_remote_server
+  start_real_receiver --token 's3cr3t-token'
+  tmux_test_server_run set -g @tama_remote_url "$TAMA_RECEIVER_URL"
+
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains "@tama_remote_origin_icon is unset: forwarded titles pair [💻] with the origin"
+
+  tmux_test_server_run set -g @tama_remote_origin_icon '🚀'
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains "@tama_remote_origin_icon is '🚀': forwarded titles pair [🚀] with the origin"
+
+  tmux_test_server_run set -g @tama_remote_origin_icon ''
+  run "$PLUGIN_ROOT/bin/tama" doctor
+  assert_success
+  assert_output_contains '@tama_remote_origin_icon is empty: forwarded titles draw the origin without an icon'
 }
 
 @test "doctor warns when something that is not the receiver answers 200" {

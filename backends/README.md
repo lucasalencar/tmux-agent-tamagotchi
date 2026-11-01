@@ -121,10 +121,13 @@ per-window group, terminal bundle id and click action as JSON to
 which one), backgrounded so the hook never waits on the network, bounded by
 `@tama_remote_timeout` seconds (default 5, at most 300), and authenticated with
 `@tama_remote_token` as a bearer token when configured. The forwarded title is
-prefixed with the sending machine — `[my-vm] agent - dir` — so a local banner
+prefixed with the sending machine — `[💻 my-vm] agent - dir` — so a local banner
 and a forwarded one stay distinguishable where they land: `@tama_remote_origin`
 names that machine explicitly, an explicitly empty one draws without a prefix,
-and when never configured the short hostname is used. Prefer generated hex
+and when never configured the short hostname is used. `@tama_remote_origin_icon`
+pairs a computer of your own with the name (an emoji, a glyph), an explicitly
+empty one draws the name alone, and when never configured a default laptop is
+used. Prefer generated hex
 tokens (what `install-receiver` creates): option values containing `$` or
 backslashes round-trip differently across tmux versions. Store it with
 `tama set-remote-token [<token>]` — server environment, option, and the

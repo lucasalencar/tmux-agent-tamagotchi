@@ -57,6 +57,10 @@ TAMA_REMOTE_CURL_DIRS='/opt/homebrew/bin /usr/local/bin /usr/bin'
 TAMA_REMOTE_TIMEOUT_DEFAULT='5'
 TAMA_REMOTE_TIMEOUT_MAX='300'
 
+# The computer icon drawn next to the origin in remote banner titles when
+# `@tama_remote_origin_icon` is never configured.
+TAMA_REMOTE_ORIGIN_ICON_DEFAULT='💻'
+
 # The status for "this capability does not exist here". 127 is what a shell reports
 # for a command it could not find, which is exactly what happened.
 TAMA_BACKEND_UNSUPPORTED=127
@@ -261,6 +265,22 @@ tama_remote_origin() {
     TAMA_REMOTE_ORIGIN="$configured"
   else
     TAMA_REMOTE_ORIGIN="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  fi
+  return 0
+}
+
+# The computer icon drawn next to the origin in remote banner titles, in
+# TAMA_REMOTE_ORIGIN_ICON. Explicit configuration wins; an explicitly empty
+# one draws the origin without an icon; when never configured a default laptop
+# is used so the badge reads the same everywhere without configuration.
+# Always succeeds.
+# shellcheck disable=SC2034  # TAMA_REMOTE_ORIGIN_ICON is read by the caller
+tama_remote_origin_icon() {
+  local configured
+  if configured="$(tmux_run show -gv @tama_remote_origin_icon 2>/dev/null)"; then
+    TAMA_REMOTE_ORIGIN_ICON="$configured"
+  else
+    TAMA_REMOTE_ORIGIN_ICON="$TAMA_REMOTE_ORIGIN_ICON_DEFAULT"
   fi
   return 0
 }

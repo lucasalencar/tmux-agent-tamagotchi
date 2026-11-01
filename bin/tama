@@ -164,6 +164,8 @@ Configuration (defaults shown):
   set -g @tama_remote_curl ''
   # @tama_remote_origin is unset by default (short hostname); set to '' for no prefix
   # set -g @tama_remote_origin 'my-vm'
+  # @tama_remote_origin_icon is unset by default (💻); set to '' for no icon
+  # set -g @tama_remote_origin_icon '🚀'
   set -g @tama_gc_shells 'sh bash zsh fish dash ksh mksh ash csh tcsh'
   set -g @tama_manage_hooks off
 
