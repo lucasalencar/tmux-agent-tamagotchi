@@ -85,6 +85,69 @@ describe("root session activity", () => {
     ])
   })
 
+  test("an explicit execution start begins a new turn after the previous completion", () => {
+    run(createLifecycleState(), [
+      {
+        event: { type: "execution-started", sessionId: "root-a", kind: "root" },
+        paneState: "running",
+        effects: [{ type: "pane-state", state: "running" }],
+      },
+      {
+        event: {
+          type: "terminal-assistant-message",
+          sessionId: "root-a",
+          kind: "root",
+          messageId: "message-a",
+          finish: "stop",
+        },
+        paneState: "idle",
+        effects: [
+          { type: "pane-state", state: "idle" },
+          { type: "completion-eligible", sessionId: "root-a", messageId: "message-a" },
+        ],
+      },
+      {
+        event: { type: "execution-started", sessionId: "root-a", kind: "root" },
+        paneState: "running",
+        effects: [{ type: "pane-state", state: "running" }],
+      },
+      {
+        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+        paneState: "running",
+        effects: [],
+      },
+    ])
+  })
+
+  test("trailing busy noise after a completion does not restart the root", () => {
+    run(createLifecycleState(), [
+      {
+        event: { type: "execution-started", sessionId: "root-a", kind: "root" },
+        paneState: "running",
+        effects: [{ type: "pane-state", state: "running" }],
+      },
+      {
+        event: {
+          type: "terminal-assistant-message",
+          sessionId: "root-a",
+          kind: "root",
+          messageId: "message-a",
+          finish: "stop",
+        },
+        paneState: "idle",
+        effects: [
+          { type: "pane-state", state: "idle" },
+          { type: "completion-eligible", sessionId: "root-a", messageId: "message-a" },
+        ],
+      },
+      {
+        event: { type: "session-status", sessionId: "root-a", kind: "root", status: "busy" },
+        paneState: "idle",
+        effects: [],
+      },
+    ])
+  })
+
   test("a duplicate user message update after idle does not restart the root", () => {
     const created = reduceLifecycle(createLifecycleState(), {
       type: "user-message",
