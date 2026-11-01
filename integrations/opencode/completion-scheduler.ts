@@ -35,7 +35,6 @@ const GENERIC_COMPLETION = "OpenCode finished its turn"
 const NOTIFICATION_TEXT_MAX = 500
 
 type PendingCompletion = {
-  generation: number
   agentId: string
   lookupTimer?: unknown
   notificationTimer?: unknown
@@ -50,7 +49,6 @@ export function createCompletionScheduler(
   dependencies: CompletionSchedulerDependencies,
 ): CompletionScheduler {
   const clock = dependencies.clock ?? systemClock
-  const generations = new Map<string, number>()
   const pending = new Map<string, PendingCompletion>()
 
   function cancelPending(agentId?: string): void {
@@ -61,21 +59,16 @@ export function createCompletionScheduler(
     if (agentId === undefined) {
       pending.forEach((own) => cancel(own))
       pending.clear()
-      generations.clear()
       return
     }
-    generations.set(agentId, (generations.get(agentId) ?? 0) + 1)
     cancel(pending.get(agentId))
     pending.delete(agentId)
-    // Session ids are never reused: without this the counter grows for every
-    // root the long-lived plugin process ever sees. Deleting is safe — a late
-    // timer still fails the identity half of isCurrent first.
-    if (!pending.has(agentId)) generations.delete(agentId)
   }
 
+  // Identity is the whole fence: the map holds at most one pending completion
+  // per agent, so a timer belonging to a replaced object can never pass.
   function isCurrent(own: PendingCompletion): boolean {
     return pending.get(own.agentId) === own
-      && own.generation === (generations.get(own.agentId) ?? 0)
   }
 
   // Completion is tracked per agent: only the completing agent's own later
@@ -106,10 +99,7 @@ export function createCompletionScheduler(
     }
     if (effect.type !== "completion-eligible") return
     cancelPending(effect.agentId)
-    const own: PendingCompletion = {
-      generation: generations.get(effect.agentId) ?? 0,
-      agentId: effect.agentId,
-    }
+    const own: PendingCompletion = { agentId: effect.agentId }
     pending.set(effect.agentId, own)
     const completion: CompletionReference = {
       agentId: effect.agentId,
@@ -153,17 +143,11 @@ export function createCompletionScheduler(
             } catch {
               // A notification backend cannot reject into OpenCode.
             } finally {
-              if (isCurrent(own)) {
-                pending.delete(own.agentId)
-                if (!pending.has(own.agentId)) generations.delete(own.agentId)
-              }
+              if (isCurrent(own)) pending.delete(own.agentId)
             }
           })
         } catch {
-          if (isCurrent(own)) {
-            pending.delete(own.agentId)
-            if (!pending.has(own.agentId)) generations.delete(own.agentId)
-          }
+          if (isCurrent(own)) pending.delete(own.agentId)
         }
       })
     }, COMPLETION_DELAY_MS)

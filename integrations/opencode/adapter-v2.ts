@@ -6,6 +6,7 @@ import {
   type SessionInfo,
   type SessionMessageInfo,
 } from "./adapter"
+import { delegatedParentProvenance } from "./resync"
 import type { LifecycleEvent, SessionKind } from "./state-machine"
 
 // Adapts OpenCode v2 flat events ({ type, data }) into the shared lifecycle.
@@ -108,8 +109,7 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
     }
     const kind = await classify(sessionId)
     if (!kind) return { status: "malformed" }
-    const parent = kind === "delegated" ? parentOf(sessionId) : undefined
-    const parentId = parent !== undefined ? { parentId: parent } : {}
+    const parentId = delegatedParentProvenance(kind, parentOf(sessionId))
     if (kind === "root" && status === "idle") {
       try {
         const latest = await dependencies.lookupLatestMessage?.(sessionId)
@@ -167,7 +167,9 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
       }
       const cached = classifications.get(data.sessionID)
       const kind = cached?.kind ?? (await classify(data.sessionID))
-      const parent = kind === "delegated" ? cached?.parentId ?? parentOf(data.sessionID) : undefined
+      const parent = kind === "delegated"
+        ? delegatedParentProvenance(kind, cached?.parentId ?? parentOf(data.sessionID))
+        : {}
       classifications.delete(data.sessionID)
       if (!kind) return { status: "malformed" }
       return {
@@ -176,7 +178,7 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
           type: "session-deleted",
           sessionId: data.sessionID,
           kind,
-          ...(parent !== undefined ? { parentId: parent } : {}),
+          ...parent,
           ...provenance,
         },
       }
@@ -250,7 +252,7 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
       }
       const kind = await classify(data.sessionID)
       if (!kind) return { status: "malformed" }
-      const parent = kind === "delegated" ? parentOf(data.sessionID) : undefined
+      const parent = delegatedParentProvenance(kind, parentOf(data.sessionID))
       return {
         status: "adapted",
         event: {
@@ -258,7 +260,7 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
           requestId: data.id,
           sessionId: data.sessionID,
           kind,
-          ...(parent !== undefined ? { parentId: parent } : {}),
+          ...parent,
           ...provenance,
         },
       }
@@ -277,7 +279,7 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
       }
       const kind = await classify(data.sessionID)
       if (!kind) return { status: "malformed" }
-      const parent = kind === "delegated" ? parentOf(data.sessionID) : undefined
+      const parent = delegatedParentProvenance(kind, parentOf(data.sessionID))
       const message = isRecord(data.error) && isIdentifier(data.error.message)
         ? data.error.message
         : undefined
@@ -289,14 +291,14 @@ export function createEventAdapterV2(dependencies: EventAdapterDependencies): Ev
             sessionId: data.sessionID,
             kind,
             message,
-            ...(parent !== undefined ? { parentId: parent } : {}),
+            ...parent,
             ...provenance,
           }
           : {
             type: "session-error",
             sessionId: data.sessionID,
             kind,
-            ...(parent !== undefined ? { parentId: parent } : {}),
+            ...parent,
             ...provenance,
           },
       }

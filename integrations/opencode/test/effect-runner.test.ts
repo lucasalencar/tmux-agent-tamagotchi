@@ -76,7 +76,7 @@ describe("tama effect runner", () => {
 
     await runner.run({ type: "pane-state", state: "waiting" })
     await runner.run({ type: "agent-error", agentId: "root-a", message: "provider failed" })
-    await runner.run({ type: "subagent-start", sessionId: "child; touch /tmp/not-executed" })
+    await runner.run({ type: "subagent-start", sessionId: "child;touch" })
     await runner.run({ type: "subagent-stop", sessionId: "-child" })
     await runner.run({ type: "completion-eligible", agentId: "root-a", sessionId: "root-a", messageId: "message-a" })
     await runner.clearPane()
@@ -87,7 +87,7 @@ describe("tama effect runner", () => {
       ["tmux", "show", "-gqv", "@tama_bin"],
       ["/repo with spaces/bin/tama", "notify", "--agent", "opencode-root-a", "--", "OpenCode", "provider failed"],
       ["tmux", "show", "-gqv", "@tama_bin"],
-      ["/repo with spaces/bin/tama", "state", "subagent-start", "--", "child; touch /tmp/not-executed"],
+      ["/repo with spaces/bin/tama", "state", "subagent-start", "--", "child;touch"],
       ["tmux", "show", "-gqv", "@tama_bin"],
       ["/repo with spaces/bin/tama", "state", "subagent-stop", "--", "-child"],
       ["tmux", "show", "-gqv", "@tama_bin"],
@@ -123,6 +123,29 @@ describe("tama effect runner", () => {
       sessionId: "root-a",
       messageId: "message-a",
     })).resolves.toBeUndefined()
+  })
+
+  test("contains a CLI usage rejection without rejecting into the host", async () => {
+    // A usage error (exit 2: the id cannot survive the agent record) must
+    // behave like any other failed invocation — logged, contained, resolved.
+    const calls: string[][] = []
+    const runner = createEffectRunner({
+      execute: async (argv) => {
+        calls.push([...argv])
+        return argv[0] === "tmux"
+          ? { exitCode: 0, stdout: "/plugin/bin/tama\n" }
+          : { exitCode: 2, stdout: "tama: an agent id may only hold [...]\n" }
+      },
+    })
+
+    await expect(runner.run({ type: "agent-state", agentId: "root-a", state: "running" })).resolves.toBeUndefined()
+    await expect(runner.run({ type: "agent-clear", agentId: "root-a" })).resolves.toBeUndefined()
+    await expect(runner.run({ type: "agents-reconcile", agentIds: ["root-a"] })).resolves.toBeUndefined()
+    expect(calls.filter((argv) => argv[0] !== "tmux")).toEqual([
+      ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a"],
+      ["/plugin/bin/tama", "state", "clear", "--agent", "opencode-root-a"],
+      ["/plugin/bin/tama", "state", "agent-reconcile", "--namespace", "opencode-", "--", "opencode-root-a"],
+    ])
   })
 
   test("sanitizes and bounds agent error banners with a safe fallback", async () => {

@@ -56,12 +56,12 @@ describe("wired plugin", () => {
         properties: { permissionID: "request-a", response: "once", sessionID: "root-a" },
       } as never,
     })
-    await hooks.event?.({ event: statusEvent("child;not shell", "busy") as never })
+    await hooks.event?.({ event: statusEvent("child-a", "busy") as never })
     await hooks.dispose?.()
 
     expect(clientCalls).toEqual([
       { path: { id: "root-a" }, query: { directory: "/workspace" } },
-      { path: { id: "child;not shell" }, query: { directory: "/workspace" } },
+      { path: { id: "child-a" }, query: { directory: "/workspace" } },
     ])
     expect(tamaCalls(commandCalls)).toEqual([
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
@@ -70,8 +70,8 @@ describe("wired plugin", () => {
       ["/plugin/bin/tama", "state", "waiting", "OpenCode", "--agent", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "running", "OpenCode"],
       ["/plugin/bin/tama", "state", "running", "OpenCode", "--agent", "opencode-root-a"],
-      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "opencode-root-a", "--", "child;not shell"],
-      ["/plugin/bin/tama", "state", "subagent-stop", "--agent", "opencode-root-a", "--", "child;not shell"],
+      ["/plugin/bin/tama", "state", "subagent-start", "--agent", "opencode-root-a", "--", "child-a"],
+      ["/plugin/bin/tama", "state", "subagent-stop", "--agent", "opencode-root-a", "--", "child-a"],
       ["/plugin/bin/tama", "state", "clear", "--agent", "opencode-root-a"],
       ["/plugin/bin/tama", "state", "clear", "--keep-agents"],
     ])
