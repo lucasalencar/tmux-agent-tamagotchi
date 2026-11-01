@@ -42,7 +42,21 @@ server_option_token() {
 
   run "$PLUGIN_ROOT/bin/tama" set-remote-token "$token"
   assert_success
-  assert_equal "$(server_env_token)" "TAMA_REMOTE_TOKEN=$token"
+  # The option is the surface the backend reads: byte-exact on every version.
+  assert_equal "$(server_option_token)" "$token"
+  # show-environment escapes $ for eval-safety on some tmux versions, so only
+  # the prefix is asserted textually; the reload test below proves the bytes.
+  assert_contains "$(server_env_token)" 'TAMA_REMOTE_TOKEN='
+}
+
+@test "the stored environment feeds config reloads with bytes intact" {
+  local token='a b$c"d%e&f;g'
+
+  run "$PLUGIN_ROOT/bin/tama" set-remote-token "$token"
+  assert_success
+  tmux_test_server_run set -gu @tama_remote_token
+  printf 'set -g @tama_remote_token "$TAMA_REMOTE_TOKEN"\n' >"$BATS_TEST_TMPDIR/reload.conf"
+  tmux_test_server_run source-file "$BATS_TEST_TMPDIR/reload.conf"
   assert_equal "$(server_option_token)" "$token"
 }
 
